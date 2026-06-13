@@ -1,0 +1,176 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/background_dark">
+
+    <!-- Alignment Color Border Wrapper -->
+    <FrameLayout
+        android:id="@+id/layout_camera_enclosure"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:padding="8dp"
+        android:background="@drawable/align_border_red"
+        app:layout_constraintBottom_toTopOf="@id/card_operator_controls"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toBottomOf="@id/layout_top_status">
+
+        <FrameLayout
+            android:layout_width="match_parent"
+            android:layout_height="match_parent">
+
+            <!-- Camera Live preview -->
+            <androidx.camera.view.PreviewView
+                android:id="@+id/preview_view"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent" />
+
+            <!-- Ghost Overlay Image (35% Opacity) -->
+            <ImageView
+                android:id="@+id/iv_ghost_overlay"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:scaleType="centerCrop"
+                android:alpha="0.35"
+                android:contentDescription="Reference product ghost overlay"
+                android:visibility="visible" />
+
+            <!-- Status Indicator Overlay (Top Right in Preview) -->
+            <TextView
+                android:id="@+id/tv_alignment_state"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="top|end"
+                android:layout_margin="16dp"
+                android:background="#D9F87171"
+                android:paddingHorizontal="14dp"
+                android:paddingVertical="8dp"
+                android:text="ALIGNING..."
+                android:textColor="@color/white"
+                android:textSize="12sp"
+                android:textStyle="bold"
+                android:letterSpacing="0.05" />
+
+        </FrameLayout>
+    </FrameLayout>
+
+    <!-- Top Status panel showing part ID -->
+    <RelativeLayout
+        android:id="@+id/layout_top_status"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="@color/surface_card"
+        android:paddingHorizontal="20dp"
+        android:paddingVertical="14dp"
+        app:layout_constraintTop_toTopOf="parent">
+
+        <TextView
+            android:id="@+id/tv_operator_tag"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="ACTIVE INSPECTION"
+            android:textColor="@color/blue_primary"
+            android:textSize="12sp"
+            android:textStyle="bold"
+            android:letterSpacing="0.06"/>
+
+        <TextView
+            android:id="@+id/tv_part_info"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_below="@id/tv_operator_tag"
+            android:layout_marginTop="2dp"
+            android:text="Part ID: PART-CHASSIS-A03"
+            android:textColor="@color/white"
+            android:textSize="16sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/tv_ghost_status_indicator"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_alignParentEnd="true"
+            android:layout_centerVertical="true"
+            android:text="GHOST OVERLAY ON (35%)"
+            android:textColor="@color/gray_text_secondary"
+            android:textSize="11sp" />
+    </RelativeLayout>
+
+    <!-- Bottom Operator Deck -->
+    <com.google.android.material.card.MaterialCardView
+        android:id="@+id/card_operator_controls"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_margin="16dp"
+        app:cardBackgroundColor="@color/surface_card"
+        app:cardCornerRadius="16dp"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:padding="20dp">
+
+            <TextView
+                android:id="@+id/tv_operator_tip"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textColor="@color/gray_text_secondary"
+                android:textSize="13sp"
+                android:text="Align the live contours with the semi-transparent reference"
+                android:layout_marginBottom="16dp" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center"
+                android:weightSum="3">
+
+                <!-- Manual Toggle Ghost Overlay -->
+                <Button
+                    android:id="@+id/btn_toggle_ghost"
+                    style="@style/Widget.Material3.Button.OutlinedButton"
+                    android:layout_width="0dp"
+                    android:layout_height="64dp"
+                    android:layout_weight="1"
+                    android:text="GHOST OFF"
+                    android:textColor="@color/white"
+                    android:textSize="12sp"
+                    android:layout_marginEnd="8dp" />
+
+                <!-- SHUTTER BUTTON -->
+                <Button
+                    android:id="@+id/btn_capture_inspect"
+                    android:layout_width="0dp"
+                    android:layout_height="64dp"
+                    android:layout_weight="2"
+                    android:backgroundTint="@color/blue_primary"
+                    android:text="ANALYZE &amp; CAPTURE"
+                    android:textColor="@color/white"
+                    android:textStyle="bold"
+                    android:layout_marginStart="8dp" />
+
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/tv_simulate_hint"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:text="Tap to instantly achieve optimal alignment"
+                android:textColor="@color/blue_secondary"
+                android:textSize="11sp"
+                android:gravity="center"/>
+
+        </LinearLayout>
+    </com.google.android.material.card.MaterialCardView>
+
+</androidx.constraintlayout.widget.ConstraintLayout>

@@ -1,0 +1,109 @@
+<?xml version="1.0" encoding="utf-8"?>
+<navigation xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:id="@+id/nav_graph"
+    app:startDestination="@id/navigation_home">
+
+    <fragment
+        android:id="@+id/navigation_home"
+        android:name="com.example.ui.fragment.HomeFragment"
+        android:label="Home"
+        tools:layout="@layout/fragment_home">
+        <action
+            android:id="@+id/action_home_to_barcode"
+            app:destination="@id/navigation_barcode" />
+        <action
+            android:id="@+id/action_home_to_history"
+            app:destination="@id/navigation_history" />
+    </fragment>
+
+    <fragment
+        android:id="@+id/navigation_barcode"
+        android:name="com.example.ui.fragment.BarcodeScanFragment"
+        android:label="Scan Barcode"
+        tools:layout="@layout/fragment_barcode_scan">
+        <action
+            android:id="@+id/action_barcode_to_reference_setup"
+            app:destination="@id/navigation_reference_setup" />
+        <action
+            android:id="@+id/action_barcode_to_inspection"
+            app:destination="@id/navigation_inspection" />
+    </fragment>
+
+    <fragment
+        android:id="@+id/navigation_reference_setup"
+        android:name="com.example.ui.fragment.ReferenceSetupFragment"
+        android:label="Reference Setup"
+        tools:layout="@layout/fragment_reference_setup">
+        <argument
+            android:name="partId"
+            app:argType="string" />
+        <action
+            android:id="@+id/action_reference_setup_to_inspection"
+            app:destination="@id/navigation_inspection" />
+        <action
+            android:id="@+id/action_reference_setup_to_home"
+            app:popUpTo="@id/navigation_home"
+            app:popUpToInclusive="false" />
+    </fragment>
+
+    <fragment
+        android:id="@+id/navigation_inspection"
+        android:name="com.example.ui.fragment.InspectionFragment"
+        android:label="Inspect Chassis"
+        tools:layout="@layout/fragment_inspection">
+        <argument
+            android:name="partId"
+            app:argType="string" />
+        <action
+            android:id="@+id/action_inspection_to_results"
+            app:destination="@id/navigation_results" />
+    </fragment>
+
+    <fragment
+        android:id="@+id/navigation_results"
+        android:name="com.example.ui.fragment.ResultsFragment"
+        android:label="Inspection Results"
+        tools:layout="@layout/fragment_results">
+        <argument
+            android:name="partId"
+            app:argType="string" />
+        <argument
+            android:name="imageUri"
+            app:argType="string" />
+        <action
+            android:id="@+id/action_results_to_report"
+            app:destination="@id/navigation_report" />
+        <action
+            android:id="@+id/action_results_to_home"
+            app:popUpTo="@id/navigation_home"
+            app:popUpToInclusive="true"
+            app:destination="@id/navigation_home"/>
+    </fragment>
+
+    <fragment
+        android:id="@+id/navigation_report"
+        android:name="com.example.ui.fragment.ReportFragment"
+        android:label="Inspection Report"
+        tools:layout="@layout/fragment_report">
+        <argument
+            android:name="inspectionId"
+            app:argType="long" />
+        <action
+            android:id="@+id/action_report_to_home"
+            app:popUpTo="@id/navigation_home"
+            app:popUpToInclusive="true"
+            app:destination="@id/navigation_home" />
+    </fragment>
+
+    <fragment
+        android:id="@+id/navigation_history"
+        android:name="com.example.ui.fragment.HistoryFragment"
+        android:label="History"
+        tools:layout="@layout/fragment_history">
+        <action
+            android:id="@+id/action_history_to_report"
+            app:destination="@id/navigation_report" />
+    </fragment>
+</navigation>
