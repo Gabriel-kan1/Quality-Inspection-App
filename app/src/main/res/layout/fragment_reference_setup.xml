@@ -1,0 +1,124 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/background_dark">
+
+    <!-- Camera Preview for Setup Reference -->
+    <androidx.camera.view.PreviewView
+        android:id="@+id/preview_view"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent" />
+
+    <!-- Instruction Panel (Translucent Overlay) -->
+    <LinearLayout
+        android:id="@+id/layout_instructions"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="#D92B2930"
+        android:orientation="vertical"
+        android:padding="20dp"
+        app:layout_constraintTop_toTopOf="parent">
+
+        <TextView
+            android:id="@+id/tv_setup_header"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="MISSING REFERENCE PROFILE"
+            android:textColor="@color/orange_warn"
+            android:textSize="13sp"
+            android:textStyle="bold"
+            android:letterSpacing="0.08" />
+
+        <TextView
+            android:id="@+id/tv_setup_part_id"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:text="Part ID: PART-CHASSIS-A03"
+            android:textColor="@color/white"
+            android:textSize="18sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="Please place an assembled and verified MASTER PRODUCT centered below. Take a flat, clear photograph to establish the reference gold-standard alignment."
+            android:textColor="@color/gray_text_secondary"
+            android:textSize="13sp" />
+
+    </LinearLayout>
+
+    <!-- Visual Target Frame Guide overlay in center -->
+    <View
+        android:id="@+id/reference_alignment_guide"
+        android:layout_width="320dp"
+        android:layout_height="240dp"
+        android:background="@drawable/reference_guide_border"
+        app:layout_constraintBottom_toTopOf="@id/card_action_deck"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toBottomOf="@id/layout_instructions" />
+
+    <!-- Bottom Operator Actions card -->
+    <com.google.android.material.card.MaterialCardView
+        android:id="@+id/card_action_deck"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_margin="16dp"
+        app:cardBackgroundColor="@color/surface_card"
+        app:cardCornerRadius="16dp"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:padding="20dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:weightSum="2">
+
+                <!-- SKIP REFERENCING / QUICK USE MOCK DEFAULT -->
+                <Button
+                    android:id="@+id/btn_skip"
+                    style="@style/Widget.Material3.Button.OutlinedButton"
+                    android:layout_width="0dp"
+                    android:layout_height="64dp"
+                    android:layout_weight="0.8"
+                    android:text="SKIP SETUP"
+                    android:textColor="@color/white"
+                    android:layout_marginEnd="8dp" />
+
+                <!-- SHUTTER BUTTON -->
+                <Button
+                    android:id="@+id/btn_capture_reference"
+                    android:layout_width="0dp"
+                    android:layout_height="64dp"
+                    android:layout_weight="1.2"
+                    android:backgroundTint="@color/blue_primary"
+                    android:text="CAPTURE REFERENCE"
+                    android:textColor="@color/white"
+                    android:textStyle="bold"
+                    android:layout_marginStart="8dp" />
+
+            </LinearLayout>
+
+        </LinearLayout>
+
+    </com.google.android.material.card.MaterialCardView>
+
+</androidx.constraintlayout.widget.ConstraintLayout>

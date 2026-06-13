@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="black">#FF000000</color>
+    <color name="white">#FFFFFFFF</color>
+    
+    <!-- Industrial Geometric Balance Palette -->
+    <color name="background_dark">#1C1B1F</color>
+    <color name="surface_dark">#2B2930</color>
+    <color name="surface_card">#2B2930</color>
+    
+    <color name="blue_primary">#38BDF8</color>
+    <color name="blue_secondary">#D0E4FF</color>
+    <color name="blue_dark_accent">#00315C</color>
+
+    <!-- Operational Indicators -->
+    <color name="green_pass">#4ADE80</color>
+    <color name="green_pass_header">#2E7D32</color>
+    <color name="red_fail">#F87171</color>
+    <color name="orange_warn">#FBBF24</color>
+    <color name="gray_text_secondary">#938F99</color>
+    <color name="color_border">#49454F</color>
+</resources>
