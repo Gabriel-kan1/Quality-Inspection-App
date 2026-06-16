@@ -68,19 +68,16 @@ public class ChassisOverlayView extends View {
         paintBackgroundMesh.setColor(Color.rgb(73, 69, 79)); // #49454F border color representation
         paintBackgroundMesh.setStrokeWidth(2f);
         paintBackgroundMesh.setStyle(Paint.Style.STROKE);
+    }
 
-        // Load chassis components matching user-acquired hardware photo:
-        // Left Column: 2 plain locator/dowel pins
-        // Right Column: 2 threaded studs/bolts
-        features.add(new DetectedFeature("Locator Pin", new RectF(0.24f, 0.28f, 0.44f, 0.48f), Color.rgb(74, 222, 128), "PIN #01")); // #4ADE80
-        features.add(new DetectedFeature("Locator Pin", new RectF(0.14f, 0.52f, 0.34f, 0.72f), Color.rgb(74, 222, 128), "PIN #02"));
-        features.add(new DetectedFeature("Threaded Stud", new RectF(0.56f, 0.32f, 0.76f, 0.58f), Color.rgb(56, 189, 248), "STUD #01")); // #38BDF8
-        features.add(new DetectedFeature("Threaded Stud", new RectF(0.42f, 0.56f, 0.62f, 0.82f), Color.rgb(56, 189, 248), "STUD #02"));
+    public List<DetectedFeature> getFeatures() {
+        return features;
     }
 
     public void setImageUri(String uriString) {
         if (uriString == null || "mock_image_uri".equals(uriString)) {
             sourceBitmap = null;
+            features.clear();
             invalidate();
             return;
         }
@@ -98,9 +95,19 @@ public class ChassisOverlayView extends View {
             if (inputStream != null) {
                 inputStream.close();
             }
+
+            // Apply real feature extraction dynamically based on image content (Python Step 3 to 6)
+            features.clear();
+            List<com.example.ui.fragment.HardwareFeatureExtractor.ExtractedFeature> extracted = 
+                    com.example.ui.fragment.HardwareFeatureExtractor.extractFeatures(getContext(), uriString);
+            
+            for (com.example.ui.fragment.HardwareFeatureExtractor.ExtractedFeature ext : extracted) {
+                features.add(new DetectedFeature(ext.type, ext.rectFraction, ext.color, ext.label));
+            }
         } catch (Exception e) {
-            Log.e(TAG, "Error decoding image file uri: " + uriString, e);
+            Log.e(TAG, "Error decoding image file uri or performing feature extraction: " + uriString, e);
             sourceBitmap = null;
+            features.clear();
         }
         invalidate();
     }
