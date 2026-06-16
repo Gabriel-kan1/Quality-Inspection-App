@@ -6,16 +6,6 @@
     android:layout_height="match_parent"
     android:background="@color/background_dark">
 
-    <!-- Camera Preview for Setup Reference -->
-    <androidx.camera.view.PreviewView
-        android:id="@+id/preview_view"
-        android:layout_width="0dp"
-        android:layout_height="0dp"
-        app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toTopOf="parent" />
-
     <!-- Instruction Panel (Translucent Overlay) -->
     <LinearLayout
         android:id="@+id/layout_instructions"
@@ -50,22 +40,150 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginTop="8dp"
-            android:text="Please place an assembled and verified MASTER PRODUCT centered below. Take a flat, clear photograph to establish the reference gold-standard alignment."
+            android:text="Choose or upload an acquired image of the MASTER GOLD-STANDARD product. This will establish reference feature patterns of the chassis."
             android:textColor="@color/gray_text_secondary"
             android:textSize="13sp" />
 
     </LinearLayout>
 
-    <!-- Visual Target Frame Guide overlay in center -->
-    <View
-        android:id="@+id/reference_alignment_guide"
-        android:layout_width="320dp"
-        android:layout_height="240dp"
+    <!-- Code-uploaded Asset Detector Panel -->
+    <com.google.android.material.card.MaterialCardView
+        android:id="@+id/card_assets_folder"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginHorizontal="16dp"
+        android:layout_marginTop="8dp"
+        app:cardBackgroundColor="#1A4ADE80"
+        app:cardCornerRadius="12dp"
+        app:strokeWidth="1dp"
+        app:strokeColor="@color/green_pass"
+        app:layout_constraintTop_toBottomOf="@id/layout_instructions">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="12dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
+                <ImageView
+                    android:layout_width="16dp"
+                    android:layout_height="16dp"
+                    android:src="@android:drawable/ic_dialog_info"
+                    app:tint="@color/green_pass_header"
+                    android:contentDescription="Folder info icon" />
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:text="IMAGES IN assets/chassis_images/:"
+                    android:textColor="@color/green_pass_header"
+                    android:textSize="11sp"
+                    android:textStyle="bold"
+                    android:letterSpacing="0.05" />
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/tv_assets_folder_status"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:textColor="@color/white"
+                android:textSize="11sp"
+                android:lineSpacingMultiplier="1.1"
+                android:text="Scanning 'app/src/main/assets/chassis_images/'..." />
+
+            <!-- Horizontal Scroll of files found in assets folder -->
+            <HorizontalScrollView
+                android:id="@+id/scroll_assets"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:scrollbars="none">
+
+                <LinearLayout
+                    android:id="@+id/layout_assets_container"
+                    android:layout_width="wrap_content"
+                    android:layout_height="60dp"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical" />
+            </HorizontalScrollView>
+
+        </LinearLayout>
+    </com.google.android.material.card.MaterialCardView>
+
+    <!-- Upload Display Area -->
+    <FrameLayout
+        android:id="@+id/layout_upload_zone"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:layout_margin="16dp"
         android:background="@drawable/reference_guide_border"
+        app:layout_constraintTop_toBottomOf="@id/card_assets_folder"
         app:layout_constraintBottom_toTopOf="@id/card_action_deck"
-        app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toBottomOf="@id/layout_instructions" />
+        app:layout_constraintEnd_toEndOf="parent">
+
+        <!-- Selected Reference Image Preview -->
+        <ImageView
+            android:id="@+id/iv_reference_preview"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:scaleType="fitCenter"
+            android:visibility="gone"
+            android:contentDescription="Selected reference design" />
+
+        <!-- Placeholder Hint -->
+        <LinearLayout
+            android:id="@+id/layout_upload_placeholder"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:padding="24dp">
+
+            <ImageView
+                android:layout_width="64dp"
+                android:layout_height="64dp"
+                android:src="@android:drawable/ic_menu_gallery"
+                app:tint="@color/blue_primary"
+                android:contentDescription="Image upload indicator icon" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:text="TAP HERE TO CHOOSE GRAPHIC FILE"
+                android:textColor="@color/blue_primary"
+                android:textSize="13sp"
+                android:textStyle="bold"
+                android:letterSpacing="0.05" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text="Select from emulator file storage"
+                android:textColor="@color/gray_text_secondary"
+                android:textSize="11sp" />
+
+            <Button
+                android:id="@+id/btn_use_preset_reference"
+                style="@style/Widget.Material3.Button.TonalButton"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:text="USE BUILT-IN REFERENCE PRESET"
+                android:textColor="@color/blue_primary"
+                android:textSize="11sp"
+                app:cornerRadius="8dp" />
+        </LinearLayout>
+    </FrameLayout>
 
     <!-- Bottom Operator Actions card -->
     <com.google.android.material.card.MaterialCardView
@@ -75,6 +193,8 @@
         android:layout_margin="16dp"
         app:cardBackgroundColor="@color/surface_card"
         app:cardCornerRadius="16dp"
+        app:strokeWidth="1dp"
+        app:strokeColor="@color/color_border"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent">
@@ -110,7 +230,7 @@
                     android:layout_height="64dp"
                     android:layout_weight="1.2"
                     android:backgroundTint="@color/blue_primary"
-                    android:text="CAPTURE REFERENCE"
+                    android:text="CHOOSE IMAGE"
                     android:textColor="@color/white"
                     android:textStyle="bold"
                     android:layout_marginStart="8dp" />

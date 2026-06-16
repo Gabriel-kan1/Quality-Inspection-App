@@ -6,57 +6,6 @@
     android:layout_height="match_parent"
     android:background="@color/background_dark">
 
-    <!-- Alignment Color Border Wrapper -->
-    <FrameLayout
-        android:id="@+id/layout_camera_enclosure"
-        android:layout_width="0dp"
-        android:layout_height="0dp"
-        android:padding="8dp"
-        android:background="@drawable/align_border_red"
-        app:layout_constraintBottom_toTopOf="@id/card_operator_controls"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toBottomOf="@id/layout_top_status">
-
-        <FrameLayout
-            android:layout_width="match_parent"
-            android:layout_height="match_parent">
-
-            <!-- Camera Live preview -->
-            <androidx.camera.view.PreviewView
-                android:id="@+id/preview_view"
-                android:layout_width="match_parent"
-                android:layout_height="match_parent" />
-
-            <!-- Ghost Overlay Image (35% Opacity) -->
-            <ImageView
-                android:id="@+id/iv_ghost_overlay"
-                android:layout_width="match_parent"
-                android:layout_height="match_parent"
-                android:scaleType="centerCrop"
-                android:alpha="0.35"
-                android:contentDescription="Reference product ghost overlay"
-                android:visibility="visible" />
-
-            <!-- Status Indicator Overlay (Top Right in Preview) -->
-            <TextView
-                android:id="@+id/tv_alignment_state"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_gravity="top|end"
-                android:layout_margin="16dp"
-                android:background="#D9F87171"
-                android:paddingHorizontal="14dp"
-                android:paddingVertical="8dp"
-                android:text="ALIGNING..."
-                android:textColor="@color/white"
-                android:textSize="12sp"
-                android:textStyle="bold"
-                android:letterSpacing="0.05" />
-
-        </FrameLayout>
-    </FrameLayout>
-
     <!-- Top Status panel showing part ID -->
     <RelativeLayout
         android:id="@+id/layout_top_status"
@@ -99,6 +48,179 @@
             android:textSize="11sp" />
     </RelativeLayout>
 
+    <!-- Code-uploaded Asset Detector Panel -->
+    <com.google.android.material.card.MaterialCardView
+        android:id="@+id/card_assets_folder_inspect"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginHorizontal="16dp"
+        android:layout_marginTop="8dp"
+        app:cardBackgroundColor="#1A4ADE80"
+        app:cardCornerRadius="12dp"
+        app:strokeWidth="1dp"
+        app:strokeColor="@color/green_pass"
+        app:layout_constraintTop_toBottomOf="@id/layout_top_status">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="12dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
+                <ImageView
+                    android:layout_width="16dp"
+                    android:layout_height="16dp"
+                    android:src="@android:drawable/ic_dialog_info"
+                    app:tint="@color/green_pass_header"
+                    android:contentDescription="Folder info icon" />
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:text="IMAGES IN assets/chassis_images/:"
+                    android:textColor="@color/green_pass_header"
+                    android:textSize="11sp"
+                    android:textStyle="bold"
+                    android:letterSpacing="0.05" />
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/tv_assets_folder_status"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:textColor="@color/white"
+                android:textSize="11sp"
+                android:lineSpacingMultiplier="1.1"
+                android:text="Scanning 'app/src/main/assets/chassis_images/'..." />
+
+            <!-- Horizontal Scroll of files found in assets folder -->
+            <HorizontalScrollView
+                android:id="@+id/scroll_assets"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:scrollbars="none">
+
+                <LinearLayout
+                    android:id="@+id/layout_assets_container"
+                    android:layout_width="wrap_content"
+                    android:layout_height="60dp"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical" />
+            </HorizontalScrollView>
+
+        </LinearLayout>
+    </com.google.android.material.card.MaterialCardView>
+
+    <FrameLayout
+        android:id="@+id/layout_camera_enclosure"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:padding="8dp"
+        android:background="@drawable/align_border_red"
+        app:layout_constraintBottom_toTopOf="@id/card_operator_controls"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toBottomOf="@id/card_assets_folder_inspect">
+
+        <FrameLayout
+            android:id="@+id/layout_interactive_target"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="#222B2930">
+
+            <!-- Selected Active Chassis Image under inspection -->
+            <ImageView
+                android:id="@+id/iv_chassis_preview"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:scaleType="fitCenter"
+                android:visibility="gone"
+                android:contentDescription="Inspection target image preview" />
+
+            <!-- Ghost Overlay Image (35% Opacity) -->
+            <ImageView
+                android:id="@+id/iv_ghost_overlay"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:scaleType="fitCenter"
+                android:alpha="0.35"
+                android:contentDescription="Reference product ghost overlay"
+                android:visibility="gone" />
+
+            <!-- Placeholder Hint -->
+            <LinearLayout
+                android:id="@+id/layout_upload_placeholder"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="center"
+                android:orientation="vertical"
+                android:gravity="center"
+                android:padding="20dp"
+                android:visibility="visible">
+
+                <ImageView
+                    android:layout_width="56dp"
+                    android:layout_height="56dp"
+                    android:src="@android:drawable/ic_menu_gallery"
+                    app:tint="@color/blue_primary"
+                    android:contentDescription="Gallery vector indicator" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:text="TAP TO UPLOAD ACTIVE CHASSIS PHOTO"
+                    android:textColor="@color/blue_primary"
+                    android:textSize="12sp"
+                    android:textStyle="bold"
+                    android:letterSpacing="0.05" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:text="Imports and aligns your acquired photo"
+                    android:textColor="@color/gray_text_secondary"
+                    android:textSize="10sp" />
+
+                <Button
+                    android:id="@+id/btn_use_preset_inspection"
+                    style="@style/Widget.Material3.Button.TonalButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="16dp"
+                    android:text="USE BUILT-IN ACTIVE CHASSIS PRESET"
+                    android:textColor="@color/blue_primary"
+                    android:textSize="11sp"
+                    app:cornerRadius="8dp" />
+            </LinearLayout>
+
+            <!-- Status Indicator Overlay (Top Right in Preview) -->
+            <TextView
+                android:id="@+id/tv_alignment_state"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="top|end"
+                android:layout_margin="16dp"
+                android:background="#D9F87171"
+                android:paddingHorizontal="14dp"
+                android:paddingVertical="8dp"
+                android:text="ALIGNING..."
+                android:textColor="@color/white"
+                android:textSize="12sp"
+                android:textStyle="bold"
+                android:letterSpacing="0.05" />
+
+        </FrameLayout>
+    </FrameLayout>
+
     <!-- Bottom Operator Deck -->
     <com.google.android.material.card.MaterialCardView
         android:id="@+id/card_operator_controls"
@@ -107,6 +229,8 @@
         android:layout_margin="16dp"
         app:cardBackgroundColor="@color/surface_card"
         app:cardCornerRadius="16dp"
+        app:strokeWidth="1dp"
+        app:strokeColor="@color/color_border"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent">
@@ -124,7 +248,7 @@
                 android:layout_height="wrap_content"
                 android:textColor="@color/gray_text_secondary"
                 android:textSize="13sp"
-                android:text="Align the live contours with the semi-transparent reference"
+                android:text="Upload photo first to lock virtual coordinate alignment"
                 android:layout_marginBottom="16dp" />
 
             <LinearLayout
@@ -153,7 +277,7 @@
                     android:layout_height="64dp"
                     android:layout_weight="2"
                     android:backgroundTint="@color/blue_primary"
-                    android:text="ANALYZE &amp; CAPTURE"
+                    android:text="CHOOSE IMAGE"
                     android:textColor="@color/white"
                     android:textStyle="bold"
                     android:layout_marginStart="8dp" />

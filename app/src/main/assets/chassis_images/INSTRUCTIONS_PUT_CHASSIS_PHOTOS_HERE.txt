@@ -1,0 +1,5 @@
+HOW TO USE THIS ASSETS DIRECTORY FOR TESTING CHASSIS IMAGES:
+
+1. Drag and drop or upload your .jpg, .png, or .jpeg hardware chassis images directly into this folder ('/app/src/main/assets/chassis_images/') using the AI Studio left sidebar file explorer.
+2. The Android application will automatically detect all valid image files in this directory at runtime.
+3. A dynamic asset selection bar will appear on your Setup and Inspection screens allowing you to load those images instantly with a single tap, completely bypassing the emulator's file system or drag-and-drop limitations!

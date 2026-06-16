@@ -69,12 +69,13 @@ public class ChassisOverlayView extends View {
         paintBackgroundMesh.setStrokeWidth(2f);
         paintBackgroundMesh.setStyle(Paint.Style.STROKE);
 
-        // Load standard mock features styled after Geometric Balance HTML parameters
-        features.add(new DetectedFeature("Bolt", new RectF(0.15f, 0.20f, 0.35f, 0.38f), Color.rgb(56, 189, 248), "BOLT #01")); // #38BDF8
-        features.add(new DetectedFeature("Bolt", new RectF(0.60f, 0.18f, 0.80f, 0.36f), Color.rgb(56, 189, 248), "BOLT #02"));
-        features.add(new DetectedFeature("Bolt", new RectF(0.40f, 0.50f, 0.60f, 0.68f), Color.rgb(56, 189, 248), "BOLT #03"));
-        features.add(new DetectedFeature("Hole", new RectF(0.18f, 0.65f, 0.32f, 0.79f), Color.rgb(251, 191, 36), "HOLE #01"));  // #FBBF24
-        features.add(new DetectedFeature("Screw", new RectF(0.68f, 0.65f, 0.82f, 0.79f), Color.rgb(74, 222, 128), "SCREW #01")); // #4ADE80
+        // Load chassis components matching user-acquired hardware photo:
+        // Left Column: 2 plain locator/dowel pins
+        // Right Column: 2 threaded studs/bolts
+        features.add(new DetectedFeature("Locator Pin", new RectF(0.24f, 0.28f, 0.44f, 0.48f), Color.rgb(74, 222, 128), "PIN #01")); // #4ADE80
+        features.add(new DetectedFeature("Locator Pin", new RectF(0.14f, 0.52f, 0.34f, 0.72f), Color.rgb(74, 222, 128), "PIN #02"));
+        features.add(new DetectedFeature("Threaded Stud", new RectF(0.56f, 0.32f, 0.76f, 0.58f), Color.rgb(56, 189, 248), "STUD #01")); // #38BDF8
+        features.add(new DetectedFeature("Threaded Stud", new RectF(0.42f, 0.56f, 0.62f, 0.82f), Color.rgb(56, 189, 248), "STUD #02"));
     }
 
     public void setImageUri(String uriString) {
@@ -85,8 +86,14 @@ public class ChassisOverlayView extends View {
         }
 
         try {
-            Uri uri = Uri.parse(uriString);
-            InputStream inputStream = getContext().getContentResolver().openInputStream(uri);
+            InputStream inputStream;
+            if (uriString.startsWith("file:///android_asset/")) {
+                String assetPath = uriString.substring("file:///android_asset/".length());
+                inputStream = getContext().getAssets().open(assetPath);
+            } else {
+                Uri uri = Uri.parse(uriString);
+                inputStream = getContext().getContentResolver().openInputStream(uri);
+            }
             sourceBitmap = BitmapFactory.decodeStream(inputStream);
             if (inputStream != null) {
                 inputStream.close();
@@ -114,8 +121,8 @@ public class ChassisOverlayView extends View {
             canvas.drawBitmap(scaledBitmap, 0f, 0f, null);
         } else {
             // No real photo was stored, draw a highly technical metal chassis mesh simulation 
-            // perfect for mock/testing presentation
-            canvas.drawColor(Color.rgb(43, 41, 48)); // Dark metal chassis back (#2B2930)
+            // perfect for mock/testing presentation representing their actual hardware picture!
+            canvas.drawColor(Color.rgb(43, 41, 48)); // Dark grey metallic surface
 
             // Draw technical cross grid lines
             for (int i = 0; i < viewWidth; i += 60) {
@@ -125,12 +132,57 @@ public class ChassisOverlayView extends View {
                 canvas.drawLine(0, j, viewWidth, j, paintBackgroundMesh);
             }
 
-            // Draw a subtle wireframe circle in the center matching factory visual guidelines
-            Paint guidePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-            guidePaint.setColor(Color.argb(45, 56, 189, 248)); // #38BDF8 with 45 alpha
-            guidePaint.setStrokeWidth(4f);
-            guidePaint.setStyle(Paint.Style.STROKE);
-            canvas.drawCircle(viewWidth / 2f, viewHeight / 2f, Math.min(viewWidth, viewHeight) / 3f, guidePaint);
+            // Draw beautiful vector cylindrical objects representing PINs and STUDs to aid testing
+            Paint partPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+            Paint partDetailPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+
+            partPaint.setStyle(Paint.Style.FILL);
+            partDetailPaint.setStyle(Paint.Style.STROKE);
+            partDetailPaint.setStrokeWidth(3f);
+
+            for (DetectedFeature feature : features) {
+                float left = feature.rectFraction.left * viewWidth;
+                float top = feature.rectFraction.top * viewHeight;
+                float right = feature.rectFraction.right * viewWidth;
+                float bottom = feature.rectFraction.bottom * viewHeight;
+                float cx = (left + right) / 2f;
+                float cy = (top + bottom) / 2f;
+                float radius = Math.min(right - left, bottom - top) / 2.2f;
+
+                // Outer base plate reflection ring
+                partDetailPaint.setColor(Color.rgb(130, 130, 130));
+                canvas.drawCircle(cx, cy, radius * 1.2f, partDetailPaint);
+
+                if ("Locator Pin".equals(feature.type)) {
+                    // Plain Chamfered Pin Cylinder (metallic grey gradients)
+                    partPaint.setColor(Color.rgb(160, 163, 168));
+                    canvas.drawCircle(cx, cy, radius, partPaint);
+
+                    // Inner chamfered center hole
+                    partPaint.setColor(Color.rgb(80, 83, 88));
+                    canvas.drawCircle(cx, cy, radius * 0.35f, partPaint);
+
+                    // Pin highlight ring
+                    partDetailPaint.setColor(Color.rgb(220, 225, 230));
+                    canvas.drawCircle(cx, cy, radius * 0.8f, partDetailPaint);
+                } else {
+                    // Threaded Stud Bolt Cylinder (screw ridges & highlight shine)
+                    partPaint.setColor(Color.rgb(205, 208, 213));
+                    canvas.drawCircle(cx, cy, radius, partPaint);
+
+                    // Screw thread circular divisions
+                    partDetailPaint.setColor(Color.rgb(90, 93, 100));
+                    canvas.drawCircle(cx, cy, radius * 0.8f, partDetailPaint);
+                    canvas.drawCircle(cx, cy, radius * 0.6f, partDetailPaint);
+                    canvas.drawCircle(cx, cy, radius * 0.4f, partDetailPaint);
+
+                    // Reflective shiny overlay bar on threaded bolts
+                    Paint shinePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+                    shinePaint.setColor(Color.argb(90, 255, 255, 255));
+                    shinePaint.setStyle(Paint.Style.FILL);
+                    canvas.drawRect(cx - radius * 0.25f, cy - radius, cx + radius * 0.25f, cy + radius, shinePaint);
+                }
+            }
         }
 
         // Draw overlay detected bounding boxes
