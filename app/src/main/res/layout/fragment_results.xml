@@ -255,6 +255,7 @@
                         android:paddingStart="8dp" />
 
                     <TextView
+                        android:id="@+id/tv_expected_bolts"
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
                         android:layout_weight="0.9"
@@ -264,6 +265,7 @@
                         android:gravity="center" />
 
                     <TextView
+                        android:id="@+id/tv_detected_bolts"
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
                         android:layout_weight="0.9"
@@ -273,6 +275,7 @@
                         android:gravity="center" />
 
                     <TextView
+                        android:id="@+id/tv_status_bolts"
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
                         android:layout_weight="0.9"
@@ -309,6 +312,7 @@
                         android:paddingStart="8dp" />
 
                     <TextView
+                        android:id="@+id/tv_expected_holes"
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
                         android:layout_weight="0.9"
@@ -318,6 +322,7 @@
                         android:gravity="center" />
 
                     <TextView
+                        android:id="@+id/tv_detected_holes"
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
                         android:layout_weight="0.9"
@@ -327,6 +332,7 @@
                         android:gravity="center" />
 
                     <TextView
+                        android:id="@+id/tv_status_holes"
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
                         android:layout_weight="0.9"
@@ -363,6 +369,7 @@
                         android:paddingStart="8dp" />
 
                     <TextView
+                        android:id="@+id/tv_expected_screws"
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
                         android:layout_weight="0.9"
@@ -372,6 +379,7 @@
                         android:gravity="center" />
 
                     <TextView
+                        android:id="@+id/tv_detected_screws"
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
                         android:layout_weight="0.9"
@@ -381,6 +389,7 @@
                         android:gravity="center" />
 
                     <TextView
+                        android:id="@+id/tv_status_screws"
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
                         android:layout_weight="0.9"
