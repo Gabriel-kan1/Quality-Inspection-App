@@ -47,11 +47,13 @@ public final class ClipEmbedder {
     private final OrtEnvironment env;
     private final OrtSession session;
     private final String inputName;
+    private final String outputName;
 
-    private ClipEmbedder(OrtEnvironment env, OrtSession session, String inputName) {
+    private ClipEmbedder(OrtEnvironment env, OrtSession session, String inputName, String outputName) {
         this.env = env;
         this.session = session;
         this.inputName = inputName;
+        this.outputName = outputName;
     }
 
     /**
@@ -77,9 +79,10 @@ public final class ClipEmbedder {
             OrtSession.SessionOptions opts = new OrtSession.SessionOptions();
             OrtSession session = env.createSession(modelBytes, opts);
             String inputName = session.getInputNames().iterator().next();
+            String outputName = pickOutputName(session.getOutputNames());
             Log.d(TAG, "CLIP model loaded. input=" + inputName
-                    + " outputs=" + session.getOutputNames());
-            return new ClipEmbedder(env, session, inputName);
+                    + " outputs=" + session.getOutputNames() + " using=" + outputName);
+            return new ClipEmbedder(env, session, inputName, outputName);
         } catch (Throwable t) {
             Log.e(TAG, "Failed to load CLIP model asset '" + MODEL_ASSET
                     + "'. Classification will fall back to 'unknown'.", t);
@@ -149,18 +152,34 @@ public final class ClipEmbedder {
         return fb;
     }
 
-    /** Flattens the first output tensor (e.g. [1, D]) into a float[D] vector. */
+    /**
+     * Picks the most embedding-like output so different CLIP vision exports all work:
+     * prefer a projected "image_embeds", then a pooled output, else the first output.
+     */
+    private static String pickOutputName(java.util.Set<String> outputs) {
+        for (String name : outputs) {
+            if (name.toLowerCase().contains("image_embeds")) return name;
+        }
+        for (String name : outputs) {
+            String l = name.toLowerCase();
+            if (l.contains("pooler") || l.contains("pooled") || l.contains("embed")) return name;
+        }
+        return outputs.iterator().next();
+    }
+
+    /** Reads the chosen output tensor and flattens it to a float[D] vector. */
     private float[] extractVector(OrtSession.Result result) throws Exception {
-        OnnxValue value = result.get(0);
+        OnnxValue value = result.get(outputName).orElseGet(() -> result.get(0));
         Object raw = value.getValue();
         if (raw instanceof float[][]) {
+            // [1, D] — projected/pooled embedding.
             return ((float[][]) raw)[0];
         }
         if (raw instanceof float[]) {
             return (float[]) raw;
         }
         if (raw instanceof float[][][]) {
-            // Unexpected rank; flatten the first row of the first batch.
+            // [1, tokens, D] last_hidden_state — use the CLS token (index 0).
             return ((float[][][]) raw)[0][0];
         }
         throw new IllegalStateException("Unsupported CLIP output type: " + raw.getClass());
