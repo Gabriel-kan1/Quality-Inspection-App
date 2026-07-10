@@ -15,6 +15,7 @@ import org.opencv.android.Utils;
 import org.opencv.core.Core;
 import org.opencv.core.Mat;
 import org.opencv.core.MatOfPoint;
+import org.opencv.core.MatOfPoint2f;
 import org.opencv.core.Rect;
 import org.opencv.core.Scalar;
 import org.opencv.core.Size;
@@ -30,14 +31,52 @@ import java.util.Locale;
 public class HardwareFeatureExtractor {
     private static final String TAG = "HardwareFeatureExtractor";
 
-    // --- Configuration Constants (Precisely Synced with Python Script) ---
-    private static final float MAX_DIMENSION_RATIO = 0.4f;
-    private static final float MAX_ASPECT_RATIO = 5.0f;
-    private static final float MIN_ASPECT_RATIO = 0.2f;
-    private static final int EDGE_MARGIN = 10;
-    private static final double DYNAMIC_AREA_MULTIPLIER = 0.15;
-    private static final int PROXIMITY_THRESHOLD = 10;
-    private static final double FILL_RATIO_THRESHOLD = 0.7;
+    // ─────────────────────────────────────────────────────────────
+    // CONFIG — tune detection here. Grouped to mirror the Python script's
+    // CONFIG block. All values are non-final so they can be adjusted at
+    // runtime (e.g. from a debug settings screen) without recompiling logic.
+    // ─────────────────────────────────────────────────────────────
+
+    // --- Edge detection (computeEdges) ---
+    /** CLAHE local-contrast boost. Higher = crisper edges but more texture noise. */
+    private static double CLAHE_CLIP_LIMIT = 1.0;
+    /** Bilateral filter diameter/sigmas — denoise while preserving edges. */
+    private static int BILATERAL_D = 6;
+    private static double BILATERAL_SIGMA_COLOR = 120;
+    private static double BILATERAL_SIGMA_SPACE = 40;
+    /**
+     * Canny thresholds are computed adaptively per-image via Otsu's method rather
+     * than fixed, so lighting/exposure differences between photos don't require
+     * re-tuning. These multipliers scale the Otsu threshold (low = ratio * high).
+     */
+    private static double CANNY_LOW_RATIO = 0.5;
+    private static double CANNY_HIGH_CAP = 255.0;
+    /** Morphology: dilate (rect) to bridge gaps, then close (ellipse) to seal contours. */
+    private static int DILATE_KERNEL_SIZE = 5;
+    private static int CLOSE_KERNEL_SIZE = 7;
+
+    // --- Geometry filtering (findFeatureBoxes) ---
+    private static float MAX_DIMENSION_RATIO = 0.4f;
+    private static float MAX_ASPECT_RATIO = 5.0f;
+    private static float MIN_ASPECT_RATIO = 0.2f;
+    private static int EDGE_MARGIN = 10;
+    private static double DYNAMIC_AREA_MULTIPLIER = 0.15;
+    private static int PROXIMITY_THRESHOLD = 10;
+    private static double FILL_RATIO_THRESHOLD = 0.7;
+    /**
+     * Minimum circularity (4*pi*area / perimeter^2, 1.0 = perfect circle) required for
+     * contours that are roughly as wide as they are tall (aspect ratio within
+     * CIRCULARITY_ASPECT_BAND of 1.0). Rejects scratches/seams among the round
+     * fastener types (bolt_head, hole, rivet_head, stud) without touching elongated
+     * contours, because "screw" in this pipeline is a cylindrical shaft viewed from
+     * the side (long and thin, not round) — see TEXT_PROMPTS in the Python script.
+     * Applying circularity indiscriminately would filter out real screws. Set to 0
+     * to disable entirely.
+     */
+    private static double MIN_CIRCULARITY = 0.55;
+    /** How close to a 1:1 aspect ratio a contour must be before the circularity check applies. */
+    private static double CIRCULARITY_ASPECT_BAND = 0.35;
+
     private static final int CROP_PADDING = 40;   // matches CROP_PADDING in the Python script
 
     static {
@@ -257,23 +296,32 @@ public class HardwareFeatureExtractor {
         for (MatOfPoint c : contours) {
             Rect r = Imgproc.boundingRect(c);
 
-            // 1. Max Dimension Check (MAX_DIMENSION_RATIO = 0.4)
+            // 1. Max Dimension Check (MAX_DIMENSION_RATIO)
             if (r.width > imgWidth * MAX_DIMENSION_RATIO || r.height > imgHeight * MAX_DIMENSION_RATIO) continue;
 
-            // 2. Aspect Ratio Check (MIN=0.2, MAX=5.0)
+            // 2. Aspect Ratio Check
             float aspect = (float) r.width / r.height;
             if (aspect > MAX_ASPECT_RATIO || aspect < MIN_ASPECT_RATIO) continue;
 
-            // 3. Edge Margin Check (EDGE_MARGIN = 10)
+            // 3. Edge Margin Check
             if (r.x < EDGE_MARGIN || r.y < EDGE_MARGIN || (r.x + r.width) > (imgWidth - EDGE_MARGIN) || (r.y + r.height) > (imgHeight - EDGE_MARGIN)) continue;
 
+            double area = Imgproc.contourArea(c);
+
+            // 4. Circularity Check — only for roughly square/round boxes (near 1:1 aspect),
+            // so elongated screw-shaft contours are never subject to it (see MIN_CIRCULARITY doc).
+            if (MIN_CIRCULARITY > 0 && Math.abs(aspect - 1.0f) <= CIRCULARITY_ASPECT_BAND) {
+                double circularity = circularityOf(c, area);
+                if (circularity < MIN_CIRCULARITY) continue;
+            }
+
             validBoxes.add(r);
-            validAreas.add(Imgproc.contourArea(c));
+            validAreas.add(area);
         }
 
         if (validBoxes.isEmpty()) return new ArrayList<>();
 
-        // 4. Dynamic Area Filtering (DYNAMIC_AREA_MULTIPLIER = 0.15)
+        // 5. Dynamic Area Filtering
         List<Double> sortedAreas = new ArrayList<>(validAreas);
         Collections.sort(sortedAreas, Collections.reverseOrder());
         int topCount = Math.min(3, sortedAreas.size());
@@ -289,8 +337,17 @@ public class HardwareFeatureExtractor {
             }
         }
 
-        // 5. Nested Box Removal & Proximity Merge (PROXIMITY_THRESHOLD = 10)
+        // 6. Nested Box Removal & Proximity Merge
         return mergeNearbyBoxes(removeNestedBoxes(sizedBoxes), PROXIMITY_THRESHOLD);
+    }
+
+    /** 4*pi*area / perimeter^2 — 1.0 for a perfect circle, lower for irregular/elongated shapes. */
+    private static double circularityOf(MatOfPoint contour, double area) {
+        MatOfPoint2f c2f = new MatOfPoint2f(contour.toArray());
+        double perimeter = Imgproc.arcLength(c2f, true);
+        c2f.release();
+        if (perimeter <= 0) return 0;
+        return (4 * Math.PI * area) / (perimeter * perimeter);
     }
 
     /** Crops the colour source Mat around a box (with CROP_PADDING) and returns an ARGB Bitmap. */
@@ -341,30 +398,39 @@ public class HardwareFeatureExtractor {
             gray.copyTo(preprocessed);
         }
 
-        // 2. CLAHE (clipLimit=1.0, tileGridSize=(16,16))
+        // 2. CLAHE
         Mat imgClahe = new Mat();
-        CLAHE clahe = Imgproc.createCLAHE(1.0, new Size(16, 16));
+        CLAHE clahe = Imgproc.createCLAHE(CLAHE_CLIP_LIMIT, new Size(16, 16));
         clahe.apply(preprocessed, imgClahe);
 
-        // 3. Bilateral Filter (d=6, sigmaColor=120, sigmaSpace=40)
+        // 3. Bilateral Filter
         Mat imgFiltered = new Mat();
-        Imgproc.bilateralFilter(imgClahe, imgFiltered, 6, 120, 40);
+        Imgproc.bilateralFilter(imgClahe, imgFiltered, BILATERAL_D, BILATERAL_SIGMA_COLOR, BILATERAL_SIGMA_SPACE);
 
         // 4. Noise Reduction Blurs (median(5) then Gaussian(5x5))
         Mat imgSmoothed = new Mat();
         Imgproc.medianBlur(imgFiltered, imgSmoothed, 5);
         Imgproc.GaussianBlur(imgSmoothed, imgSmoothed, new Size(5, 5), 0);
 
-        // 5. Canny Edge Detection (50, 150)
-        Mat edges = new Mat();
-        Imgproc.Canny(imgSmoothed, edges, 50, 150);
+        // 5. Canny Edge Detection — thresholds derived per-image via Otsu instead of fixed
+        // values, so exposure/lighting differences between photos don't need re-tuning.
+        Mat otsuMask = new Mat();
+        double otsuHigh = Imgproc.threshold(imgSmoothed, otsuMask, 0, CANNY_HIGH_CAP,
+                Imgproc.THRESH_BINARY | Imgproc.THRESH_OTSU);
+        otsuMask.release();
+        double cannyLow = otsuHigh * CANNY_LOW_RATIO;
 
-        // 6. Morphology: dilate (5x5 rect) then close (7x7 ellipse)
-        Mat dilateKernel = Imgproc.getStructuringElement(Imgproc.MORPH_RECT, new Size(5, 5));
+        Mat edges = new Mat();
+        Imgproc.Canny(imgSmoothed, edges, cannyLow, otsuHigh);
+
+        // 6. Morphology: dilate (rect) then close (ellipse)
+        Mat dilateKernel = Imgproc.getStructuringElement(Imgproc.MORPH_RECT,
+                new Size(DILATE_KERNEL_SIZE, DILATE_KERNEL_SIZE));
         Mat edgesDilated = new Mat();
         Imgproc.dilate(edges, edgesDilated, dilateKernel);
 
-        Mat closeKernel = Imgproc.getStructuringElement(Imgproc.MORPH_ELLIPSE, new Size(7, 7));
+        Mat closeKernel = Imgproc.getStructuringElement(Imgproc.MORPH_ELLIPSE,
+                new Size(CLOSE_KERNEL_SIZE, CLOSE_KERNEL_SIZE));
         Mat edgesClosed = new Mat();
         Imgproc.morphologyEx(edgesDilated, edgesClosed, Imgproc.MORPH_CLOSE, closeKernel);
 
