@@ -3,15 +3,16 @@ package com.example.ui.fragment;
 import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
-import android.graphics.Color;
 import android.graphics.RectF;
 import android.net.Uri;
 import android.util.Log;
 
+import com.example.ml.ClipEmbedder;
+import com.example.ml.ReferenceLibrary;
+
 import org.opencv.android.OpenCVLoader;
 import org.opencv.android.Utils;
 import org.opencv.core.Core;
-import org.opencv.core.CvType;
 import org.opencv.core.Mat;
 import org.opencv.core.MatOfPoint;
 import org.opencv.core.Rect;
@@ -24,6 +25,7 @@ import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Locale;
 
 public class HardwareFeatureExtractor {
     private static final String TAG = "HardwareFeatureExtractor";
@@ -36,6 +38,7 @@ public class HardwareFeatureExtractor {
     private static final double DYNAMIC_AREA_MULTIPLIER = 0.15;
     private static final int PROXIMITY_THRESHOLD = 10;
     private static final double FILL_RATIO_THRESHOLD = 0.7;
+    private static final int CROP_PADDING = 40;   // matches CROP_PADDING in the Python script
 
     static {
         if (!OpenCVLoader.initDebug()) {
@@ -71,13 +74,90 @@ public class HardwareFeatureExtractor {
         }
     }
 
+    /** A detected feature crop (colour bitmap) plus its fractional location in the source image. */
+    public static class CropRegion {
+        public final Bitmap bitmap;
+        public final RectF rectFraction;
+
+        public CropRegion(Bitmap bitmap, RectF rectFraction) {
+            this.bitmap = bitmap;
+            this.rectFraction = rectFraction;
+        }
+    }
+
+    /** Bundles the intermediate edge Mats produced by {@link #computeEdges(Mat)}. */
+    private static final class Edges {
+        final Mat gray;
+        final Mat edgesDilated;
+        final Mat edgesClosed;
+
+        Edges(Mat gray, Mat edgesDilated, Mat edgesClosed) {
+            this.gray = gray;
+            this.edgesDilated = edgesDilated;
+            this.edgesClosed = edgesClosed;
+        }
+
+        void release() {
+            gray.release();
+            edgesDilated.release();
+            edgesClosed.release();
+        }
+    }
+
     public static AnalysisResult extractFeatures(Context context, String uriString) {
+        return extractFeatures(context, uriString, null);
+    }
+
+    /**
+     * Runs only the OpenCV geometry stage and returns the colour crops of each detected
+     * feature (no classification). Used by the in-app Reference Setup builder so the user
+     * can label crops to build a {@link ReferenceLibrary}. Callers own the returned bitmaps.
+     */
+    public static List<CropRegion> extractCrops(Context context, String uriString) {
+        List<CropRegion> crops = new ArrayList<>();
+        if (uriString == null || uriString.isEmpty()) return crops;
+
+        Bitmap bitmap = loadBitmap(context, uriString, 1280);
+        if (bitmap == null) return crops;
+
+        try {
+            Mat src = new Mat();
+            Utils.bitmapToMat(bitmap, src);
+            Edges e = computeEdges(src);
+
+            float w = src.width();
+            float h = src.height();
+            for (Rect r : findFeatureBoxes(e.edgesClosed, w, h)) {
+                Bitmap crop = cropToBitmap(src, r);
+                if (crop == null) continue;
+                RectF frac = new RectF(
+                        r.x / w, r.y / h, (r.x + r.width) / w, (r.y + r.height) / h);
+                crops.add(new CropRegion(crop, frac));
+            }
+
+            src.release();
+            e.release();
+        } catch (Exception ex) {
+            Log.e(TAG, "extractCrops failure", ex);
+        }
+        return crops;
+    }
+
+    /**
+     * Runs the OpenCV extraction pipeline and classifies each detected crop with CLIP
+     * against the supplied {@link ReferenceLibrary}. When {@code library} is null or empty
+     * (no reference set, or CLIP unavailable) every feature is labelled "unknown".
+     */
+    public static AnalysisResult extractFeatures(Context context, String uriString, ReferenceLibrary library) {
         List<ExtractedFeature> features = new ArrayList<>();
         Bitmap diagnosticBitmap = null;
-        
+
         if (uriString == null || uriString.isEmpty()) {
             return new AnalysisResult(features, null);
         }
+
+        boolean canClassify = library != null && !library.isEmpty();
+        ClipEmbedder embedder = canClassify ? ClipEmbedder.get(context) : null;
 
         String filename = getFilename(uriString);
         Log.d(TAG, "Running OpenCV Pipeline for: " + filename);
@@ -93,133 +173,109 @@ public class HardwareFeatureExtractor {
             Mat src = new Mat();
             Utils.bitmapToMat(bitmap, src);
 
-            Mat gray = new Mat();
-            Imgproc.cvtColor(src, gray, Imgproc.COLOR_RGBA2GRAY);
-
-            // --- STEP 2: PREPROCESSING (Matched with Python script) ---
-
-            // 1. Smart Glare Detection
-            double totalPixels = gray.rows() * gray.cols();
-            Mat thresh = new Mat();
-            Imgproc.threshold(gray, thresh, 240, 255, Imgproc.THRESH_BINARY);
-            double glareRatio = (double) Core.countNonZero(thresh) / totalPixels;
-            thresh.release();
-
-            Mat preprocessed = new Mat();
-            if (glareRatio > 0.05) {
-                Log.d(TAG, "Glare detected: " + glareRatio + ". Applying Black-Hat transform.");
-                Mat lightingKernel = Imgproc.getStructuringElement(Imgproc.MORPH_ELLIPSE, new Size(75, 75));
-                Imgproc.morphologyEx(gray, preprocessed, Imgproc.MORPH_BLACKHAT, lightingKernel);
-                lightingKernel.release();
-            } else {
-                gray.copyTo(preprocessed);
-            }
-
-            // 2. Apply CLAHE (clipLimit=1.0, tileGridSize=(16, 16))
-            Mat imgClahe = new Mat();
-            CLAHE clahe = Imgproc.createCLAHE(1.0, new Size(16, 16));
-            clahe.apply(preprocessed, imgClahe);
-
-            // 3. Bilateral Filter (d=6, sigmaColor=120, sigmaSpace=40)
-            Mat imgFiltered = new Mat();
-            Imgproc.bilateralFilter(imgClahe, imgFiltered, 6, 120, 40);
-
-            // 4. Noise Reduction Blurs (medianBlur(5) then GaussianBlur(5, 5))
-            Mat imgSmoothed = new Mat();
-            Imgproc.medianBlur(imgFiltered, imgSmoothed, 5);
-            Imgproc.GaussianBlur(imgSmoothed, imgSmoothed, new Size(5, 5), 0);
-
-            // 5. Canny Edge Detection (50, 150)
-            Mat edges = new Mat();
-            Imgproc.Canny(imgSmoothed, edges, 50, 150);
-
-            // 6. Morphological Operations
-            // Dilation (5, 5) Rect kernel
-            Mat dilateKernel = Imgproc.getStructuringElement(Imgproc.MORPH_RECT, new Size(5, 5));
-            Mat edgesDilated = new Mat();
-            Imgproc.dilate(edges, edgesDilated, dilateKernel);
-            
-            // Closing (7, 7) Ellipse kernel
-            Mat edgesClosed = new Mat();
-            Mat closeKernel = Imgproc.getStructuringElement(Imgproc.MORPH_ELLIPSE, new Size(7, 7));
-            Imgproc.morphologyEx(edgesDilated, edgesClosed, Imgproc.MORPH_CLOSE, closeKernel);
+            // STEP 2 — preprocessing + edge detection (shared with extractCrops()).
+            Edges e = computeEdges(src);
 
             // --- GENERATE DIAGNOSTIC BITMAP (Green Edges on Gray Background) ---
             Mat rgbaVisual = new Mat();
-            Imgproc.cvtColor(gray, rgbaVisual, Imgproc.COLOR_GRAY2RGBA);
-            
-            // Highlight detected edges in bright green (R=0, G=255, B=0)
-            // Using dilated edges to ensure they are visible on mobile displays
-            rgbaVisual.setTo(new Scalar(0, 255, 0, 255), edgesDilated);
-            
+            Imgproc.cvtColor(e.gray, rgbaVisual, Imgproc.COLOR_GRAY2RGBA);
+            // Highlight detected edges in bright green so they are visible on mobile displays.
+            rgbaVisual.setTo(new Scalar(0, 255, 0, 255), e.edgesDilated);
             diagnosticBitmap = Bitmap.createBitmap(rgbaVisual.cols(), rgbaVisual.rows(), Bitmap.Config.ARGB_8888);
             Utils.matToBitmap(rgbaVisual, diagnosticBitmap);
-            
-            Log.d(TAG, "Diagnostic image ready. Edge count: " + Core.countNonZero(edges));
 
-            // 7. FEATURE ANALYSIS
-            if (usePresetMapping(filename, features)) {
-                Log.d(TAG, "Gold-standard preset applied for " + filename);
-            } else {
-                performDynamicDetection(gray, edgesClosed, src, features);
-            }
+            // STEP 3-6 — OpenCV crop extraction + CLIP classification
+            performDynamicDetection(src, e.edgesClosed, embedder, library, features);
 
-            // Cleanup Mats
-            src.release(); gray.release(); preprocessed.release();
-            imgClahe.release(); imgFiltered.release(); imgSmoothed.release();
-            edges.release(); edgesDilated.release(); edgesClosed.release();
-            rgbaVisual.release(); dilateKernel.release(); closeKernel.release();
+            src.release();
+            e.release();
+            rgbaVisual.release();
 
         } catch (Exception e) {
             Log.e(TAG, "OpenCV Pipeline failure", e);
         }
 
-        // Final safety fallback
-        if (features.isEmpty()) {
-            features.add(new ExtractedFeature("Screw", new RectF(0.24f, 0.28f, 0.44f, 0.48f), Color.rgb(74, 222, 128), "SCREW #01", 0.90f));
-            features.add(new ExtractedFeature("Hole", new RectF(0.56f, 0.32f, 0.76f, 0.58f), Color.rgb(251, 146, 60), "HOLE #01", 0.85f));
-        }
-
         return new AnalysisResult(features, diagnosticBitmap);
     }
 
-    private static void performDynamicDetection(Mat gray, Mat edges, Mat src, List<ExtractedFeature> outFeatures) {
+    private static void performDynamicDetection(Mat src, Mat edges, ClipEmbedder embedder,
+                                                ReferenceLibrary library, List<ExtractedFeature> outFeatures) {
+        float imgWidth = (float) src.width();
+        float imgHeight = (float) src.height();
+
+        List<Rect> merged = findFeatureBoxes(edges, imgWidth, imgHeight);
+        boolean canClassify = embedder != null && library != null && !library.isEmpty();
+
+        int boxId = 0;
+        for (Rect r : merged) {
+            boxId++;
+
+            String type = ReferenceLibrary.UNKNOWN;
+            float confidence = 0f;
+            String label = boxId + ":?";
+
+            if (canClassify) {
+                Bitmap crop = cropToBitmap(src, r);
+                float[] embedding = crop != null ? embedder.embed(crop) : null;
+                if (crop != null) crop.recycle();
+
+                ReferenceLibrary.Classification c = library.classify(embedding);
+                type = c.type;
+                confidence = c.score;
+
+                if (ReferenceLibrary.UNKNOWN.equals(c.type) && !"none".equals(c.closestMatch)) {
+                    label = String.format(Locale.US, "%d:? (%s %.2f)", boxId, c.closestMatch, c.score);
+                } else {
+                    label = String.format(Locale.US, "%d:%s %.2f", boxId, c.type, c.score);
+                }
+            }
+
+            outFeatures.add(new ExtractedFeature(
+                type,
+                new RectF((float)r.x/imgWidth, (float)r.y/imgHeight, (float)(r.x+r.width)/imgWidth, (float)(r.y+r.height)/imgHeight),
+                ReferenceLibrary.colorFor(type),
+                label,
+                confidence
+            ));
+        }
+    }
+
+    /**
+     * Shared OpenCV geometry stage (Steps 3-4 of the Python script): finds contours,
+     * applies the dimension/aspect/margin + dynamic-area filters, removes nested boxes
+     * and merges nearby fragments. Returns the final feature bounding boxes.
+     */
+    private static List<Rect> findFeatureBoxes(Mat edges, float imgWidth, float imgHeight) {
         List<MatOfPoint> contours = new ArrayList<>();
         Mat hierarchy = new Mat();
         Imgproc.findContours(edges, contours, hierarchy, Imgproc.RETR_EXTERNAL, Imgproc.CHAIN_APPROX_SIMPLE);
-
-        float imgWidth = (float) src.width();
-        float imgHeight = (float) src.height();
+        hierarchy.release();
 
         List<Rect> validBoxes = new ArrayList<>();
         List<Double> validAreas = new ArrayList<>();
 
         for (MatOfPoint c : contours) {
             Rect r = Imgproc.boundingRect(c);
-            
+
             // 1. Max Dimension Check (MAX_DIMENSION_RATIO = 0.4)
             if (r.width > imgWidth * MAX_DIMENSION_RATIO || r.height > imgHeight * MAX_DIMENSION_RATIO) continue;
-            
+
             // 2. Aspect Ratio Check (MIN=0.2, MAX=5.0)
             float aspect = (float) r.width / r.height;
             if (aspect > MAX_ASPECT_RATIO || aspect < MIN_ASPECT_RATIO) continue;
-            
+
             // 3. Edge Margin Check (EDGE_MARGIN = 10)
             if (r.x < EDGE_MARGIN || r.y < EDGE_MARGIN || (r.x + r.width) > (imgWidth - EDGE_MARGIN) || (r.y + r.height) > (imgHeight - EDGE_MARGIN)) continue;
-            
+
             validBoxes.add(r);
             validAreas.add(Imgproc.contourArea(c));
         }
 
-        if (validBoxes.isEmpty()) {
-            hierarchy.release();
-            return;
-        }
+        if (validBoxes.isEmpty()) return new ArrayList<>();
 
         // 4. Dynamic Area Filtering (DYNAMIC_AREA_MULTIPLIER = 0.15)
         List<Double> sortedAreas = new ArrayList<>(validAreas);
         Collections.sort(sortedAreas, Collections.reverseOrder());
-        double refArea = sortedAreas.get(0);
         int topCount = Math.min(3, sortedAreas.size());
         double sumTop = 0;
         for (int i = 0; i < topCount; i++) sumTop += sortedAreas.get(i);
@@ -234,21 +290,94 @@ public class HardwareFeatureExtractor {
         }
 
         // 5. Nested Box Removal & Proximity Merge (PROXIMITY_THRESHOLD = 10)
-        List<Rect> merged = mergeNearbyBoxes(removeNestedBoxes(sizedBoxes), PROXIMITY_THRESHOLD);
-        
-        int boxId = 0;
-        for (Rect r : merged) {
-            boxId++;
-            String type = classifyBox(gray, r);
-            outFeatures.add(new ExtractedFeature(
-                type,
-                new RectF((float)r.x/imgWidth, (float)r.y/imgHeight, (float)(r.x+r.width)/imgWidth, (float)(r.y+r.height)/imgHeight),
-                getColorForType(type),
-                type.toUpperCase() + " #" + String.format("%02d", boxId),
-                0.98f
-            ));
+        return mergeNearbyBoxes(removeNestedBoxes(sizedBoxes), PROXIMITY_THRESHOLD);
+    }
+
+    /** Crops the colour source Mat around a box (with CROP_PADDING) and returns an ARGB Bitmap. */
+    private static Bitmap cropToBitmap(Mat src, Rect r) {
+        int x1 = Math.max(0, r.x - CROP_PADDING);
+        int y1 = Math.max(0, r.y - CROP_PADDING);
+        int x2 = Math.min(src.cols(), r.x + r.width + CROP_PADDING);
+        int y2 = Math.min(src.rows(), r.y + r.height + CROP_PADDING);
+        if ((x2 - x1) < 10 || (y2 - y1) < 10) return null;
+
+        Mat sub = new Mat(src, new Rect(x1, y1, x2 - x1, y2 - y1));
+        try {
+            Bitmap bmp = Bitmap.createBitmap(sub.cols(), sub.rows(), Bitmap.Config.ARGB_8888);
+            Utils.matToBitmap(sub, bmp);
+            return bmp;
+        } catch (Exception e) {
+            Log.e(TAG, "cropToBitmap failed", e);
+            return null;
+        } finally {
+            sub.release();
         }
-        hierarchy.release();
+    }
+
+    /**
+     * STEP 2 of the Python script: grayscale, smart glare (black-hat), CLAHE, bilateral,
+     * median + Gaussian blurs, Canny, dilate + close. Returns the gray image, the dilated
+     * edges (for the diagnostic overlay) and the closed edges (for contour detection).
+     * Intermediate Mats are released internally; the caller must release the returned Edges.
+     */
+    private static Edges computeEdges(Mat src) {
+        Mat gray = new Mat();
+        Imgproc.cvtColor(src, gray, Imgproc.COLOR_RGBA2GRAY);
+
+        // 1. Smart Glare Detection
+        double totalPixels = gray.rows() * gray.cols();
+        Mat thresh = new Mat();
+        Imgproc.threshold(gray, thresh, 240, 255, Imgproc.THRESH_BINARY);
+        double glareRatio = (double) Core.countNonZero(thresh) / totalPixels;
+        thresh.release();
+
+        Mat preprocessed = new Mat();
+        if (glareRatio > 0.05) {
+            Log.d(TAG, "Glare detected: " + glareRatio + ". Applying Black-Hat transform.");
+            Mat lightingKernel = Imgproc.getStructuringElement(Imgproc.MORPH_ELLIPSE, new Size(75, 75));
+            Imgproc.morphologyEx(gray, preprocessed, Imgproc.MORPH_BLACKHAT, lightingKernel);
+            lightingKernel.release();
+        } else {
+            gray.copyTo(preprocessed);
+        }
+
+        // 2. CLAHE (clipLimit=1.0, tileGridSize=(16,16))
+        Mat imgClahe = new Mat();
+        CLAHE clahe = Imgproc.createCLAHE(1.0, new Size(16, 16));
+        clahe.apply(preprocessed, imgClahe);
+
+        // 3. Bilateral Filter (d=6, sigmaColor=120, sigmaSpace=40)
+        Mat imgFiltered = new Mat();
+        Imgproc.bilateralFilter(imgClahe, imgFiltered, 6, 120, 40);
+
+        // 4. Noise Reduction Blurs (median(5) then Gaussian(5x5))
+        Mat imgSmoothed = new Mat();
+        Imgproc.medianBlur(imgFiltered, imgSmoothed, 5);
+        Imgproc.GaussianBlur(imgSmoothed, imgSmoothed, new Size(5, 5), 0);
+
+        // 5. Canny Edge Detection (50, 150)
+        Mat edges = new Mat();
+        Imgproc.Canny(imgSmoothed, edges, 50, 150);
+
+        // 6. Morphology: dilate (5x5 rect) then close (7x7 ellipse)
+        Mat dilateKernel = Imgproc.getStructuringElement(Imgproc.MORPH_RECT, new Size(5, 5));
+        Mat edgesDilated = new Mat();
+        Imgproc.dilate(edges, edgesDilated, dilateKernel);
+
+        Mat closeKernel = Imgproc.getStructuringElement(Imgproc.MORPH_ELLIPSE, new Size(7, 7));
+        Mat edgesClosed = new Mat();
+        Imgproc.morphologyEx(edgesDilated, edgesClosed, Imgproc.MORPH_CLOSE, closeKernel);
+
+        // Release everything the caller does not need.
+        preprocessed.release();
+        imgClahe.release();
+        imgFiltered.release();
+        imgSmoothed.release();
+        edges.release();
+        dilateKernel.release();
+        closeKernel.release();
+
+        return new Edges(gray, edgesDilated, edgesClosed);
     }
 
     private static List<Rect> removeNestedBoxes(List<Rect> boxes) {
@@ -267,22 +396,6 @@ public class HardwareFeatureExtractor {
             if (!isInside) filtered.add(r1);
         }
         return filtered;
-    }
-
-    private static String classifyBox(Mat gray, Rect rect) {
-        int cx = rect.x + rect.width / 2;
-        int cy = rect.y + rect.height / 2;
-        if (cx < 0 || cx >= gray.cols() || cy < 0 || cy >= gray.rows()) return "Bolt Head";
-        double val = gray.get(cy, cx)[0];
-        if (val < 100) return "Hole";
-        if (val > 175) return "Screw";
-        return "Bolt Head";
-    }
-
-    private static int getColorForType(String type) {
-        if ("Hole".equals(type)) return Color.rgb(251, 146, 60);
-        if ("Screw".equals(type)) return Color.rgb(74, 222, 128);
-        return Color.rgb(56, 189, 248);
     }
 
     private static List<Rect> mergeNearbyBoxes(List<Rect> boxes, int threshold) {
@@ -367,38 +480,5 @@ public class HardwareFeatureExtractor {
         if (uri == null) return "";
         int slash = uri.lastIndexOf('/');
         return (slash >= 0) ? uri.substring(slash + 1).toLowerCase() : uri.toLowerCase();
-    }
-
-    private static boolean usePresetMapping(String filename, List<ExtractedFeature> outList) {
-        if (filename.contains("zero")) return true;
-        if (filename.contains("one")) {
-            outList.add(new ExtractedFeature("Screw", new RectF(0.40f, 0.40f, 0.60f, 0.60f), Color.rgb(74, 222, 128), "SCREW #01", 0.95f));
-            return true;
-        }
-        if (filename.contains("two") || filename.contains("screws_two")) {
-            outList.add(new ExtractedFeature("Screw", new RectF(0.25f, 0.35f, 0.42f, 0.52f), Color.rgb(74, 222, 128), "SCREW #01", 0.94f));
-            outList.add(new ExtractedFeature("Screw", new RectF(0.58f, 0.45f, 0.75f, 0.62f), Color.rgb(74, 222, 128), "SCREW #02", 0.91f));
-            return true;
-        }
-        if (filename.contains("three") || filename.contains("screws_three")) {
-            outList.add(new ExtractedFeature("Screw", new RectF(0.20f, 0.30f, 0.38f, 0.48f), Color.rgb(74, 222, 128), "SCREW #01", 0.93f));
-            outList.add(new ExtractedFeature("Screw", new RectF(0.45f, 0.50f, 0.63f, 0.68f), Color.rgb(74, 222, 128), "SCREW #02", 0.95f));
-            outList.add(new ExtractedFeature("Screw", new RectF(0.65f, 0.28f, 0.83f, 0.46f), Color.rgb(74, 222, 128), "SCREW #03", 0.89f));
-            return true;
-        }
-        if (filename.contains("whole") || filename.contains("preset") || filename.contains("reference")) {
-            outList.add(new ExtractedFeature("Bolt Head", new RectF(0.24f, 0.28f, 0.42f, 0.46f), Color.rgb(56, 189, 248), "BOLT #01", 0.97f));
-            outList.add(new ExtractedFeature("Bolt Head", new RectF(0.14f, 0.52f, 0.32f, 0.70f), Color.rgb(56, 189, 248), "BOLT #02", 0.92f));
-            outList.add(new ExtractedFeature("Bolt Head", new RectF(0.42f, 0.56f, 0.60f, 0.74f), Color.rgb(56, 189, 248), "BOLT #03", 0.95f));
-            outList.add(new ExtractedFeature("Hole", new RectF(0.56f, 0.32f, 0.74f, 0.50f), Color.rgb(251, 146, 60), "HOLE #01", 0.89f));
-            outList.add(new ExtractedFeature("Screw", new RectF(0.68f, 0.62f, 0.86f, 0.80f), Color.rgb(74, 222, 128), "SCREW #01", 0.91f));
-            return true;
-        }
-        if (filename.contains("defected")) {
-            outList.add(new ExtractedFeature("Bolt Head", new RectF(0.24f, 0.28f, 0.42f, 0.46f), Color.rgb(56, 189, 248), "BOLT #01", 0.97f));
-            outList.add(new ExtractedFeature("Hole", new RectF(0.56f, 0.32f, 0.74f, 0.50f), Color.rgb(251, 146, 60), "HOLE #01", 0.89f));
-            return true;
-        }
-        return false;
     }
 }

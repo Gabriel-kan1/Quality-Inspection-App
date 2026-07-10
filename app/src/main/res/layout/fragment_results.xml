@@ -122,76 +122,20 @@
                     android:layout_width="match_parent"
                     android:layout_height="280dp" />
 
-                <!-- Legends Row -->
-                <LinearLayout
+                <!-- Legends Row (populated dynamically per detected feature type) -->
+                <HorizontalScrollView
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:gravity="center"
                     android:layout_marginTop="12dp"
-                    android:weightSum="3">
+                    android:scrollbars="none">
 
-                    <!-- Bolt Legend -->
                     <LinearLayout
-                        android:layout_width="0dp"
+                        android:id="@+id/layout_legend"
+                        android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:layout_weight="1"
                         android:orientation="horizontal"
-                        android:gravity="center">
-                        <View
-                            android:layout_width="14dp"
-                            android:layout_height="14dp"
-                            android:background="@color/blue_primary" />
-                        <TextView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:layout_marginStart="6dp"
-                            android:text="Bolts"
-                            android:textColor="@color/white"
-                            android:textSize="12sp" />
-                    </LinearLayout>
-
-                    <!-- Hole Legend -->
-                    <LinearLayout
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:orientation="horizontal"
-                        android:gravity="center">
-                        <View
-                            android:layout_width="14dp"
-                            android:layout_height="14dp"
-                            android:background="@color/orange_warn" />
-                        <TextView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:layout_marginStart="6dp"
-                            android:text="Holes"
-                            android:textColor="@color/white"
-                            android:textSize="12sp" />
-                    </LinearLayout>
-
-                    <!-- Screw Legend -->
-                    <LinearLayout
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:orientation="horizontal"
-                        android:gravity="center">
-                        <View
-                            android:layout_width="14dp"
-                            android:layout_height="14dp"
-                            android:background="@color/green_pass" />
-                        <TextView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:layout_marginStart="6dp"
-                            android:text="Screws"
-                            android:textColor="@color/white"
-                            android:textSize="12sp" />
-                    </LinearLayout>
-
-                </LinearLayout>
+                        android:gravity="center" />
+                </HorizontalScrollView>
 
             </LinearLayout>
 
@@ -272,171 +216,12 @@
 
                 </LinearLayout>
 
-                <!-- Row 1: Bolts -->
+                <!-- Feature rows (one per detected/expected feature type, built at runtime) -->
                 <LinearLayout
+                    android:id="@+id/layout_feature_rows"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:paddingVertical="12dp"
-                    android:weightSum="4"
-                    android:background="@color/surface_card">
-
-                    <TextView
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1.3"
-                        android:text="Bolt Heads"
-                        android:textColor="@color/white"
-                        android:textSize="14sp"
-                        android:textStyle="bold"
-                        android:paddingStart="8dp" />
-
-                    <TextView
-                        android:id="@+id/tv_expected_bolts"
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="0.9"
-                        android:text="3"
-                        android:textColor="@color/gray_text_secondary"
-                        android:textSize="14sp"
-                        android:gravity="center" />
-
-                    <TextView
-                        android:id="@+id/tv_detected_bolts"
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="0.9"
-                        android:text="3"
-                        android:textColor="@color/white"
-                        android:textSize="14sp"
-                        android:gravity="center" />
-
-                    <TextView
-                        android:id="@+id/tv_status_bolts"
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="0.9"
-                        android:text="MATCH"
-                        android:textColor="@color/green_pass"
-                        android:textStyle="bold"
-                        android:textSize="12sp"
-                        android:gravity="center"/>
-
-                </LinearLayout>
-
-                <View
-                    android:layout_width="match_parent"
-                    android:layout_height="1dp"
-                    android:background="#33B0BEC5"/>
-
-                <!-- Row 2: Holes -->
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:paddingVertical="12dp"
-                    android:weightSum="4"
-                    android:background="@color/surface_card">
-
-                    <TextView
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1.3"
-                        android:text="Holes"
-                        android:textColor="@color/white"
-                        android:textSize="14sp"
-                        android:textStyle="bold"
-                        android:paddingStart="8dp" />
-
-                    <TextView
-                        android:id="@+id/tv_expected_holes"
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="0.9"
-                        android:text="1"
-                        android:textColor="@color/gray_text_secondary"
-                        android:textSize="14sp"
-                        android:gravity="center" />
-
-                    <TextView
-                        android:id="@+id/tv_detected_holes"
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="0.9"
-                        android:text="1"
-                        android:textColor="@color/white"
-                        android:textSize="14sp"
-                        android:gravity="center" />
-
-                    <TextView
-                        android:id="@+id/tv_status_holes"
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="0.9"
-                        android:text="MATCH"
-                        android:textColor="@color/green_pass"
-                        android:textStyle="bold"
-                        android:textSize="12sp"
-                        android:gravity="center"/>
-
-                </LinearLayout>
-
-                <View
-                    android:layout_width="match_parent"
-                    android:layout_height="1dp"
-                    android:background="#33B0BEC5"/>
-
-                <!-- Row 3: Screws -->
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:paddingVertical="12dp"
-                    android:weightSum="4"
-                    android:background="@color/surface_card">
-
-                    <TextView
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1.3"
-                        android:text="Screws"
-                        android:textColor="@color/white"
-                        android:textSize="14sp"
-                        android:textStyle="bold"
-                        android:paddingStart="8dp" />
-
-                    <TextView
-                        android:id="@+id/tv_expected_screws"
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="0.9"
-                        android:text="1"
-                        android:textColor="@color/gray_text_secondary"
-                        android:textSize="14sp"
-                        android:gravity="center" />
-
-                    <TextView
-                        android:id="@+id/tv_detected_screws"
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="0.9"
-                        android:text="1"
-                        android:textColor="@color/white"
-                        android:textSize="14sp"
-                        android:gravity="center" />
-
-                    <TextView
-                        android:id="@+id/tv_status_screws"
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="0.9"
-                        android:text="MATCH"
-                        android:textColor="@color/green_pass"
-                        android:textStyle="bold"
-                        android:textSize="12sp"
-                        android:gravity="center"/>
-
-                </LinearLayout>
+                    android:orientation="vertical" />
 
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
