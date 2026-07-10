@@ -237,6 +237,16 @@
 
             </LinearLayout>
 
+            <!-- Build the CLIP few-shot detection library from the selected reference image -->
+            <Button
+                android:id="@+id/btn_build_library"
+                style="@style/Widget.Material3.Button.TonalButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:text="BUILD DETECTION LIBRARY (CLIP)"
+                android:textColor="@color/white" />
+
         </LinearLayout>
 
     </com.google.android.material.card.MaterialCardView>
