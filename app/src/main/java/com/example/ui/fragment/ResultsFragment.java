@@ -59,8 +59,8 @@ public class ResultsFragment extends Fragment {
     public void onViewCreated(@NonNull View view, @Nullable Bundle savedInstanceState) {
         super.onViewCreated(view, savedInstanceState);
 
-        // Load overlay image and trigger feature extraction
-        binding.chassisOverlayView.setImageUri(imageUri);
+        // We will set the image and features after the pipeline runs to avoid double extraction
+        // binding.chassisOverlayView.setImageUri(imageUri); 
 
         binding.btnInspectAgain.setOnClickListener(v -> {
             Navigation.findNavController(v).navigate(R.id.action_results_to_home);
@@ -81,9 +81,9 @@ public class ResultsFragment extends Fragment {
                 expectedBolts = 0;
                 expectedHoles = 0;
                 expectedScrews = 0;
-                List<HardwareFeatureExtractor.ExtractedFeature> refFeatures = 
+                HardwareFeatureExtractor.AnalysisResult refResult = 
                         HardwareFeatureExtractor.extractFeatures(requireContext(), ref.getImageUri());
-                for (HardwareFeatureExtractor.ExtractedFeature f : refFeatures) {
+                for (HardwareFeatureExtractor.ExtractedFeature f : refResult.features) {
                     if ("Bolt Head".equals(f.type)) expectedBolts++;
                     else if ("Hole".equals(f.type)) expectedHoles++;
                     else if ("Screw".equals(f.type)) expectedScrews++;
@@ -99,9 +99,9 @@ public class ResultsFragment extends Fragment {
             detectedBolts = 0;
             detectedHoles = 0;
             detectedScrews = 0;
-            List<HardwareFeatureExtractor.ExtractedFeature> activeFeatures = 
+            HardwareFeatureExtractor.AnalysisResult activeResult = 
                     HardwareFeatureExtractor.extractFeatures(requireContext(), imageUri);
-            for (HardwareFeatureExtractor.ExtractedFeature f : activeFeatures) {
+            for (HardwareFeatureExtractor.ExtractedFeature f : activeResult.features) {
                 if ("Bolt Head".equals(f.type)) detectedBolts++;
                 else if ("Hole".equals(f.type)) detectedHoles++;
                 else if ("Screw".equals(f.type)) detectedScrews++;
@@ -115,6 +115,14 @@ public class ResultsFragment extends Fragment {
             // Push results to UI thread
             requireActivity().runOnUiThread(() -> {
                 if (!isAdded() || binding == null) return;
+
+                // Update Canny Edges Image
+                if (activeResult.processedBitmap != null) {
+                    binding.ivCannyEdges.setImageBitmap(activeResult.processedBitmap);
+                }
+
+                // Update Overlay View with detected features
+                binding.chassisOverlayView.setResultData(imageUri, activeResult.features);
 
                 // Update Header Banner
                 if (hasDiscrepancy) {

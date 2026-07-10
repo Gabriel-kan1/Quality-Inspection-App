@@ -53,6 +53,43 @@
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 
+        <!-- Canny Edges & Filtering Card -->
+        <com.google.android.material.card.MaterialCardView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="16dp"
+            app:cardBackgroundColor="@color/surface_card"
+            app:cardCornerRadius="16dp"
+            app:strokeColor="@color/gray_text_secondary"
+            app:strokeWidth="1dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="12dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="CANNY EDGES &amp; FILTERING"
+                    android:textColor="@color/gray_text_secondary"
+                    android:textSize="12sp"
+                    android:textStyle="bold"
+                    android:layout_marginStart="4dp"
+                    android:layout_marginBottom="8dp"/>
+
+                <ImageView
+                    android:id="@+id/iv_canny_edges"
+                    android:layout_width="match_parent"
+                    android:layout_height="200dp"
+                    android:scaleType="fitCenter"
+                    android:background="@color/black"
+                    tools:srcCompat="@tools:sample/backgrounds/scenic" />
+
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
         <!-- Computer Vision Graphical Analysis View Card -->
         <com.google.android.material.card.MaterialCardView
             android:layout_width="match_parent"

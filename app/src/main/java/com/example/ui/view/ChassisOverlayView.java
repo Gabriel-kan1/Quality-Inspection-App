@@ -14,6 +14,8 @@ import android.view.View;
 
 import androidx.annotation.Nullable;
 
+import com.example.ui.fragment.HardwareFeatureExtractor;
+
 import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.List;
@@ -74,6 +76,21 @@ public class ChassisOverlayView extends View {
         return features;
     }
 
+    /**
+     * Sets the data to be displayed in the overlay.
+     * Use this to avoid redundant feature extraction.
+     */
+    public void setResultData(String uriString, List<HardwareFeatureExtractor.ExtractedFeature> extractedFeatures) {
+        loadBitmapFromUri(uriString);
+        features.clear();
+        if (extractedFeatures != null) {
+            for (HardwareFeatureExtractor.ExtractedFeature ext : extractedFeatures) {
+                features.add(new DetectedFeature(ext.type, ext.rectFraction, ext.color, ext.label));
+            }
+        }
+        invalidate();
+    }
+
     public void setImageUri(String uriString) {
         if (uriString == null || "mock_image_uri".equals(uriString)) {
             sourceBitmap = null;
@@ -82,10 +99,30 @@ public class ChassisOverlayView extends View {
             return;
         }
 
+        loadBitmapFromUri(uriString);
+
+        // Apply real feature extraction dynamically
+        features.clear();
+        HardwareFeatureExtractor.AnalysisResult result = HardwareFeatureExtractor.extractFeatures(getContext(), uriString);
+        
+        if (result.features != null) {
+            for (HardwareFeatureExtractor.ExtractedFeature ext : result.features) {
+                features.add(new DetectedFeature(ext.type, ext.rectFraction, ext.color, ext.label));
+            }
+        }
+        invalidate();
+    }
+
+    private void loadBitmapFromUri(String uriString) {
+        if (uriString == null || "mock_image_uri".equals(uriString)) {
+            sourceBitmap = null;
+            return;
+        }
         try {
             InputStream inputStream;
             if (uriString.startsWith("file:///android_asset/")) {
-                String assetPath = uriString.substring("file:///android_asset/".length());
+                // Robust path extraction for assets
+                String assetPath = uriString.replace("file:///android_asset/", "");
                 inputStream = getContext().getAssets().open(assetPath);
             } else {
                 Uri uri = Uri.parse(uriString);
@@ -95,21 +132,10 @@ public class ChassisOverlayView extends View {
             if (inputStream != null) {
                 inputStream.close();
             }
-
-            // Apply real feature extraction dynamically based on image content (Python Step 3 to 6)
-            features.clear();
-            List<com.example.ui.fragment.HardwareFeatureExtractor.ExtractedFeature> extracted = 
-                    com.example.ui.fragment.HardwareFeatureExtractor.extractFeatures(getContext(), uriString);
-            
-            for (com.example.ui.fragment.HardwareFeatureExtractor.ExtractedFeature ext : extracted) {
-                features.add(new DetectedFeature(ext.type, ext.rectFraction, ext.color, ext.label));
-            }
         } catch (Exception e) {
-            Log.e(TAG, "Error decoding image file uri or performing feature extraction: " + uriString, e);
+            Log.e(TAG, "Error decoding image file uri: " + uriString, e);
             sourceBitmap = null;
-            features.clear();
         }
-        invalidate();
     }
 
     @Override
@@ -121,80 +147,21 @@ public class ChassisOverlayView extends View {
 
         if (viewWidth == 0 || viewHeight == 0) return;
 
-        // Draw image background or schematic mockup panel
         if (sourceBitmap != null) {
-            // Draw scaling real bitmap
             Bitmap scaledBitmap = Bitmap.createScaledBitmap(sourceBitmap, viewWidth, viewHeight, true);
             canvas.drawBitmap(scaledBitmap, 0f, 0f, null);
         } else {
-            // No real photo was stored, draw a highly technical metal chassis mesh simulation 
-            // perfect for mock/testing presentation representing their actual hardware picture!
-            canvas.drawColor(Color.rgb(43, 41, 48)); // Dark grey metallic surface
+            canvas.drawColor(Color.rgb(43, 41, 48)); 
 
-            // Draw technical cross grid lines
             for (int i = 0; i < viewWidth; i += 60) {
                 canvas.drawLine(i, 0, i, viewHeight, paintBackgroundMesh);
             }
             for (int j = 0; j < viewHeight; j += 60) {
                 canvas.drawLine(0, j, viewWidth, j, paintBackgroundMesh);
             }
-
-            // Draw beautiful vector cylindrical objects representing PINs and STUDs to aid testing
-            Paint partPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-            Paint partDetailPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-
-            partPaint.setStyle(Paint.Style.FILL);
-            partDetailPaint.setStyle(Paint.Style.STROKE);
-            partDetailPaint.setStrokeWidth(3f);
-
-            for (DetectedFeature feature : features) {
-                float left = feature.rectFraction.left * viewWidth;
-                float top = feature.rectFraction.top * viewHeight;
-                float right = feature.rectFraction.right * viewWidth;
-                float bottom = feature.rectFraction.bottom * viewHeight;
-                float cx = (left + right) / 2f;
-                float cy = (top + bottom) / 2f;
-                float radius = Math.min(right - left, bottom - top) / 2.2f;
-
-                // Outer base plate reflection ring
-                partDetailPaint.setColor(Color.rgb(130, 130, 130));
-                canvas.drawCircle(cx, cy, radius * 1.2f, partDetailPaint);
-
-                if ("Locator Pin".equals(feature.type)) {
-                    // Plain Chamfered Pin Cylinder (metallic grey gradients)
-                    partPaint.setColor(Color.rgb(160, 163, 168));
-                    canvas.drawCircle(cx, cy, radius, partPaint);
-
-                    // Inner chamfered center hole
-                    partPaint.setColor(Color.rgb(80, 83, 88));
-                    canvas.drawCircle(cx, cy, radius * 0.35f, partPaint);
-
-                    // Pin highlight ring
-                    partDetailPaint.setColor(Color.rgb(220, 225, 230));
-                    canvas.drawCircle(cx, cy, radius * 0.8f, partDetailPaint);
-                } else {
-                    // Threaded Stud Bolt Cylinder (screw ridges & highlight shine)
-                    partPaint.setColor(Color.rgb(205, 208, 213));
-                    canvas.drawCircle(cx, cy, radius, partPaint);
-
-                    // Screw thread circular divisions
-                    partDetailPaint.setColor(Color.rgb(90, 93, 100));
-                    canvas.drawCircle(cx, cy, radius * 0.8f, partDetailPaint);
-                    canvas.drawCircle(cx, cy, radius * 0.6f, partDetailPaint);
-                    canvas.drawCircle(cx, cy, radius * 0.4f, partDetailPaint);
-
-                    // Reflective shiny overlay bar on threaded bolts
-                    Paint shinePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-                    shinePaint.setColor(Color.argb(90, 255, 255, 255));
-                    shinePaint.setStyle(Paint.Style.FILL);
-                    canvas.drawRect(cx - radius * 0.25f, cy - radius, cx + radius * 0.25f, cy + radius, shinePaint);
-                }
-            }
         }
 
-        // Draw overlay detected bounding boxes
         for (DetectedFeature feature : features) {
-            // Convert fractional rectangle to absolute view pixels
             float left = feature.rectFraction.left * viewWidth;
             float top = feature.rectFraction.top * viewHeight;
             float right = feature.rectFraction.right * viewWidth;
@@ -202,17 +169,14 @@ public class ChassisOverlayView extends View {
 
             RectF targetRect = new RectF(left, top, right, bottom);
 
-            // Draw bounding box
             paintRect.setColor(feature.color);
             canvas.drawRoundRect(targetRect, 8f, 8f, paintRect);
 
-            // Draw label background background tab
             Paint tabPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
             tabPaint.setColor(feature.color);
             tabPaint.setStyle(Paint.Style.FILL);
             canvas.drawRect(left, top - 36f, left + 140f, top, tabPaint);
 
-            // Draw label text
             canvas.drawText(feature.label, left + 8f, top - 10f, paintText);
         }
     }
