@@ -38,8 +38,8 @@ public final class ReferenceLibrary {
 
     // Tunable thresholds (SIMILARITY_THRESHOLD in the Python CONFIG). Non-final so
     // they can be nudged after on-device calibration.
-    public static float SIMILARITY_THRESHOLD = 0.75f;
-    public static float HIGH_CONFIDENCE = 0.88f;
+    public static float SIMILARITY_THRESHOLD = 0.85f;
+    public static float HIGH_CONFIDENCE = 0.92f;
 
     // Running accumulation so prototypes can be built incrementally (in-app builder
     // or offline bootstrap). prototype(type) = sums[type] / counts[type].
