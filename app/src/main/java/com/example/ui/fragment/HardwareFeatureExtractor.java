@@ -41,9 +41,9 @@ public class HardwareFeatureExtractor {
     /** CLAHE local-contrast boost. Higher = crisper edges but more texture noise. */
     private static double CLAHE_CLIP_LIMIT = 1.0;
     /** Bilateral filter diameter/sigmas — denoise while preserving edges. */
-    private static int BILATERAL_D = 6;
-    private static double BILATERAL_SIGMA_COLOR = 120;
-    private static double BILATERAL_SIGMA_SPACE = 40;
+    private static int BILATERAL_D = 6; //Make this Adaptive Parameter
+    private static double BILATERAL_SIGMA_COLOR = 60;
+    private static double BILATERAL_SIGMA_SPACE = 20;
     /**
      * Canny thresholds are computed adaptively per-image via Otsu's method rather
      * than fixed, so lighting/exposure differences between photos don't require
@@ -297,14 +297,14 @@ public class HardwareFeatureExtractor {
             Rect r = Imgproc.boundingRect(c);
 
             // 1. Max Dimension Check (MAX_DIMENSION_RATIO)
-            if (r.width > imgWidth * MAX_DIMENSION_RATIO || r.height > imgHeight * MAX_DIMENSION_RATIO) continue;
+            //if (r.width > imgWidth * MAX_DIMENSION_RATIO || r.height > imgHeight * MAX_DIMENSION_RATIO) continue;
 
             // 2. Aspect Ratio Check
             float aspect = (float) r.width / r.height;
-            if (aspect > MAX_ASPECT_RATIO || aspect < MIN_ASPECT_RATIO) continue;
+            //if (aspect > MAX_ASPECT_RATIO || aspect < MIN_ASPECT_RATIO) continue;
 
             // 3. Edge Margin Check
-            if (r.x < EDGE_MARGIN || r.y < EDGE_MARGIN || (r.x + r.width) > (imgWidth - EDGE_MARGIN) || (r.y + r.height) > (imgHeight - EDGE_MARGIN)) continue;
+            //if (r.x < EDGE_MARGIN || r.y < EDGE_MARGIN || (r.x + r.width) > (imgWidth - EDGE_MARGIN) || (r.y + r.height) > (imgHeight - EDGE_MARGIN)) continue;
 
             double area = Imgproc.contourArea(c);
 
@@ -312,7 +312,7 @@ public class HardwareFeatureExtractor {
             // so elongated screw-shaft contours are never subject to it (see MIN_CIRCULARITY doc).
             if (MIN_CIRCULARITY > 0 && Math.abs(aspect - 1.0f) <= CIRCULARITY_ASPECT_BAND) {
                 double circularity = circularityOf(c, area);
-                if (circularity < MIN_CIRCULARITY) continue;
+                //if (circularity < MIN_CIRCULARITY) continue;
             }
 
             validBoxes.add(r);
