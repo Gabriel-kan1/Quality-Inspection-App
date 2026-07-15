@@ -41,7 +41,6 @@ public class HardwareFeatureExtractor {
     /** CLAHE local-contrast boost. Higher = crisper edges but more texture noise. */
     private static double CLAHE_CLIP_LIMIT = 1.0;
     /** Bilateral filter diameter/sigmas — denoise while preserving edges. */
-    private static int BILATERAL_D = 6; //Make this Adaptive Parameter
     private static double BILATERAL_SIGMA_COLOR = 60;
     private static double BILATERAL_SIGMA_SPACE = 20;
     /**
@@ -121,6 +120,49 @@ public class HardwareFeatureExtractor {
         public CropRegion(Bitmap bitmap, RectF rectFraction) {
             this.bitmap = bitmap;
             this.rectFraction = rectFraction;
+        }
+    }
+
+    /** Computes an adaptive bilateral filter diameter based on the noise level */
+    private static int computeAdaptiveBilateralD(Mat gray) {
+        // compute Laplacian of the grayscale image
+        Mat laplacian = new Mat();
+        Imgproc.Laplacian(gray, laplacian, org.opencv.core.CvType.CV_64F);
+
+        // compute mean and standard deviation of the Laplacian
+        org.opencv.core.MatOfDouble mean   = new org.opencv.core.MatOfDouble();
+        org.opencv.core.MatOfDouble stddev = new org.opencv.core.MatOfDouble();
+        Core.meanStdDev(laplacian, mean, stddev);
+
+        // variance = stddev squared — represents overall noise level
+        double std           = stddev.toArray()[0];
+        double noiseVariance = std * std;
+
+        laplacian.release();
+        mean.release();
+        stddev.release();
+
+        Log.d(TAG, String.format(Locale.US,
+                "Adaptive bilateral D — Laplacian variance: %.1f", noiseVariance));
+
+        if (noiseVariance < 200) {
+            // Low noise level
+            return 1;
+        } else if  (noiseVariance < 300) {
+            // Low noise level
+            return 2;
+        } else if (noiseVariance < 400) {
+            // Low noise level
+            return 3;
+        } else if (noiseVariance < 600) {
+            // Low noise level
+            return 4;
+        } else if (noiseVariance < 700) {
+            // Medium noise level
+            return 5;
+        } else {
+            // High noise level
+            return 6;
         }
     }
 
@@ -405,7 +447,9 @@ public class HardwareFeatureExtractor {
 
         // 3. Bilateral Filter
         Mat imgFiltered = new Mat();
-        Imgproc.bilateralFilter(imgClahe, imgFiltered, BILATERAL_D, BILATERAL_SIGMA_COLOR, BILATERAL_SIGMA_SPACE);
+        int adaptiveBilateralD = computeAdaptiveBilateralD(preprocessed);
+        Log.d(TAG, "Using adaptive bilateral D = " + adaptiveBilateralD);
+        Imgproc.bilateralFilter(imgClahe, imgFiltered, adaptiveBilateralD, BILATERAL_SIGMA_COLOR, BILATERAL_SIGMA_SPACE);
 
         // 4. Noise Reduction Blurs (median(5) then Gaussian(5x5))
         Mat imgSmoothed = new Mat();
