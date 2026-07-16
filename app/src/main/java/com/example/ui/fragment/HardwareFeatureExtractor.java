@@ -41,9 +41,8 @@ public class HardwareFeatureExtractor {
     /** CLAHE local-contrast boost. Higher = crisper edges but more texture noise. */
     private static double CLAHE_CLIP_LIMIT = 1.0;
     /** Bilateral filter diameter/sigmas — denoise while preserving edges. */
-    private static int BILATERAL_D = 6;
-    private static double BILATERAL_SIGMA_COLOR = 120;
-    private static double BILATERAL_SIGMA_SPACE = 40;
+    private static double BILATERAL_SIGMA_COLOR = 60;
+    private static double BILATERAL_SIGMA_SPACE = 20;
     /**
      * Canny thresholds are computed adaptively per-image via Otsu's method rather
      * than fixed, so lighting/exposure differences between photos don't require
@@ -121,6 +120,49 @@ public class HardwareFeatureExtractor {
         public CropRegion(Bitmap bitmap, RectF rectFraction) {
             this.bitmap = bitmap;
             this.rectFraction = rectFraction;
+        }
+    }
+
+    /** Computes an adaptive bilateral filter diameter based on the noise level */
+    private static int computeAdaptiveBilateralD(Mat gray) {
+        // compute Laplacian of the grayscale image
+        Mat laplacian = new Mat();
+        Imgproc.Laplacian(gray, laplacian, org.opencv.core.CvType.CV_64F);
+
+        // compute mean and standard deviation of the Laplacian
+        org.opencv.core.MatOfDouble mean   = new org.opencv.core.MatOfDouble();
+        org.opencv.core.MatOfDouble stddev = new org.opencv.core.MatOfDouble();
+        Core.meanStdDev(laplacian, mean, stddev);
+
+        // variance = stddev squared — represents overall noise level
+        double std           = stddev.toArray()[0];
+        double noiseVariance = std * std;
+
+        laplacian.release();
+        mean.release();
+        stddev.release();
+
+        Log.d(TAG, String.format(Locale.US,
+                "Adaptive bilateral D — Laplacian variance: %.1f", noiseVariance));
+
+        if (noiseVariance < 200) {
+            // Low noise level
+            return 1;
+        } else if  (noiseVariance < 300) {
+            // Low noise level
+            return 2;
+        } else if (noiseVariance < 400) {
+            // Low noise level
+            return 3;
+        } else if (noiseVariance < 600) {
+            // Low noise level
+            return 4;
+        } else if (noiseVariance < 700) {
+            // Medium noise level
+            return 5;
+        } else {
+            // High noise level
+            return 6;
         }
     }
 
@@ -297,14 +339,14 @@ public class HardwareFeatureExtractor {
             Rect r = Imgproc.boundingRect(c);
 
             // 1. Max Dimension Check (MAX_DIMENSION_RATIO)
-            if (r.width > imgWidth * MAX_DIMENSION_RATIO || r.height > imgHeight * MAX_DIMENSION_RATIO) continue;
+            //if (r.width > imgWidth * MAX_DIMENSION_RATIO || r.height > imgHeight * MAX_DIMENSION_RATIO) continue;
 
             // 2. Aspect Ratio Check
             float aspect = (float) r.width / r.height;
-            if (aspect > MAX_ASPECT_RATIO || aspect < MIN_ASPECT_RATIO) continue;
+            //if (aspect > MAX_ASPECT_RATIO || aspect < MIN_ASPECT_RATIO) continue;
 
             // 3. Edge Margin Check
-            if (r.x < EDGE_MARGIN || r.y < EDGE_MARGIN || (r.x + r.width) > (imgWidth - EDGE_MARGIN) || (r.y + r.height) > (imgHeight - EDGE_MARGIN)) continue;
+            //if (r.x < EDGE_MARGIN || r.y < EDGE_MARGIN || (r.x + r.width) > (imgWidth - EDGE_MARGIN) || (r.y + r.height) > (imgHeight - EDGE_MARGIN)) continue;
 
             double area = Imgproc.contourArea(c);
 
@@ -312,7 +354,7 @@ public class HardwareFeatureExtractor {
             // so elongated screw-shaft contours are never subject to it (see MIN_CIRCULARITY doc).
             if (MIN_CIRCULARITY > 0 && Math.abs(aspect - 1.0f) <= CIRCULARITY_ASPECT_BAND) {
                 double circularity = circularityOf(c, area);
-                if (circularity < MIN_CIRCULARITY) continue;
+                //if (circularity < MIN_CIRCULARITY) continue;
             }
 
             validBoxes.add(r);
@@ -405,7 +447,9 @@ public class HardwareFeatureExtractor {
 
         // 3. Bilateral Filter
         Mat imgFiltered = new Mat();
-        Imgproc.bilateralFilter(imgClahe, imgFiltered, BILATERAL_D, BILATERAL_SIGMA_COLOR, BILATERAL_SIGMA_SPACE);
+        int adaptiveBilateralD = computeAdaptiveBilateralD(preprocessed);
+        Log.d(TAG, "Using adaptive bilateral D = " + adaptiveBilateralD);
+        Imgproc.bilateralFilter(imgClahe, imgFiltered, adaptiveBilateralD, BILATERAL_SIGMA_COLOR, BILATERAL_SIGMA_SPACE);
 
         // 4. Noise Reduction Blurs (median(5) then Gaussian(5x5))
         Mat imgSmoothed = new Mat();
