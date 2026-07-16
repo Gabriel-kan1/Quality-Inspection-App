@@ -50,6 +50,9 @@ android {
     viewBinding = true
     buildConfig = true
   }
+  // Keep the CLIP ONNX model uncompressed so ONNX Runtime can memory-map it
+  // directly from the APK instead of decompressing a ~45MB asset into RAM.
+  androidResources { noCompress += "onnx" }
   testOptions { unitTests { isIncludeAndroidResources = true } }
 }
 
@@ -101,6 +104,7 @@ dependencies {
   // implementation(libs.play.services.location)
   implementation(libs.retrofit)
   implementation(libs.opencv)
+  implementation(libs.onnxruntime.android)
   testImplementation(libs.androidx.compose.ui.test.junit4)
   testImplementation(libs.androidx.core)
   testImplementation(libs.androidx.junit)
