@@ -24,11 +24,16 @@ import com.example.R;
 import com.example.data.AppDatabase;
 import com.example.data.entity.ReferenceProfile;
 import com.example.databinding.FragmentReferenceSetupBinding;
+import com.example.ml.ClipEmbedder;
+import com.example.ml.ReferenceLibrary;
+import com.example.ml.ReferenceLibraryProvider;
 
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Locale;
 
 public class ReferenceSetupFragment extends Fragment {
@@ -86,6 +91,180 @@ public class ReferenceSetupFragment extends Fragment {
         binding.btnUsePresetReference.setOnClickListener(v -> {
             loadSelectedAsset("chassis_hardware_preset.jpg");
         });
+
+        binding.btnBuildLibrary.setOnClickListener(v -> {
+            if (selectedImageExternalUri == null) {
+                Toast.makeText(getContext(), "Choose or load a reference image first.", Toast.LENGTH_SHORT).show();
+                launchImageChooser();
+            } else {
+                startBuildLibrary(selectedImageExternalUri.toString());
+            }
+        });
+    }
+
+    // ── CLIP few-shot library builder ────────────────────────────────────────
+
+    private static final String[] LABEL_OPTIONS =
+            {"skip", "bolt_head", "hole", "rivet_head", "screw", "stud"};
+
+    /** Extracts feature crops from the selected reference image, then shows the labelling dialog. */
+    private void startBuildLibrary(String uriString) {
+        Toast.makeText(getContext(), "Detecting features in reference image...", Toast.LENGTH_SHORT).show();
+        new Thread(() -> {
+            List<HardwareFeatureExtractor.CropRegion> crops =
+                    HardwareFeatureExtractor.extractCrops(requireContext(), uriString);
+            requireActivity().runOnUiThread(() -> {
+                if (!isAdded() || binding == null) return;
+                if (crops.isEmpty()) {
+                    Toast.makeText(getContext(), "No features detected in this image.", Toast.LENGTH_LONG).show();
+                } else {
+                    showLabelDialog(crops);
+                }
+            });
+        }).start();
+    }
+
+    /** Fullscreen dialog: one row per crop (thumbnail + type dropdown) + a save button. */
+    private void showLabelDialog(List<HardwareFeatureExtractor.CropRegion> crops) {
+        android.app.Dialog dialog = new android.app.Dialog(requireContext(),
+                android.R.style.Theme_DeviceDefault_NoActionBar_Fullscreen);
+
+        android.widget.LinearLayout root = new android.widget.LinearLayout(getContext());
+        root.setOrientation(android.widget.LinearLayout.VERTICAL);
+        root.setBackgroundColor(Color.rgb(20, 20, 25));
+        root.setPadding(dp(20), dp(28), dp(20), dp(20));
+
+        android.widget.TextView title = new android.widget.TextView(getContext());
+        title.setText("LABEL DETECTED FEATURES");
+        title.setTextColor(Color.rgb(74, 222, 128));
+        title.setTextSize(16f);
+        title.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        title.setGravity(android.view.Gravity.CENTER);
+        root.addView(title);
+
+        android.widget.TextView sub = new android.widget.TextView(getContext());
+        sub.setText("Assign a hardware type to each crop (or leave 'skip'). These build the CLIP reference library for this part.");
+        sub.setTextColor(Color.LTGRAY);
+        sub.setTextSize(11f);
+        sub.setGravity(android.view.Gravity.CENTER);
+        sub.setPadding(0, dp(4), 0, dp(16));
+        root.addView(sub);
+
+        android.widget.ScrollView scroll = new android.widget.ScrollView(getContext());
+        android.widget.LinearLayout.LayoutParams scrollParams = new android.widget.LinearLayout.LayoutParams(
+                android.widget.LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f);
+        scroll.setLayoutParams(scrollParams);
+
+        android.widget.LinearLayout list = new android.widget.LinearLayout(getContext());
+        list.setOrientation(android.widget.LinearLayout.VERTICAL);
+
+        final List<android.widget.Spinner> spinners = new ArrayList<>();
+        int thumb = dp(64);
+        for (HardwareFeatureExtractor.CropRegion crop : crops) {
+            android.widget.LinearLayout row = new android.widget.LinearLayout(getContext());
+            row.setOrientation(android.widget.LinearLayout.HORIZONTAL);
+            row.setGravity(android.view.Gravity.CENTER_VERTICAL);
+            row.setPadding(dp(8), dp(8), dp(8), dp(8));
+            android.widget.LinearLayout.LayoutParams rowLp = new android.widget.LinearLayout.LayoutParams(
+                    android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+                    android.widget.LinearLayout.LayoutParams.WRAP_CONTENT);
+            rowLp.setMargins(0, 0, 0, dp(10));
+            row.setLayoutParams(rowLp);
+
+            android.widget.ImageView img = new android.widget.ImageView(getContext());
+            img.setLayoutParams(new android.widget.LinearLayout.LayoutParams(thumb, thumb));
+            img.setScaleType(android.widget.ImageView.ScaleType.CENTER_CROP);
+            img.setImageBitmap(crop.bitmap);
+            row.addView(img);
+
+            android.widget.Spinner spinner = new android.widget.Spinner(getContext());
+            android.widget.LinearLayout.LayoutParams spLp = new android.widget.LinearLayout.LayoutParams(
+                    0, android.widget.LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
+            spLp.setMarginStart(dp(12));
+            spinner.setLayoutParams(spLp);
+            android.widget.ArrayAdapter<String> adapter = new android.widget.ArrayAdapter<>(
+                    requireContext(), android.R.layout.simple_spinner_dropdown_item, LABEL_OPTIONS);
+            spinner.setAdapter(adapter);
+            row.addView(spinner);
+            spinners.add(spinner);
+
+            list.addView(row);
+        }
+        scroll.addView(list);
+        root.addView(scroll);
+
+        android.widget.Button save = new android.widget.Button(getContext());
+        save.setText("SAVE LIBRARY");
+        save.setTextColor(Color.WHITE);
+        save.setBackgroundColor(Color.rgb(26, 70, 128));
+        android.widget.LinearLayout.LayoutParams saveLp = new android.widget.LinearLayout.LayoutParams(
+                android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+                android.widget.LinearLayout.LayoutParams.WRAP_CONTENT);
+        saveLp.setMargins(0, dp(12), 0, 0);
+        save.setLayoutParams(saveLp);
+        save.setOnClickListener(v -> {
+            save.setEnabled(false);
+            saveLibrary(crops, spinners, dialog);
+        });
+        root.addView(save);
+
+        dialog.setContentView(root);
+        dialog.show();
+    }
+
+    /** Embeds each labelled crop with CLIP, averages per type, and saves the per-part library. */
+    private void saveLibrary(List<HardwareFeatureExtractor.CropRegion> crops,
+                             List<android.widget.Spinner> spinners,
+                             android.app.Dialog dialog) {
+        Toast.makeText(getContext(), "Encoding crops with CLIP...", Toast.LENGTH_SHORT).show();
+        new Thread(() -> {
+            ClipEmbedder embedder = ClipEmbedder.get(requireContext());
+            if (embedder == null) {
+                requireActivity().runOnUiThread(() ->
+                        Toast.makeText(getContext(),
+                                "CLIP model not available (missing assets/models/clip_image_encoder.onnx).",
+                                Toast.LENGTH_LONG).show());
+                return;
+            }
+
+            ReferenceLibrary lib = new ReferenceLibrary();
+            int labelled = 0;
+            for (int i = 0; i < crops.size(); i++) {
+                String type = (String) spinners.get(i).getSelectedItem();
+                if (type == null || "skip".equals(type)) continue;
+                float[] emb = embedder.embed(crops.get(i).bitmap);
+                if (emb != null) {
+                    lib.addExample(type, emb);
+                    labelled++;
+                }
+            }
+
+            final int count = labelled;
+            if (lib.isEmpty()) {
+                requireActivity().runOnUiThread(() ->
+                        Toast.makeText(getContext(), "No crops were labelled — nothing saved.", Toast.LENGTH_LONG).show());
+                return;
+            }
+
+            lib.save(ReferenceLibraryProvider.fileForPart(requireContext(), partId));
+
+            // Also persist the reference profile so inspections compute expected counts from this image.
+            AppDatabase db = AppDatabase.getInstance(requireContext());
+            db.referenceProfileDao().insertProfile(
+                    new ReferenceProfile(partId, selectedImageExternalUri.toString(), System.currentTimeMillis()));
+
+            requireActivity().runOnUiThread(() -> {
+                if (dialog.isShowing()) dialog.dismiss();
+                Toast.makeText(getContext(),
+                        "Library saved (" + count + " examples across " + lib.types().size() + " types).",
+                        Toast.LENGTH_LONG).show();
+                proceedToInspection();
+            });
+        }).start();
+    }
+
+    private int dp(int value) {
+        return Math.round(value * getResources().getDisplayMetrics().density);
     }
 
     private void scanAssetsFolder() {
