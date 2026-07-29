@@ -17,6 +17,12 @@ public class ClassificationEvent {
     /** Set on {@link #reviewSource} — how this event came to be reviewed by a human. */
     public static final String SOURCE_UNKNOWN_PROMPT = "unknown_prompt";
     public static final String SOURCE_SPOT_CHECK = "spot_check";
+    /**
+     * Operator tapped a box on the overlay to correct it, unprompted. Tracked separately
+     * because these are self-selected — people tap what looks wrong — so they over-represent
+     * errors relative to what the classifier actually produces.
+     */
+    public static final String SOURCE_OVERLAY_TAP = "overlay_tap";
 
     @PrimaryKey(autoGenerate = true)
     private long id;

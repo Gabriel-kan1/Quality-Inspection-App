@@ -64,6 +64,8 @@ public class ResultsFragment extends Fragment {
     private final Map<Integer, Long> eventIdByFeature = new LinkedHashMap<>();
     private ThresholdTuner.Tuned appliedThresholds;
     private int reviewsThisRun = 0;
+    /** Kept so overlay taps can correct a detection after the results screen is built. */
+    private HardwareFeatureExtractor.AnalysisResult analysisResult;
 
     @Override
     public void onCreate(@Nullable Bundle savedInstanceState) {
@@ -196,6 +198,7 @@ public class ResultsFragment extends Fragment {
     /** Computes final counts/discrepancy (post live-labelling) and renders the results screen. */
     private void finalizeResults(HardwareFeatureExtractor.AnalysisResult activeResult) {
         if (!isAdded() || binding == null) return;
+        analysisResult = activeResult;
 
         detectedCounts.clear();
         countByType(activeResult.features, detectedCounts);
@@ -220,6 +223,9 @@ public class ResultsFragment extends Fragment {
             binding.ivCannyEdges.setImageBitmap(activeResult.processedBitmap);
         }
         binding.chassisOverlayView.setResultData(imageUri, activeResult.features);
+        // Any detection can be corrected by tapping it, not just the ones the app chose to
+        // ask about — the operator can see a wrong label the classifier was confident about.
+        binding.chassisOverlayView.setOnFeatureClickListener((index, f) -> correctFeatureAt(index));
 
         if (hasDiscrepancy) {
             binding.tvResultBadge.setText("INSPECTION FAILED");
@@ -283,6 +289,59 @@ public class ResultsFragment extends Fragment {
         }).start();
     }
 
+    /** Opens the identify dialog for a detection the operator tapped on the overlay. */
+    private void correctFeatureAt(int index) {
+        if (!isAdded() || binding == null || analysisResult == null) return;
+        if (index < 0 || index >= analysisResult.features.size()) return;
+
+        HardwareFeatureExtractor.ExtractedFeature feature = analysisResult.features.get(index);
+        ActiveLearningPolicy.Candidate candidate = ActiveLearningPolicy.userInitiated(index);
+        showIdentifyDialog(feature, candidate, 1, 1, () -> {
+            if (!isAdded() || binding == null) return;
+            binding.chassisOverlayView.updateFeature(
+                    index, feature.type, ReferenceLibrary.colorFor(feature.type), feature.label);
+            binding.chassisOverlayView.clearSelection();
+            refreshAfterCorrection();
+        });
+    }
+
+    /**
+     * Recomputes counts and re-renders the summary after a correction. Deliberately does not
+     * re-run detection or reload the overlay bitmap — only the labels changed.
+     */
+    private void refreshAfterCorrection() {
+        detectedCounts.clear();
+        countByType(analysisResult.features, detectedCounts);
+        if (!hasRealReference) {
+            expectedCounts.clear();
+            expectedCounts.putAll(detectedCounts);
+        }
+        orderedTypes = orderedUnion(expectedCounts.keySet(), detectedCounts.keySet());
+
+        hasDiscrepancy = false;
+        for (String type : orderedTypes) {
+            if (ReferenceLibrary.UNKNOWN.equals(type)) continue;
+            if (count(expectedCounts, type) != count(detectedCounts, type)) {
+                hasDiscrepancy = true;
+                break;
+            }
+        }
+
+        if (hasDiscrepancy) {
+            binding.tvResultBadge.setText("INSPECTION FAILED");
+            binding.tvResultSub.setText("Discrepancy detected in chassis configuration.");
+            binding.layoutResultHeader.setBackgroundColor(ContextCompat.getColor(requireContext(), R.color.red_fail));
+        } else {
+            binding.tvResultBadge.setText("INSPECTION PASSED");
+            binding.tvResultSub.setText("All expected features verified successfully.");
+            binding.layoutResultHeader.setBackgroundColor(ContextCompat.getColor(requireContext(), R.color.green_pass_header));
+        }
+
+        buildFeatureRows();
+        buildLegend();
+        buildLearningStatus();
+    }
+
     // ── Live "identify unknown feature" flow ───────────────────────────────────
 
     /** Walks the active-learning candidate queue one dialog at a time, then runs onDone. */
@@ -305,6 +364,9 @@ public class ResultsFragment extends Fragment {
                                      ActiveLearningPolicy.Candidate candidate,
                                      int position, int total, Runnable onResolved) {
         boolean isSpotCheck = candidate.kind == ActiveLearningPolicy.Kind.SPOT_CHECK;
+        boolean isUserInitiated = candidate.kind == ActiveLearningPolicy.Kind.USER_INITIATED;
+        // Both of these start from the current label rather than a blank slate.
+        boolean preselectCurrent = isSpotCheck || isUserInitiated;
 
         android.app.Dialog dialog = new android.app.Dialog(requireContext(),
                 android.R.style.Theme_DeviceDefault_NoActionBar_Fullscreen);
@@ -315,15 +377,23 @@ public class ResultsFragment extends Fragment {
         root.setPadding(dp(20), dp(28), dp(20), dp(20));
 
         TextView title = new TextView(getContext());
-        title.setText((isSpotCheck ? "SPOT CHECK (" : "IDENTIFY FEATURE (") + position + "/" + total + ")");
-        title.setTextColor(isSpotCheck ? Color.rgb(250, 204, 21) : Color.rgb(74, 222, 128));
+        if (isUserInitiated) {
+            title.setText("CORRECT FEATURE");
+            title.setTextColor(Color.rgb(56, 189, 248));
+        } else {
+            title.setText((isSpotCheck ? "SPOT CHECK (" : "IDENTIFY FEATURE (") + position + "/" + total + ")");
+            title.setTextColor(isSpotCheck ? Color.rgb(250, 204, 21) : Color.rgb(74, 222, 128));
+        }
         title.setTextSize(16f);
         title.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
         title.setGravity(Gravity.CENTER);
         root.addView(title);
 
         TextView sub = new TextView(getContext());
-        if (isSpotCheck) {
+        if (isUserInitiated) {
+            sub.setText("Currently recorded as \"" + FeatureTypeRegistry.displayName(requireContext(), feature.type)
+                    + "\". Pick the correct type — your answer is added to this part's reference set.");
+        } else if (isSpotCheck) {
             sub.setText("Confirm or correct this one. Spot checks keep the auto-tuning honest — "
                     + "without them the app only ever learns from its own mistakes.");
         } else {
@@ -374,7 +444,7 @@ public class ResultsFragment extends Fragment {
         List<FeatureTypeRegistry.TypeInfo> knownTypes = FeatureTypeRegistry.getAll(requireContext());
         List<String> optionLabels = new ArrayList<>();
         List<String> optionKeys = new ArrayList<>();
-        optionLabels.add(isSpotCheck ? "Skip (not sure)" : "Skip (leave as unknown)");
+        optionLabels.add(preselectCurrent ? "Skip (leave as is)" : "Skip (leave as unknown)");
         optionKeys.add(null);
         for (FeatureTypeRegistry.TypeInfo t : knownTypes) {
             optionLabels.add(t.displayName + (t.critical ? "" : " (non-critical)"));
@@ -391,9 +461,9 @@ public class ResultsFragment extends Fragment {
         android.widget.ArrayAdapter<String> adapter = new android.widget.ArrayAdapter<>(
                 requireContext(), android.R.layout.simple_spinner_dropdown_item, optionLabels);
         spinner.setAdapter(adapter);
-        // Spot checks start on the predicted type — the common case is "yes, that's right",
-        // so confirming should be one tap rather than a hunt through the list.
-        if (isSpotCheck && feature.type != null) {
+        // Start on the current type — the common case is "yes, that's right", so confirming
+        // should be one tap rather than a hunt through the list.
+        if (preselectCurrent && feature.type != null) {
             int preselect = optionKeys.indexOf(feature.type);
             if (preselect >= 0) spinner.setSelection(preselect);
         }
@@ -493,9 +563,10 @@ public class ResultsFragment extends Fragment {
 
             if (key == null) {
                 // Skipped. Still recorded as ground truth "unknown" for an unknown-prompt —
-                // the operator looking at it and declining to name it is real signal. A
-                // skipped spot check is genuine abstention, so it stays out of the tuning set.
-                if (!isSpotCheck) {
+                // the operator looking at it and declining to name it is real signal. Skipping
+                // a spot check or a tap-correction is genuine abstention ("never mind"), so
+                // those record nothing rather than asserting the label is wrong.
+                if (!isSpotCheck && !isUserInitiated) {
                     recordReview(candidate, ReferenceLibrary.UNKNOWN, () -> {
                         dialog.dismiss();
                         onResolved.run();
@@ -573,10 +644,15 @@ public class ResultsFragment extends Fragment {
         new Thread(() -> {
             try {
                 AppDatabase db = AppDatabase.getInstance(requireContext());
-                db.classificationEventDao().recordReview(eventId, confirmedType,
-                        candidate.kind == ActiveLearningPolicy.Kind.SPOT_CHECK
-                                ? ClassificationEvent.SOURCE_SPOT_CHECK
-                                : ClassificationEvent.SOURCE_UNKNOWN_PROMPT);
+                String source;
+                if (candidate.kind == ActiveLearningPolicy.Kind.SPOT_CHECK) {
+                    source = ClassificationEvent.SOURCE_SPOT_CHECK;
+                } else if (candidate.kind == ActiveLearningPolicy.Kind.USER_INITIATED) {
+                    source = ClassificationEvent.SOURCE_OVERLAY_TAP;
+                } else {
+                    source = ClassificationEvent.SOURCE_UNKNOWN_PROMPT;
+                }
+                db.classificationEventDao().recordReview(eventId, confirmedType, source);
                 reviewsThisRun++;
             } catch (Exception ex) {
                 android.util.Log.e("ResultsFragment", "Failed to record review", ex);
