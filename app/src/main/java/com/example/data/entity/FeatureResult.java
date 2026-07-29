@@ -12,16 +12,19 @@ public class FeatureResult {
     private int expectedCount;
     private int detectedCount;
     private String status; // "PASS", "MISSING", "EXTRA"
+    /** Whether this feature type should appear in the exported report; set per-type by the user via FeatureTypeRegistry. */
+    private boolean critical = true;
 
     public FeatureResult() {
     }
 
-    public FeatureResult(long inspectionId, String featureType, int expectedCount, int detectedCount, String status) {
+    public FeatureResult(long inspectionId, String featureType, int expectedCount, int detectedCount, String status, boolean critical) {
         this.inspectionId = inspectionId;
         this.featureType = featureType;
         this.expectedCount = expectedCount;
         this.detectedCount = detectedCount;
         this.status = status;
+        this.critical = critical;
     }
 
     public long getId() {
@@ -70,5 +73,13 @@ public class FeatureResult {
 
     public void setStatus(String status) {
         this.status = status;
+    }
+
+    public boolean isCritical() {
+        return critical;
+    }
+
+    public void setCritical(boolean critical) {
+        this.critical = critical;
     }
 }
