@@ -85,7 +85,14 @@ public class ReportFragment extends Fragment {
         new Thread(() -> {
             AppDatabase db = AppDatabase.getInstance(requireContext());
             record = db.inspectionDao().getInspectionById(inspectionId);
-            features = db.inspectionDao().getFeatureResultsForInspection(inspectionId);
+
+            // Non-critical feature types (e.g. cosmetic scratch/rust, per user's FeatureTypeRegistry
+            // choice at labelling time) are tracked in the DB but intentionally left out of the report.
+            List<FeatureResult> all = db.inspectionDao().getFeatureResultsForInspection(inspectionId);
+            features = new java.util.ArrayList<>();
+            for (FeatureResult f : all) {
+                if (f.isCritical()) features.add(f);
+            }
 
             requireActivity().runOnUiThread(() -> {
                 if (record != null) {

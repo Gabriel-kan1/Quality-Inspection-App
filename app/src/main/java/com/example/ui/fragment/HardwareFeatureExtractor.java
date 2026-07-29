@@ -77,6 +77,8 @@ public class HardwareFeatureExtractor {
     private static double CIRCULARITY_ASPECT_BAND = 0.35;
 
     private static final int CROP_PADDING = 40;   // matches CROP_PADDING in the Python script
+    /** Upper bound on boxes carried forward from one image; see the safety valve in findFeatureBoxes. */
+    private static int MAX_DETECTIONS = 300;
 
     static {
         if (!OpenCVLoader.initDebug()) {
@@ -92,13 +94,28 @@ public class HardwareFeatureExtractor {
         public int color;
         public String label;
         public float confidence;
+        /**
+         * On-disk path of the persisted crop, or null if it wasn't saved.
+         *
+         * Deliberately a path rather than a Bitmap: retaining one bitmap per detection made
+         * memory scale with contour count, and since Android 8 bitmap pixels live in native
+         * memory, that grows anon RSS silently instead of throwing OutOfMemoryError — the app
+         * just climbs until the kernel low-memory killer takes it. The UI decodes the handful
+         * of thumbnails it actually needs from disk instead.
+         */
+        public String cropPath;
+        /** Full classification detail (scores, runner-up, reason) — drives active-learning selection and event logging. */
+        public ReferenceLibrary.Classification classification;
 
-        public ExtractedFeature(String type, RectF rectFraction, int color, String label, float confidence) {
+        public ExtractedFeature(String type, RectF rectFraction, int color, String label, float confidence,
+                                String cropPath, ReferenceLibrary.Classification classification) {
             this.type = type;
             this.rectFraction = rectFraction;
             this.color = color;
             this.label = label;
             this.confidence = confidence;
+            this.cropPath = cropPath;
+            this.classification = classification;
         }
     }
 
@@ -110,6 +127,15 @@ public class HardwareFeatureExtractor {
             this.features = features;
             this.processedBitmap = processedBitmap;
         }
+    }
+
+    /**
+     * Receives each detected crop during extraction so it can be persisted, and returns the
+     * path it was written to (or null). The crop is recycled immediately after this returns,
+     * so implementations must not retain the Bitmap.
+     */
+    public interface CropSink {
+        String save(Bitmap crop, int index);
     }
 
     /** A detected feature crop (colour bitmap) plus its fractional location in the source image. */
@@ -144,6 +170,7 @@ public class HardwareFeatureExtractor {
 
         Log.d(TAG, String.format(Locale.US,
                 "Adaptive bilateral D — Laplacian variance: %.1f", noiseVariance));
+
 
         if (noiseVariance < 200) {
             // Low noise level
@@ -230,6 +257,16 @@ public class HardwareFeatureExtractor {
      * (no reference set, or CLIP unavailable) every feature is labelled "unknown".
      */
     public static AnalysisResult extractFeatures(Context context, String uriString, ReferenceLibrary library) {
+        return extractFeatures(context, uriString, library, null);
+    }
+
+    /**
+     * As above, but hands each crop to {@code sink} for persistence before freeing it. Pass a
+     * null sink when the caller only needs counts (e.g. the gold-standard reference pass) —
+     * nothing is then written to disk and no crop outlives its own loop iteration.
+     */
+    public static AnalysisResult extractFeatures(Context context, String uriString,
+                                                 ReferenceLibrary library, CropSink sink) {
         List<ExtractedFeature> features = new ArrayList<>();
         Bitmap diagnosticBitmap = null;
 
@@ -266,7 +303,7 @@ public class HardwareFeatureExtractor {
             Utils.matToBitmap(rgbaVisual, diagnosticBitmap);
 
             // STEP 3-6 — OpenCV crop extraction + CLIP classification
-            performDynamicDetection(src, e.edgesClosed, embedder, library, features);
+            performDynamicDetection(src, e.edgesClosed, embedder, library, sink, features);
 
             src.release();
             e.release();
@@ -280,7 +317,8 @@ public class HardwareFeatureExtractor {
     }
 
     private static void performDynamicDetection(Mat src, Mat edges, ClipEmbedder embedder,
-                                                ReferenceLibrary library, List<ExtractedFeature> outFeatures) {
+                                                ReferenceLibrary library, CropSink sink,
+                                                List<ExtractedFeature> outFeatures) {
         float imgWidth = (float) src.width();
         float imgHeight = (float) src.height();
 
@@ -291,24 +329,35 @@ public class HardwareFeatureExtractor {
         for (Rect r : merged) {
             boxId++;
 
+            // One crop is alive at a time: created, embedded, persisted, then freed before the
+            // next iteration. Keeping them all would make peak memory scale with contour count.
+            Bitmap crop = cropToBitmap(src, r);
+
             String type = ReferenceLibrary.UNKNOWN;
             float confidence = 0f;
             String label = boxId + ":?";
+            ReferenceLibrary.Classification classification = null;
+            String cropPath = null;
 
-            if (canClassify) {
-                Bitmap crop = cropToBitmap(src, r);
-                float[] embedding = crop != null ? embedder.embed(crop) : null;
-                if (crop != null) crop.recycle();
+            try {
+                if (canClassify && crop != null) {
+                    float[] embedding = embedder.embed(crop);
+                    ReferenceLibrary.Classification c = library.classify(embedding);
+                    classification = c;
+                    type = c.type;
+                    confidence = c.score;
 
-                ReferenceLibrary.Classification c = library.classify(embedding);
-                type = c.type;
-                confidence = c.score;
-
-                if (ReferenceLibrary.UNKNOWN.equals(c.type) && !"none".equals(c.closestMatch)) {
-                    label = String.format(Locale.US, "%d:? (%s %.2f)", boxId, c.closestMatch, c.score);
-                } else {
-                    label = String.format(Locale.US, "%d:%s %.2f", boxId, c.type, c.score);
+                    if (ReferenceLibrary.UNKNOWN.equals(c.type) && !"none".equals(c.closestMatch)) {
+                        label = String.format(Locale.US, "%d:? (%s %.2f)", boxId, c.closestMatch, c.score);
+                    } else {
+                        label = String.format(Locale.US, "%d:%s %.2f", boxId, c.type, c.score);
+                    }
                 }
+                if (sink != null && crop != null) {
+                    cropPath = sink.save(crop, boxId);
+                }
+            } finally {
+                if (crop != null) crop.recycle();
             }
 
             outFeatures.add(new ExtractedFeature(
@@ -316,7 +365,9 @@ public class HardwareFeatureExtractor {
                 new RectF((float)r.x/imgWidth, (float)r.y/imgHeight, (float)(r.x+r.width)/imgWidth, (float)(r.y+r.height)/imgHeight),
                 ReferenceLibrary.colorFor(type),
                 label,
-                confidence
+                confidence,
+                cropPath,
+                classification
             ));
         }
     }
@@ -380,7 +431,24 @@ public class HardwareFeatureExtractor {
         }
 
         // 6. Nested Box Removal & Proximity Merge
-        return mergeNearbyBoxes(removeNestedBoxes(sizedBoxes), PROXIMITY_THRESHOLD);
+        List<Rect> boxes = mergeNearbyBoxes(removeNestedBoxes(sizedBoxes), PROXIMITY_THRESHOLD);
+
+        Log.d(TAG, "findFeatureBoxes: " + contours.size() + " contours -> "
+                + validBoxes.size() + " passed geometry -> " + sizedBoxes.size()
+                + " passed area -> " + boxes.size() + " after merge");
+
+        // Safety valve. Several geometry filters above are commented out, so a noisy or
+        // low-contrast photo can yield an effectively unbounded number of boxes; each one
+        // costs a CLIP inference and a PNG write. Keep the largest, which are the ones most
+        // likely to be real hardware rather than texture noise.
+        if (boxes.size() > MAX_DETECTIONS) {
+            Log.w(TAG, "Detection count " + boxes.size() + " exceeds MAX_DETECTIONS ("
+                    + MAX_DETECTIONS + "); keeping the largest. Consider re-enabling a geometry filter.");
+            Collections.sort(boxes, (a, b) -> Long.compare(
+                    (long) b.width * b.height, (long) a.width * a.height));
+            boxes = new ArrayList<>(boxes.subList(0, MAX_DETECTIONS));
+        }
+        return boxes;
     }
 
     /** 4*pi*area / perimeter^2 — 1.0 for a perfect circle, lower for irregular/elongated shapes. */
