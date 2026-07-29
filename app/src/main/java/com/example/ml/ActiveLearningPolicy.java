@@ -40,7 +40,17 @@ public final class ActiveLearningPolicy {
      */
     public static float NOISE_FLOOR = 0.45f;
 
-    public enum Kind { UNKNOWN, SPOT_CHECK }
+    public enum Kind {
+        UNKNOWN,
+        SPOT_CHECK,
+        /** Operator tapped a detection on the overlay to correct it; never auto-selected. */
+        USER_INITIATED
+    }
+
+    /** Builds a candidate for a correction the operator started themselves. */
+    public static Candidate userInitiated(int featureIndex) {
+        return new Candidate(featureIndex, Kind.USER_INITIATED, 0f);
+    }
 
     public static final class Candidate {
         public final int featureIndex;

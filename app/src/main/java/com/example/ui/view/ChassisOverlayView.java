@@ -38,11 +38,30 @@ public class ChassisOverlayView extends View {
         }
     }
 
+    /** Notified when the user taps a detection, so the host screen can offer a correction. */
+    public interface OnFeatureClickListener {
+        void onFeatureClick(int index, DetectedFeature feature);
+    }
+
     private Bitmap sourceBitmap = null;
+    /**
+     * Source scaled to the current view size, cached. onDraw used to call
+     * createScaledBitmap on every frame, allocating a fresh view-sized bitmap each
+     * time — costly to begin with and much worse now that taps trigger redraws.
+     */
+    private Bitmap scaledCache = null;
+    private int cachedW = 0, cachedH = 0;
+
     private final List<DetectedFeature> features = new ArrayList<>();
     private final Paint paintRect = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint paintText = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint paintBackgroundMesh = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint paintSelected = new Paint(Paint.ANTI_ALIAS_FLAG);
+
+    private OnFeatureClickListener featureClickListener;
+    private int selectedIndex = -1;
+    /** Extra hit-test padding in px so small detections stay tappable with a fingertip. */
+    private float touchPadding = 0f;
 
     public ChassisOverlayView(Context context) {
         super(context);
@@ -70,6 +89,32 @@ public class ChassisOverlayView extends View {
         paintBackgroundMesh.setColor(Color.rgb(73, 69, 79)); // #49454F border color representation
         paintBackgroundMesh.setStrokeWidth(2f);
         paintBackgroundMesh.setStyle(Paint.Style.STROKE);
+
+        paintSelected.setStyle(Paint.Style.STROKE);
+        paintSelected.setStrokeWidth(9f);
+        paintSelected.setColor(Color.WHITE);
+
+        touchPadding = 12f * getResources().getDisplayMetrics().density;
+        setClickable(true);
+    }
+
+    public void setOnFeatureClickListener(OnFeatureClickListener listener) {
+        this.featureClickListener = listener;
+    }
+
+    /** Applies a corrected label to one detection and redraws. */
+    public void updateFeature(int index, String type, int color, String label) {
+        if (index < 0 || index >= features.size()) return;
+        DetectedFeature f = features.get(index);
+        f.type = type;
+        f.color = color;
+        f.label = label;
+        invalidate();
+    }
+
+    public void clearSelection() {
+        selectedIndex = -1;
+        invalidate();
     }
 
     public List<DetectedFeature> getFeatures() {
@@ -114,28 +159,81 @@ public class ChassisOverlayView extends View {
     }
 
     private void loadBitmapFromUri(String uriString) {
+        if (scaledCache != null && !scaledCache.isRecycled()) scaledCache.recycle();
+        scaledCache = null;
+        if (sourceBitmap != null && !sourceBitmap.isRecycled()) sourceBitmap.recycle();
+
         if (uriString == null || "mock_image_uri".equals(uriString)) {
             sourceBitmap = null;
             return;
         }
-        try {
-            InputStream inputStream;
-            if (uriString.startsWith("file:///android_asset/")) {
-                // Robust path extraction for assets
-                String assetPath = uriString.replace("file:///android_asset/", "");
-                inputStream = getContext().getAssets().open(assetPath);
-            } else {
-                Uri uri = Uri.parse(uriString);
-                inputStream = getContext().getContentResolver().openInputStream(uri);
-            }
-            sourceBitmap = BitmapFactory.decodeStream(inputStream);
-            if (inputStream != null) {
-                inputStream.close();
-            }
-        } catch (Exception e) {
-            Log.e(TAG, "Error decoding image file uri: " + uriString, e);
-            sourceBitmap = null;
+        // Downsampled: the chassis photos are camera-resolution and decoding one at full
+        // size costs ~46MB, for a view only a few hundred pixels tall.
+        sourceBitmap = HardwareFeatureExtractor.loadBitmap(getContext(), uriString, 1280);
+        if (sourceBitmap == null) {
+            Log.e(TAG, "Error decoding image file uri: " + uriString);
         }
+    }
+
+    @Override
+    public boolean onTouchEvent(android.view.MotionEvent event) {
+        if (event.getAction() == android.view.MotionEvent.ACTION_UP && !features.isEmpty()) {
+            int hit = featureAt(event.getX(), event.getY());
+            if (hit >= 0) {
+                selectedIndex = hit;
+                invalidate();
+                performClick();
+                if (featureClickListener != null) {
+                    featureClickListener.onFeatureClick(hit, features.get(hit));
+                }
+                return true;
+            }
+        }
+        return super.onTouchEvent(event);
+    }
+
+    @Override
+    public boolean performClick() {
+        return super.performClick();
+    }
+
+    /**
+     * Index of the detection under the given view coordinate, or -1.
+     *
+     * Boxes commonly overlap and nest, so the smallest match wins — otherwise a large
+     * enclosing box would swallow every tap meant for the small detections inside it.
+     */
+    private int featureAt(float x, float y) {
+        int viewWidth = getWidth();
+        int viewHeight = getHeight();
+        if (viewWidth == 0 || viewHeight == 0) return -1;
+
+        int best = -1;
+        float bestArea = Float.MAX_VALUE;
+        for (int i = 0; i < features.size(); i++) {
+            RectF fr = features.get(i).rectFraction;
+            float left = fr.left * viewWidth - touchPadding;
+            float top = fr.top * viewHeight - touchPadding;
+            float right = fr.right * viewWidth + touchPadding;
+            float bottom = fr.bottom * viewHeight + touchPadding;
+            if (x >= left && x <= right && y >= top && y <= bottom) {
+                float area = (right - left) * (bottom - top);
+                if (area < bestArea) {
+                    bestArea = area;
+                    best = i;
+                }
+            }
+        }
+        return best;
+    }
+
+    @Override
+    protected void onDetachedFromWindow() {
+        super.onDetachedFromWindow();
+        if (scaledCache != null && !scaledCache.isRecycled()) scaledCache.recycle();
+        scaledCache = null;
+        if (sourceBitmap != null && !sourceBitmap.isRecycled()) sourceBitmap.recycle();
+        sourceBitmap = null;
     }
 
     @Override
@@ -148,8 +246,15 @@ public class ChassisOverlayView extends View {
         if (viewWidth == 0 || viewHeight == 0) return;
 
         if (sourceBitmap != null) {
-            Bitmap scaledBitmap = Bitmap.createScaledBitmap(sourceBitmap, viewWidth, viewHeight, true);
-            canvas.drawBitmap(scaledBitmap, 0f, 0f, null);
+            // Rebuild the scaled copy only when the view size actually changes.
+            if (scaledCache == null || scaledCache.isRecycled()
+                    || cachedW != viewWidth || cachedH != viewHeight) {
+                if (scaledCache != null && !scaledCache.isRecycled()) scaledCache.recycle();
+                scaledCache = Bitmap.createScaledBitmap(sourceBitmap, viewWidth, viewHeight, true);
+                cachedW = viewWidth;
+                cachedH = viewHeight;
+            }
+            canvas.drawBitmap(scaledCache, 0f, 0f, null);
         } else {
             canvas.drawColor(Color.rgb(43, 41, 48)); 
 
@@ -161,7 +266,8 @@ public class ChassisOverlayView extends View {
             }
         }
 
-        for (DetectedFeature feature : features) {
+        for (int i = 0; i < features.size(); i++) {
+            DetectedFeature feature = features.get(i);
             float left = feature.rectFraction.left * viewWidth;
             float top = feature.rectFraction.top * viewHeight;
             float right = feature.rectFraction.right * viewWidth;
@@ -169,6 +275,9 @@ public class ChassisOverlayView extends View {
 
             RectF targetRect = new RectF(left, top, right, bottom);
 
+            if (i == selectedIndex) {
+                canvas.drawRoundRect(targetRect, 8f, 8f, paintSelected);
+            }
             paintRect.setColor(feature.color);
             canvas.drawRoundRect(targetRect, 8f, 8f, paintRect);
 

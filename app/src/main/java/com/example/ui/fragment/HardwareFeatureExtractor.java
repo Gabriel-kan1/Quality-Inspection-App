@@ -615,7 +615,8 @@ public class HardwareFeatureExtractor {
         return working;
     }
 
-    private static Bitmap loadBitmap(Context context, String uriString, int maxDim) {
+    /** Loads an asset or content URI downsampled so its longest edge is near {@code maxDim}. */
+    public static Bitmap loadBitmap(Context context, String uriString, int maxDim) {
         try {
             InputStream is;
             if (uriString.startsWith("file:///android_asset/")) {
