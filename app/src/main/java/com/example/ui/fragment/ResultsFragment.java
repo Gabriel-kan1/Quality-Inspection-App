@@ -366,6 +366,7 @@ public class ResultsFragment extends Fragment {
         boolean isSpotCheck = candidate.kind == ActiveLearningPolicy.Kind.SPOT_CHECK;
         boolean isUserInitiated = candidate.kind == ActiveLearningPolicy.Kind.USER_INITIATED;
         // Both of these start from the current label rather than a blank slate.
+        // Only affects the wording of the skip option now; nothing is pre-selected.
         boolean preselectCurrent = isSpotCheck || isUserInitiated;
 
         android.app.Dialog dialog = new android.app.Dialog(requireContext(),
@@ -399,7 +400,7 @@ public class ResultsFragment extends Fragment {
         } else {
             sub.setText(explainUncertainty(feature.classification));
         }
-        sub.setTextColor(Color.LTGRAY);
+        sub.setTextColor(Color.WHITE);
         sub.setTextSize(11f);
         sub.setGravity(Gravity.CENTER);
         sub.setPadding(0, dp(4), 0, dp(16));
@@ -433,7 +434,7 @@ public class ResultsFragment extends Fragment {
                         FeatureTypeRegistry.displayName(requireContext(), c.runnerUp), c.runnerUpScore));
             }
             guess.setText(sb.toString());
-            guess.setTextColor(Color.rgb(150, 150, 160));
+            guess.setTextColor(Color.WHITE);
             guess.setTextSize(10.5f);
             guess.setGravity(Gravity.CENTER);
             guess.setPadding(0, dp(10), 0, 0);
@@ -458,13 +459,46 @@ public class ResultsFragment extends Fragment {
                 android.widget.LinearLayout.LayoutParams.MATCH_PARENT, android.widget.LinearLayout.LayoutParams.WRAP_CONTENT);
         spinnerLp.setMargins(0, dp(16), 0, dp(8));
         spinner.setLayoutParams(spinnerLp);
-        android.widget.ArrayAdapter<String> adapter = new android.widget.ArrayAdapter<>(
-                requireContext(), android.R.layout.simple_spinner_dropdown_item, optionLabels);
+        // Both the collapsed row and the dropdown popup default to the platform theme's colours,
+        // which fight this dialog's dark background: theme text is dark-on-dark in the row, and
+        // the popup is white, so white text disappears into it. Style both ends explicitly —
+        // dark surfaces with white text — matching the card styling used elsewhere in the app.
+        android.graphics.drawable.GradientDrawable spinnerBg = new android.graphics.drawable.GradientDrawable();
+        spinnerBg.setColor(Color.rgb(43, 41, 48));
+        spinnerBg.setCornerRadius(dp(10));
+        spinnerBg.setStroke(dp(1), Color.rgb(95, 95, 105));
+        spinner.setBackground(spinnerBg);
+        spinner.setPopupBackgroundDrawable(
+                new android.graphics.drawable.ColorDrawable(Color.rgb(32, 32, 38)));
+
+        // Per-type similarity, so the operator can see how close the runners-up were rather than
+        // just the top two. Rows are built by hand instead of using the platform item layout:
+        // the score has to sit hard right, which a single TextView can't do reliably.
+        final Map<String, Float> typeScores = (c != null && c.scores != null) ? c.scores : new LinkedHashMap<>();
+        android.widget.ArrayAdapter<String> adapter = new android.widget.ArrayAdapter<String>(
+                requireContext(), android.R.layout.simple_spinner_dropdown_item, optionLabels) {
+            private View row(int position) {
+                return spinnerRow(optionLabels.get(position), typeScores.get(optionKeys.get(position)));
+            }
+            @NonNull @Override
+            public View getView(int position, View convertView, @NonNull ViewGroup parent) {
+                return row(position);
+            }
+            @Override
+            public View getDropDownView(int position, View convertView, @NonNull ViewGroup parent) {
+                return row(position);
+            }
+        };
         spinner.setAdapter(adapter);
-        // Start on the current type — the common case is "yes, that's right", so confirming
-        // should be one tap rather than a hunt through the list.
-        if (preselectCurrent && feature.type != null) {
-            int preselect = optionKeys.indexOf(feature.type);
+
+        // Open on the classifier's best match rather than Skip, so confirming a correct guess is
+        // a single tap. Note this does anchor the operator toward agreeing — and those agreements
+        // are the ground truth the tuner fits against — so the MIN_ACCURACY gate in ThresholdTuner
+        // is what now stops a run of easy confirmations from driving the thresholds somewhere bad.
+        String preferred = (c != null && c.closestMatch != null && !"none".equals(c.closestMatch))
+                ? c.closestMatch : feature.type;
+        if (preferred != null) {
+            int preselect = optionKeys.indexOf(preferred);
             if (preselect >= 0) spinner.setSelection(preselect);
         }
         root.addView(spinner);
@@ -478,12 +512,12 @@ public class ResultsFragment extends Fragment {
         android.widget.EditText nameInput = new android.widget.EditText(getContext());
         nameInput.setHint("New feature type name (e.g. Scratch)");
         nameInput.setTextColor(Color.WHITE);
-        nameInput.setHintTextColor(Color.GRAY);
+        nameInput.setHintTextColor(Color.rgb(180, 180, 188));
         newTypePanel.addView(nameInput);
 
         TextView criticalLabel = new TextView(getContext());
         criticalLabel.setText("Should this type be included in the report?");
-        criticalLabel.setTextColor(Color.LTGRAY);
+        criticalLabel.setTextColor(Color.WHITE);
         criticalLabel.setTextSize(11f);
         criticalLabel.setPadding(0, dp(12), 0, dp(6));
         newTypePanel.addView(criticalLabel);
@@ -604,6 +638,39 @@ public class ResultsFragment extends Fragment {
         dialog.setContentView(root);
         dialog.setCancelable(false);
         dialog.show();
+    }
+
+    /**
+     * One spinner row: type name on the left, similarity right-aligned. Score is null for the
+     * Skip and "create new" entries, and for any type with no prototype to compare against.
+     */
+    private View spinnerRow(String label, Float score) {
+        LinearLayout row = new LinearLayout(requireContext());
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(dp(14), dp(12), dp(14), dp(12));
+
+        TextView name = new TextView(requireContext());
+        name.setLayoutParams(new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        name.setText(label);
+        name.setTextColor(Color.WHITE);
+        name.setTextSize(14f);
+        name.setSingleLine(true);
+        name.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        row.addView(name);
+
+        TextView value = new TextView(requireContext());
+        value.setLayoutParams(new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+        value.setText(score == null ? "" : String.format(Locale.US, "%.2f", score));
+        // Monospace keeps the decimals in a straight column down the list.
+        value.setTypeface(android.graphics.Typeface.MONOSPACE);
+        value.setTextColor(Color.WHITE);
+        value.setTextSize(14f);
+        value.setPadding(dp(12), 0, 0, 0);
+        row.addView(value);
+
+        return row;
     }
 
     /** Loads a persisted crop from disk, or null if there's no path or it can't be read. */
