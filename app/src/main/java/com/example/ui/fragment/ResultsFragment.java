@@ -25,7 +25,7 @@ import com.example.data.entity.InspectionRecord;
 import com.example.data.entity.ReferenceProfile;
 import com.example.databinding.FragmentResultsBinding;
 import com.example.ml.ActiveLearningPolicy;
-import com.example.ml.ClipEmbedder;
+import com.example.ml.FeatureEmbedder;
 import com.example.ml.FeatureTypeRegistry;
 import com.example.ml.LearningCropStore;
 import com.example.ml.ReferenceLibrary;
@@ -100,7 +100,7 @@ public class ResultsFragment extends Fragment {
             AppDatabase db = AppDatabase.getInstance(requireContext());
             ReferenceProfile ref = db.referenceProfileDao().getProfileByPartType(partId);
 
-            // Effective CLIP reference library: per-part if set up in-app, else the bundled default,
+            // Effective reference library: per-part if set up in-app, else the bundled default,
             // else a fresh empty one (first run for this part — everything starts "unknown").
             ReferenceLibrary library = ReferenceLibraryProvider.effectiveFor(requireContext(), partId);
             activeLibrary = library != null ? library : new ReferenceLibrary();
@@ -181,6 +181,9 @@ public class ResultsFragment extends Fragment {
             e.setReason(c != null ? c.reason.name() : ReferenceLibrary.Reason.NO_LIBRARY.name());
             e.setSimilarityThreshold(activeLibrary.getSimilarityThreshold());
             e.setMarginThreshold(activeLibrary.getMarginThreshold());
+            // Which embedding space produced the scores above, so a later threshold fit can
+            // exclude events from a retired encoder instead of averaging across both.
+            e.setEncoderId(FeatureEmbedder.ENCODER_ID);
             e.setReviewed(false);
             pending.add(e);
         }
@@ -770,7 +773,7 @@ public class ResultsFragment extends Fragment {
             Bitmap crop = decodeCrop(feature.cropPath);
             if (crop != null) {
                 try {
-                    ClipEmbedder embedder = ClipEmbedder.get(requireContext());
+                    FeatureEmbedder embedder = FeatureEmbedder.get(requireContext());
                     if (embedder != null) {
                         float[] emb = embedder.embed(crop);
                         if (emb != null) {

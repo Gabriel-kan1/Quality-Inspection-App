@@ -44,6 +44,20 @@ public class ClassificationEvent {
     private float similarityThreshold;
     private float marginThreshold;
 
+    /**
+     * {@link com.example.ml.FeatureEmbedder#ENCODER_ID} at the time of prediction.
+     *
+     * The scores above are only comparable within one embedding space, so replaying a
+     * threshold against an event from a different encoder is meaningless — the two
+     * encoders don't even use the same numeric range. ThresholdTuner filters on this
+     * rather than fitting across a mixed history. Rows written before this column
+     * existed carry {@link #ENCODER_LEGACY_UNTAGGED}.
+     */
+    private String encoderId;
+
+    /** Marks pre-migration rows, which came from the retired CLIP encoder. */
+    public static final String ENCODER_LEGACY_UNTAGGED = "legacy-untagged";
+
     /** Ground truth once a human weighs in: a type key, or "unknown" if they skipped. */
     private String confirmedType;
     private boolean reviewed;
@@ -87,6 +101,9 @@ public class ClassificationEvent {
 
     public float getMarginThreshold() { return marginThreshold; }
     public void setMarginThreshold(float marginThreshold) { this.marginThreshold = marginThreshold; }
+
+    public String getEncoderId() { return encoderId; }
+    public void setEncoderId(String encoderId) { this.encoderId = encoderId; }
 
     public String getConfirmedType() { return confirmedType; }
     public void setConfirmedType(String confirmedType) { this.confirmedType = confirmedType; }
