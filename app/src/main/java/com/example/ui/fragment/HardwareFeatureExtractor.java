@@ -56,10 +56,22 @@ public class HardwareFeatureExtractor {
 
     // --- Geometry filtering (findFeatureBoxes) ---
     private static float MAX_DIMENSION_RATIO = 0.4f;
-    private static float MAX_ASPECT_RATIO = 5.0f;
-    private static float MIN_ASPECT_RATIO = 0.2f;
+    /**
+     * Aspect band a contour must fall inside to be considered hardware. Measured on real
+     * chassis shots: bolt heads land at 0.85-1.30, while structural seams and panel edges
+     * run 2.4-4.3. The band is set to separate those two populations. Widen MAX if genuinely
+     * elongated features (side-on screw shafts) start being missed.
+     */
+    private static float MAX_ASPECT_RATIO = 2.5f;
+    private static float MIN_ASPECT_RATIO = 0.4f;
     private static int EDGE_MARGIN = 10;
     private static double DYNAMIC_AREA_MULTIPLIER = 0.15;
+    /**
+     * Contours more than this many times the median area are treated as structural
+     * (chassis outline, panel edges, shadows) rather than hardware, and are excluded when
+     * sizing the dynamic area threshold — see the note in findFeatureBoxes.
+     */
+    private static double OUTLIER_AREA_FACTOR = 10.0;
     private static int PROXIMITY_THRESHOLD = 10;
     private static double FILL_RATIO_THRESHOLD = 0.7;
     /**
@@ -79,6 +91,8 @@ public class HardwareFeatureExtractor {
     private static final int CROP_PADDING = 40;   // matches CROP_PADDING in the Python script
     /** Upper bound on boxes carried forward from one image; see the safety valve in findFeatureBoxes. */
     private static int MAX_DETECTIONS = 300;
+    /** Logs every box before and after merging. Verbose — for tuning detection, not normal use. */
+    private static boolean DEBUG_GEOMETRY = true;
 
     static {
         if (!OpenCVLoader.initDebug()) {
@@ -385,6 +399,7 @@ public class HardwareFeatureExtractor {
 
         List<Rect> validBoxes = new ArrayList<>();
         List<Double> validAreas = new ArrayList<>();
+        int rejectedAspect = 0;
 
         for (MatOfPoint c : contours) {
             Rect r = Imgproc.boundingRect(c);
@@ -393,8 +408,17 @@ public class HardwareFeatureExtractor {
             //if (r.width > imgWidth * MAX_DIMENSION_RATIO || r.height > imgHeight * MAX_DIMENSION_RATIO) continue;
 
             // 2. Aspect Ratio Check
+            //
+            // Re-enabled: structural seams and panel edges are long, flat contours. Left in,
+            // they don't just add noise — a line's bounding box can enclose a nearby bolt head,
+            // which then gets deleted by removeNestedBoxes or absorbed by the proximity merge,
+            // so real fasteners disappear. The band is wide enough to keep screws, which in this
+            // pipeline are shafts viewed side-on and so legitimately elongated (see MIN_CIRCULARITY).
             float aspect = (float) r.width / r.height;
-            //if (aspect > MAX_ASPECT_RATIO || aspect < MIN_ASPECT_RATIO) continue;
+            if (aspect > MAX_ASPECT_RATIO || aspect < MIN_ASPECT_RATIO) {
+                rejectedAspect++;
+                continue;
+            }
 
             // 3. Edge Margin Check
             //if (r.x < EDGE_MARGIN || r.y < EDGE_MARGIN || (r.x + r.width) > (imgWidth - EDGE_MARGIN) || (r.y + r.height) > (imgHeight - EDGE_MARGIN)) continue;
@@ -415,13 +439,40 @@ public class HardwareFeatureExtractor {
         if (validBoxes.isEmpty()) return new ArrayList<>();
 
         // 5. Dynamic Area Filtering
-        List<Double> sortedAreas = new ArrayList<>(validAreas);
-        Collections.sort(sortedAreas, Collections.reverseOrder());
-        int topCount = Math.min(3, sortedAreas.size());
+        //
+        // The threshold is sized from the largest contours, on the assumption that those are
+        // real hardware. That holds for a tight shot, but not for a wider one: there the
+        // biggest contours are the chassis outline, panel edges and shadows, which are orders
+        // of magnitude larger than any fastener. They drag the reference up until the minimum
+        // area exceeds every genuine feature and the frame comes back empty — the further
+        // back the camera, the higher the bar, exactly when features are smallest.
+        //
+        // So structural outliers are discarded before sizing the threshold, using the median
+        // as an anchor. A tight shot has no such outliers, so its behaviour is unchanged.
+        List<Double> ascending = new ArrayList<>(validAreas);
+        Collections.sort(ascending);
+        double medianArea = ascending.get(ascending.size() / 2);
+        double outlierCeiling = medianArea * OUTLIER_AREA_FACTOR;
+
+        List<Double> referencePool = new ArrayList<>();
+        for (double a : validAreas) {
+            if (a <= outlierCeiling) referencePool.add(a);
+        }
+        // Too few left to judge from — fall back rather than size off one or two contours.
+        if (referencePool.size() < 3) referencePool = new ArrayList<>(validAreas);
+
+        Collections.sort(referencePool, Collections.reverseOrder());
+        int topCount = Math.min(3, referencePool.size());
         double sumTop = 0;
-        for (int i = 0; i < topCount; i++) sumTop += sortedAreas.get(i);
+        for (int i = 0; i < topCount; i++) sumTop += referencePool.get(i);
         double referenceAreaValue = sumTop / topCount;
         double dynamicMinArea = Math.max(25.0, referenceAreaValue * DYNAMIC_AREA_MULTIPLIER);
+
+        Log.d(TAG, String.format(Locale.US,
+                "area filter: median=%.0f ceiling=%.0f reference=%.0f minArea=%.0f "
+                        + "(%d of %d contours excluded as structural)",
+                medianArea, outlierCeiling, referenceAreaValue, dynamicMinArea,
+                validAreas.size() - referencePool.size(), validAreas.size()));
 
         List<Rect> sizedBoxes = new ArrayList<>();
         for (int i = 0; i < validBoxes.size(); i++) {
@@ -431,11 +482,28 @@ public class HardwareFeatureExtractor {
         }
 
         // 6. Nested Box Removal & Proximity Merge
-        List<Rect> boxes = mergeNearbyBoxes(removeNestedBoxes(sizedBoxes), PROXIMITY_THRESHOLD);
+        List<Rect> deNested = removeNestedBoxes(sizedBoxes);
+        List<Rect> boxes = mergeNearbyBoxes(deNested, PROXIMITY_THRESHOLD);
+
+        // Geometry dump: which boxes existed before merging and what they became. Counts alone
+        // can't distinguish "lines swallowed bolt heads" from "adjacent bolt heads merged
+        // together", and those need opposite fixes.
+        if (DEBUG_GEOMETRY) {
+            Log.d(TAG, "  pre-merge boxes (" + deNested.size() + "):");
+            for (Rect r : deNested) {
+                Log.d(TAG, String.format(Locale.US, "    %dx%d at (%d,%d) aspect=%.2f area=%d",
+                        r.width, r.height, r.x, r.y, (float) r.width / r.height, r.width * r.height));
+            }
+            Log.d(TAG, "  post-merge boxes (" + boxes.size() + "):");
+            for (Rect r : boxes) {
+                Log.d(TAG, String.format(Locale.US, "    %dx%d at (%d,%d) aspect=%.2f area=%d",
+                        r.width, r.height, r.x, r.y, (float) r.width / r.height, r.width * r.height));
+            }
+        }
 
         Log.d(TAG, "findFeatureBoxes: " + contours.size() + " contours -> "
-                + validBoxes.size() + " passed geometry -> " + sizedBoxes.size()
-                + " passed area -> " + boxes.size() + " after merge");
+                + validBoxes.size() + " passed geometry (" + rejectedAspect + " rejected as lines) -> "
+                + sizedBoxes.size() + " passed area -> " + boxes.size() + " after merge");
 
         // Safety valve. Several geometry filters above are commented out, so a noisy or
         // low-contrast photo can yield an effectively unbounded number of boxes; each one
@@ -566,6 +634,14 @@ public class HardwareFeatureExtractor {
             for (int j = 0; j < boxes.size(); j++) {
                 if (i == j) continue;
                 Rect r2 = boxes.get(j);
+                // A box that is merely long and thin shouldn't be allowed to delete a compact
+                // one that happens to fall within its bounding box: a bolt head sitting on a
+                // panel seam is contained by the seam's box, but it is a separate feature.
+                // Only treat containment as nesting when the container is itself plausibly a
+                // feature rather than a line.
+                float containerAspect = (float) r2.width / r2.height;
+                if (containerAspect > MAX_ASPECT_RATIO || containerAspect < MIN_ASPECT_RATIO) continue;
+
                 if (r1.x >= r2.x && r1.y >= r2.y && (r1.x + r1.width) <= (r2.x + r2.width) && (r1.y + r1.height) <= (r2.y + r2.height)) {
                     isInside = true;
                     break;
@@ -576,16 +652,32 @@ public class HardwareFeatureExtractor {
         return filtered;
     }
 
+    /**
+     * Reunites fragments of a single feature that the edge stage split apart.
+     *
+     * The fill-ratio guard compares real content against the bounding box, where "content" is
+     * the summed area of the original boxes in the group — deliberately not the area of the
+     * accumulated bounding box. Using the latter makes the guard self-defeating: once a box has
+     * grown, its own area is large enough that any nearby box trivially satisfies the ratio, so
+     * merging snowballs. That is how a panel seam and a bolt head could chain outward until a
+     * single blob had absorbed fifteen separate detections.
+     */
     private static List<Rect> mergeNearbyBoxes(List<Rect> boxes, int threshold) {
         List<Rect> working = new ArrayList<>(boxes);
+        // Real content per working box, carried through merges alongside the bounding box.
+        List<Double> content = new ArrayList<>();
+        for (Rect r : boxes) content.add((double) r.width * r.height);
+
         boolean changed = true;
         while (changed) {
             changed = false;
             List<Rect> next = new ArrayList<>();
+            List<Double> nextContent = new ArrayList<>();
             boolean[] skipped = new boolean[working.size()];
             for (int i = 0; i < working.size(); i++) {
                 if (skipped[i]) continue;
                 Rect r1 = working.get(i);
+                double c1 = content.get(i);
                 skipped[i] = true;
                 for (int j = i + 1; j < working.size(); j++) {
                     if (skipped[j]) continue;
@@ -597,20 +689,22 @@ public class HardwareFeatureExtractor {
                         int ny = Math.min(r1.y, r2.y);
                         int nw = Math.max(r1.x + r1.width, r2.x + r2.width) - nx;
                         int nh = Math.max(r1.y + r1.height, r2.y + r2.height) - ny;
-                        
-                        // Magic Rule: Box Fill Ratio Check (FILL_RATIO_THRESHOLD = 0.7)
+
                         double combinedArea = (double) nw * nh;
-                        double sumOfAreas = (double) r1.width * r1.height + (double) r2.width * r2.height;
-                        if (sumOfAreas >= combinedArea * FILL_RATIO_THRESHOLD) {
+                        double mergedContent = c1 + content.get(j);
+                        if (mergedContent >= combinedArea * FILL_RATIO_THRESHOLD) {
                             r1 = new Rect(nx, ny, nw, nh);
+                            c1 = mergedContent;
                             skipped[j] = true;
                             changed = true;
                         }
                     }
                 }
                 next.add(r1);
+                nextContent.add(c1);
             }
             working = next;
+            content = nextContent;
         }
         return working;
     }
