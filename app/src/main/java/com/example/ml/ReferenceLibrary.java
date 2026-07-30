@@ -86,9 +86,12 @@ public final class ReferenceLibrary {
         public final String runnerUp;     // second-best type, or null when only one prototype exists
         public final float runnerUpScore; // second-best cosine similarity, or -1
         public final Reason reason;
+        /** Cosine similarity against every prototype, so the UI can show the full picture. */
+        public final Map<String, Float> scores;
 
         Classification(String type, String closestMatch, float score, String confidence,
-                       String runnerUp, float runnerUpScore, Reason reason) {
+                       String runnerUp, float runnerUpScore, Reason reason,
+                       Map<String, Float> scores) {
             this.type = type;
             this.closestMatch = closestMatch;
             this.score = score;
@@ -96,6 +99,7 @@ public final class ReferenceLibrary {
             this.runnerUp = runnerUp;
             this.runnerUpScore = runnerUpScore;
             this.reason = reason;
+            this.scores = scores;
         }
 
         /** Gap to the runner-up; Float.MAX_VALUE when there is no runner-up to compete with. */
@@ -165,15 +169,18 @@ public final class ReferenceLibrary {
      */
     public Classification classify(float[] embedding) {
         if (embedding == null || counts.isEmpty()) {
-            return new Classification(UNKNOWN, "none", 0f, "low", null, -1f, Reason.NO_LIBRARY);
+            return new Classification(UNKNOWN, "none", 0f, "low", null, -1f, Reason.NO_LIBRARY,
+                    new LinkedHashMap<>());
         }
 
         String bestType = null;
         float bestScore = -1f;
         String secondType = null;
         float secondScore = -1f;
+        Map<String, Float> allScores = new LinkedHashMap<>();
         for (String type : counts.keySet()) {
             float score = cosine(embedding, prototype(type));
+            allScores.put(type, score);
             if (score > bestScore) {
                 secondType = bestType;
                 secondScore = bestScore;
@@ -188,7 +195,9 @@ public final class ReferenceLibrary {
         String closest = bestType;
         String type = bestType;
         boolean belowThreshold = bestScore < similarityThreshold;
-        boolean tooClose = secondType != null && (bestScore - secondScore) < marginThreshold;
+        // Inclusive: a gap sitting exactly on the threshold is a tie, not a pass. With a strict
+        // "<" a 0.93-vs-0.92 pair cleared a 0.01 margin and was committed silently.
+        boolean tooClose = secondType != null && (bestScore - secondScore) <= marginThreshold;
 
         Reason reason;
         if (belowThreshold) {
@@ -207,7 +216,8 @@ public final class ReferenceLibrary {
         else if (bestScore > similarityThreshold) confidence = "medium";
         else confidence = "low";
 
-        return new Classification(type, closest, bestScore, confidence, secondType, secondScore, reason);
+        return new Classification(type, closest, bestScore, confidence, secondType, secondScore,
+                reason, allScores);
     }
 
     private static float cosine(float[] a, float[] b) {

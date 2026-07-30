@@ -38,9 +38,26 @@ public final class ThresholdTuner {
     public static final int MIN_EVENTS = 20;
     /** Accuracy gain required before replacing the incumbent thresholds. */
     public static final float MIN_IMPROVEMENT = 0.02f;
+    /**
+     * A fitted pair must also be right this often in absolute terms, not merely better than the
+     * defaults. Beating a bad baseline by two points is not evidence of a good threshold: a fit
+     * once scored 34% against a 21% baseline and was adopted, so the classifier committed on
+     * near-ties that the operator then had to correct two times in three. When no pair clears
+     * this bar the confirmed history is too inconsistent to tune from and the defaults stand.
+     */
+    public static final float MIN_ACCURACY = 0.60f;
 
     private static final float SIM_MIN = 0.60f, SIM_MAX = 0.98f, SIM_STEP = 0.01f;
-    private static final float MARGIN_MIN = 0.00f, MARGIN_MAX = 0.12f, MARGIN_STEP = 0.005f;
+    /**
+     * The margin floor is deliberately above zero. Tuning may loosen the ambiguity check but
+     * must never switch it off: two prototypes scoring within a hair of each other means the
+     * embedding genuinely cannot separate them, no matter what the confirmed history implies.
+     *
+     * Without a floor the search will happily pick 0 whenever the history is one-sided — a run
+     * of reviews that all agreed with the top guess is enough — and the classifier goes back to
+     * silently committing on coin-flips, which is the failure this check exists to prevent.
+     */
+    private static final float MARGIN_MIN = 0.02f, MARGIN_MAX = 0.12f, MARGIN_STEP = 0.005f;
 
     public static final class Tuned {
         public final float similarityThreshold;
@@ -97,6 +114,12 @@ public final class ThresholdTuner {
         if (bestAccuracy < baseline + MIN_IMPROVEMENT) {
             Log.d(TAG, "No threshold pair beat the baseline by " + MIN_IMPROVEMENT
                     + " (best=" + bestAccuracy + ", baseline=" + baseline + "); keeping current values.");
+            return null;
+        }
+        if (bestAccuracy < MIN_ACCURACY) {
+            Log.d(TAG, "Best fit is only " + Math.round(bestAccuracy * 100) + "% accurate over "
+                    + reviewed.size() + " labels, under the " + Math.round(MIN_ACCURACY * 100)
+                    + "% floor; history is too inconsistent to tune from. Keeping defaults.");
             return null;
         }
 
@@ -183,7 +206,10 @@ public final class ThresholdTuner {
     public static Tuned applyTo(Context context, String partId, ReferenceLibrary library) {
         Tuned tuned = load(context, partId);
         if (tuned != null && library != null) {
-            library.setThresholds(tuned.similarityThreshold, tuned.marginThreshold);
+            // Clamp on read as well as on fit, so a file written before the floor existed
+            // (or hand-edited) can't reintroduce a disabled ambiguity check.
+            library.setThresholds(tuned.similarityThreshold,
+                    Math.max(MARGIN_MIN, tuned.marginThreshold));
         }
         return tuned;
     }
