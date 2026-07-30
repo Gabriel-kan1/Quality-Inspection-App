@@ -25,6 +25,7 @@ import androidx.navigation.Navigation;
 import com.example.R;
 import com.example.data.AppDatabase;
 import com.example.data.entity.ReferenceProfile;
+import com.example.ui.util.AssetBitmaps;
 import com.example.databinding.FragmentInspectionBinding;
 
 import java.io.File;
@@ -164,11 +165,13 @@ public class InspectionFragment extends Fragment {
             imgView.setScaleType(android.widget.ImageView.ScaleType.CENTER_CROP);
             imgView.setClipToOutline(true);
 
-            // Load and clip asset bitmap
-            try (InputStream is = requireContext().getAssets().open("chassis_images/" + filename)) {
-                Bitmap bitmap = BitmapFactory.decodeStream(is);
+            // Load and clip asset bitmap, sampled down to the thumbnail size. Decoding these
+            // camera-resolution assets at full size costs ~46MB each in native memory.
+            Bitmap bitmap = AssetBitmaps.decodeSampled(
+                    requireContext(), "chassis_images/" + filename, thumbSize);
+            if (bitmap != null) {
                 imgView.setImageBitmap(bitmap);
-            } catch (Exception e) {
+            } else {
                 imgView.setImageResource(android.R.drawable.ic_menu_gallery);
             }
 
@@ -212,10 +215,11 @@ public class InspectionFragment extends Fragment {
     private void loadSelectedAsset(String filename) {
         try {
             selectedImageExternalUri = Uri.parse("file:///android_asset/chassis_images/" + filename);
-            try (InputStream is = requireContext().getAssets().open("chassis_images/" + filename)) {
-                Bitmap bitmap = BitmapFactory.decodeStream(is);
-                binding.ivChassisPreview.setImageBitmap(bitmap);
-            }
+            // Preview only — the analysis pipeline re-loads the asset at its own resolution,
+            // so there's no reason to hold a 4032x3024 bitmap for an on-screen preview.
+            Bitmap bitmap = AssetBitmaps.decodeSampled(
+                    requireContext(), "chassis_images/" + filename, 1080);
+            if (bitmap != null) binding.ivChassisPreview.setImageBitmap(bitmap);
             binding.ivChassisPreview.setVisibility(View.VISIBLE);
             binding.layoutUploadPlaceholder.setVisibility(View.GONE);
 
@@ -318,10 +322,11 @@ public class InspectionFragment extends Fragment {
                 imgView.setScaleType(android.widget.ImageView.ScaleType.CENTER_CROP);
                 imgView.setClipToOutline(true);
 
-                try (InputStream is = requireContext().getAssets().open("chassis_images/" + filename)) {
-                    Bitmap bitmap = BitmapFactory.decodeStream(is);
+                Bitmap bitmap = AssetBitmaps.decodeSampled(
+                        requireContext(), "chassis_images/" + filename, thumbSize);
+                if (bitmap != null) {
                     imgView.setImageBitmap(bitmap);
-                } catch (Exception e) {
+                } else {
                     imgView.setImageResource(android.R.drawable.ic_menu_gallery);
                 }
 
@@ -427,10 +432,10 @@ public class InspectionFragment extends Fragment {
                     } else {
                         if (imgUriStr.startsWith("file:///android_asset/")) {
                             String assetPath = imgUriStr.substring("file:///android_asset/".length());
-                            try (InputStream is = requireContext().getAssets().open(assetPath)) {
-                                Bitmap bitmap = BitmapFactory.decodeStream(is);
-                                binding.ivGhostOverlay.setImageBitmap(bitmap);
-                            } catch (Exception e) {
+                            Bitmap ghost = AssetBitmaps.decodeSampled(requireContext(), assetPath, 1080);
+                            if (ghost != null) {
+                                binding.ivGhostOverlay.setImageBitmap(ghost);
+                            } else {
                                 binding.ivGhostOverlay.setImageURI(Uri.parse(imgUriStr));
                             }
                         } else {

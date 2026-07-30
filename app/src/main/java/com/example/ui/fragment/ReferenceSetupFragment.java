@@ -23,6 +23,7 @@ import androidx.navigation.Navigation;
 import com.example.R;
 import com.example.data.AppDatabase;
 import com.example.data.entity.ReferenceProfile;
+import com.example.ui.util.AssetBitmaps;
 import com.example.databinding.FragmentReferenceSetupBinding;
 import com.example.ml.ClipEmbedder;
 import com.example.ml.ReferenceLibrary;
@@ -329,11 +330,13 @@ public class ReferenceSetupFragment extends Fragment {
             imgView.setScaleType(android.widget.ImageView.ScaleType.CENTER_CROP);
             imgView.setClipToOutline(true);
 
-            // Load and clip asset bitmap
-            try (InputStream is = requireContext().getAssets().open("chassis_images/" + filename)) {
-                Bitmap bitmap = BitmapFactory.decodeStream(is);
+            // Load and clip asset bitmap, sampled down to the thumbnail size. Decoding these
+            // camera-resolution assets at full size costs ~46MB each in native memory.
+            Bitmap bitmap = AssetBitmaps.decodeSampled(
+                    requireContext(), "chassis_images/" + filename, thumbSize);
+            if (bitmap != null) {
                 imgView.setImageBitmap(bitmap);
-            } catch (Exception e) {
+            } else {
                 imgView.setImageResource(android.R.drawable.ic_menu_gallery);
             }
 
@@ -377,10 +380,10 @@ public class ReferenceSetupFragment extends Fragment {
     private void loadSelectedAsset(String filename) {
         try {
             selectedImageExternalUri = Uri.parse("file:///android_asset/chassis_images/" + filename);
-            try (InputStream is = requireContext().getAssets().open("chassis_images/" + filename)) {
-                Bitmap bitmap = BitmapFactory.decodeStream(is);
-                binding.ivReferencePreview.setImageBitmap(bitmap);
-            }
+            // Preview only — extractCrops() re-loads the asset at its own resolution.
+            Bitmap bitmap = AssetBitmaps.decodeSampled(
+                    requireContext(), "chassis_images/" + filename, 1080);
+            if (bitmap != null) binding.ivReferencePreview.setImageBitmap(bitmap);
             binding.ivReferencePreview.setVisibility(View.VISIBLE);
             binding.layoutUploadPlaceholder.setVisibility(View.GONE);
             binding.btnCaptureReference.setText("SAVE REFERENCE");
@@ -478,10 +481,11 @@ public class ReferenceSetupFragment extends Fragment {
                 imgView.setScaleType(android.widget.ImageView.ScaleType.CENTER_CROP);
                 imgView.setClipToOutline(true);
 
-                try (InputStream is = requireContext().getAssets().open("chassis_images/" + filename)) {
-                    Bitmap bitmap = BitmapFactory.decodeStream(is);
+                Bitmap bitmap = AssetBitmaps.decodeSampled(
+                        requireContext(), "chassis_images/" + filename, thumbSize);
+                if (bitmap != null) {
                     imgView.setImageBitmap(bitmap);
-                } catch (Exception e) {
+                } else {
                     imgView.setImageResource(android.R.drawable.ic_menu_gallery);
                 }
 
