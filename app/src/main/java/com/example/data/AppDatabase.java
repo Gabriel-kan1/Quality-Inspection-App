@@ -5,18 +5,22 @@ import androidx.room.Database;
 import androidx.room.Room;
 import androidx.room.RoomDatabase;
 
+import com.example.data.dao.ClassificationEventDao;
 import com.example.data.dao.InspectionDao;
 import com.example.data.dao.ReferenceProfileDao;
+import com.example.data.entity.ClassificationEvent;
 import com.example.data.entity.FeatureResult;
 import com.example.data.entity.InspectionRecord;
 import com.example.data.entity.ReferenceProfile;
 
-@Database(entities = {InspectionRecord.class, FeatureResult.class, ReferenceProfile.class}, version = 1, exportSchema = false)
+@Database(entities = {InspectionRecord.class, FeatureResult.class, ReferenceProfile.class,
+        ClassificationEvent.class}, version = 3, exportSchema = false)
 public abstract class AppDatabase extends RoomDatabase {
     private static volatile AppDatabase INSTANCE;
 
     public abstract InspectionDao inspectionDao();
     public abstract ReferenceProfileDao referenceProfileDao();
+    public abstract ClassificationEventDao classificationEventDao();
 
     public static AppDatabase getInstance(final Context context) {
         if (INSTANCE == null) {

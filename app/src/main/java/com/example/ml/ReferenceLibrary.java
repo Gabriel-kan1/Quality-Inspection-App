@@ -36,10 +36,42 @@ public final class ReferenceLibrary {
     public static final String[] FEATURE_TYPES =
             {"bolt_head", "hole", "rivet_head", "screw", "stud"};
 
-    // Tunable thresholds (SIMILARITY_THRESHOLD in the Python CONFIG). Non-final so
-    // they can be nudged after on-device calibration.
-    public static float SIMILARITY_THRESHOLD = 0.85f;
-    public static float HIGH_CONFIDENCE = 0.92f;
+    // Starting thresholds (SIMILARITY_THRESHOLD in the Python CONFIG). These are only
+    // the defaults — each library instance carries its own values so {@link ThresholdTuner}
+    // can fit them per-part from that part's confirmed classification history.
+    public static final float DEFAULT_SIMILARITY_THRESHOLD = 0.85f;
+    public static final float DEFAULT_HIGH_CONFIDENCE = 0.92f;
+    /**
+     * Minimum gap between the best and second-best prototype score. Below this the
+     * match is too close to call (e.g. stud vs bolt_head) and we report "unknown"
+     * with the best guess as closestMatch, rather than silently picking a winner.
+     */
+    public static final float DEFAULT_MARGIN_THRESHOLD = 0.03f;
+
+    private float similarityThreshold = DEFAULT_SIMILARITY_THRESHOLD;
+    private float highConfidence = DEFAULT_HIGH_CONFIDENCE;
+    private float marginThreshold = DEFAULT_MARGIN_THRESHOLD;
+
+    /** Why a classification landed where it did — drives active-learning review selection. */
+    public enum Reason {
+        /** Accepted: cleared both the absolute threshold and the runner-up margin. */
+        ACCEPTED,
+        /** Best score was below the absolute similarity threshold. */
+        BELOW_THRESHOLD,
+        /** Score cleared the threshold but two types were too close to call. */
+        AMBIGUOUS,
+        /** No prototypes at all (no CLIP model, or nothing labelled yet). */
+        NO_LIBRARY
+    }
+
+    public float getSimilarityThreshold() { return similarityThreshold; }
+    public float getMarginThreshold() { return marginThreshold; }
+    public float getHighConfidence() { return highConfidence; }
+
+    public void setThresholds(float similarityThreshold, float marginThreshold) {
+        this.similarityThreshold = similarityThreshold;
+        this.marginThreshold = marginThreshold;
+    }
 
     // Running accumulation so prototypes can be built incrementally (in-app builder
     // or offline bootstrap). prototype(type) = sums[type] / counts[type].
@@ -51,12 +83,28 @@ public final class ReferenceLibrary {
         public final String closestMatch; // nearest type regardless of threshold
         public final float score;         // best cosine similarity
         public final String confidence;   // "high" | "medium" | "low"
+        public final String runnerUp;     // second-best type, or null when only one prototype exists
+        public final float runnerUpScore; // second-best cosine similarity, or -1
+        public final Reason reason;
+        /** Cosine similarity against every prototype, so the UI can show the full picture. */
+        public final Map<String, Float> scores;
 
-        Classification(String type, String closestMatch, float score, String confidence) {
+        Classification(String type, String closestMatch, float score, String confidence,
+                       String runnerUp, float runnerUpScore, Reason reason,
+                       Map<String, Float> scores) {
             this.type = type;
             this.closestMatch = closestMatch;
             this.score = score;
             this.confidence = confidence;
+            this.runnerUp = runnerUp;
+            this.runnerUpScore = runnerUpScore;
+            this.reason = reason;
+            this.scores = scores;
+        }
+
+        /** Gap to the runner-up; Float.MAX_VALUE when there is no runner-up to compete with. */
+        public float margin() {
+            return runnerUp == null ? Float.MAX_VALUE : score - runnerUpScore;
         }
     }
 
@@ -68,18 +116,38 @@ public final class ReferenceLibrary {
         return new ArrayList<>(counts.keySet());
     }
 
-    /** Accumulates one example embedding for a feature type into the running mean. */
+    /**
+     * Accumulates one example embedding for a feature type into the running mean.
+     * The embedding is L2-normalized first so every example contributes an equal
+     * "vote" on direction regardless of its raw magnitude — otherwise a few
+     * larger-magnitude crops can dominate the mean and drag the prototype toward
+     * a neighboring class (this is what was causing stud crops to skew into the
+     * bolt_head prototype despite having enough examples).
+     */
     public void addExample(String type, float[] embedding) {
         if (type == null || embedding == null) return;
+        float[] normalized = normalize(embedding);
+        if (normalized == null) return;
         float[] sum = sums.get(type);
         if (sum == null) {
-            sums.put(type, embedding.clone());
+            sums.put(type, normalized);
             counts.put(type, 1);
         } else {
-            int n = Math.min(sum.length, embedding.length);
-            for (int i = 0; i < n; i++) sum[i] += embedding[i];
+            int n = Math.min(sum.length, normalized.length);
+            for (int i = 0; i < n; i++) sum[i] += normalized[i];
             counts.put(type, counts.get(type) + 1);
         }
+    }
+
+    /** Returns a unit-length copy of v, or null if v has zero magnitude. */
+    private static float[] normalize(float[] v) {
+        double normSq = 0;
+        for (float x : v) normSq += (double) x * x;
+        if (normSq == 0) return null;
+        float norm = (float) Math.sqrt(normSq);
+        float[] out = new float[v.length];
+        for (int i = 0; i < v.length; i++) out[i] = v[i] / norm;
+        return out;
     }
 
     /** Averaged prototype for a type, or null if none. */
@@ -92,34 +160,64 @@ public final class ReferenceLibrary {
         return proto;
     }
 
-    /** Mirrors classify_crop(): cosine similarity vs each prototype + thresholding. */
+    /**
+     * Mirrors classify_crop(): cosine similarity vs each prototype + thresholding.
+     * Also requires the winner to beat the runner-up by MARGIN_THRESHOLD — a high
+     * absolute score isn't enough if a different type scored almost as high, since
+     * that's exactly the case where two classes (e.g. stud vs bolt_head) sit close
+     * together in embedding space and a small centroid shift picks the wrong one.
+     */
     public Classification classify(float[] embedding) {
         if (embedding == null || counts.isEmpty()) {
-            return new Classification(UNKNOWN, "none", 0f, "low");
+            return new Classification(UNKNOWN, "none", 0f, "low", null, -1f, Reason.NO_LIBRARY,
+                    new LinkedHashMap<>());
         }
 
         String bestType = null;
         float bestScore = -1f;
+        String secondType = null;
+        float secondScore = -1f;
+        Map<String, Float> allScores = new LinkedHashMap<>();
         for (String type : counts.keySet()) {
             float score = cosine(embedding, prototype(type));
+            allScores.put(type, score);
             if (score > bestScore) {
+                secondType = bestType;
+                secondScore = bestScore;
                 bestScore = score;
                 bestType = type;
+            } else if (score > secondScore) {
+                secondScore = score;
+                secondType = type;
             }
         }
 
         String closest = bestType;
         String type = bestType;
-        if (bestScore < SIMILARITY_THRESHOLD) {
+        boolean belowThreshold = bestScore < similarityThreshold;
+        // Inclusive: a gap sitting exactly on the threshold is a tie, not a pass. With a strict
+        // "<" a 0.93-vs-0.92 pair cleared a 0.01 margin and was committed silently.
+        boolean tooClose = secondType != null && (bestScore - secondScore) <= marginThreshold;
+
+        Reason reason;
+        if (belowThreshold) {
+            reason = Reason.BELOW_THRESHOLD;
             type = UNKNOWN;
+        } else if (tooClose) {
+            reason = Reason.AMBIGUOUS;
+            type = UNKNOWN;
+        } else {
+            reason = Reason.ACCEPTED;
         }
 
         String confidence;
-        if (bestScore > HIGH_CONFIDENCE) confidence = "high";
-        else if (bestScore > SIMILARITY_THRESHOLD) confidence = "medium";
+        if (tooClose) confidence = "low";
+        else if (bestScore > highConfidence) confidence = "high";
+        else if (bestScore > similarityThreshold) confidence = "medium";
         else confidence = "low";
 
-        return new Classification(type, closest, bestScore, confidence);
+        return new Classification(type, closest, bestScore, confidence, secondType, secondScore,
+                reason, allScores);
     }
 
     private static float cosine(float[] a, float[] b) {
