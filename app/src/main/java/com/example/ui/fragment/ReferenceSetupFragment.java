@@ -25,7 +25,7 @@ import com.example.data.AppDatabase;
 import com.example.data.entity.ReferenceProfile;
 import com.example.ui.util.AssetBitmaps;
 import com.example.databinding.FragmentReferenceSetupBinding;
-import com.example.ml.ClipEmbedder;
+import com.example.ml.FeatureEmbedder;
 import com.example.ml.ReferenceLibrary;
 import com.example.ml.ReferenceLibraryProvider;
 
@@ -103,7 +103,7 @@ public class ReferenceSetupFragment extends Fragment {
         });
     }
 
-    // ── CLIP few-shot library builder ────────────────────────────────────────
+    // ── Few-shot library builder ────────────────────────────────────────
 
     private static final String[] LABEL_OPTIONS =
             {"skip", "bolt_head", "hole", "rivet_head", "screw", "stud"};
@@ -144,7 +144,7 @@ public class ReferenceSetupFragment extends Fragment {
         root.addView(title);
 
         android.widget.TextView sub = new android.widget.TextView(getContext());
-        sub.setText("Assign a hardware type to each crop (or leave 'skip'). These build the CLIP reference library for this part.");
+        sub.setText("Assign a hardware type to each crop (or leave 'skip'). These build the reference library for this part.");
         sub.setTextColor(Color.LTGRAY);
         sub.setTextSize(11f);
         sub.setGravity(android.view.Gravity.CENTER);
@@ -213,17 +213,17 @@ public class ReferenceSetupFragment extends Fragment {
         dialog.show();
     }
 
-    /** Embeds each labelled crop with CLIP, averages per type, and saves the per-part library. */
+    /** Embeds each labelled crop, averages per type, and saves the per-part library. */
     private void saveLibrary(List<HardwareFeatureExtractor.CropRegion> crops,
                              List<android.widget.Spinner> spinners,
                              android.app.Dialog dialog) {
-        Toast.makeText(getContext(), "Encoding crops with CLIP...", Toast.LENGTH_SHORT).show();
+        Toast.makeText(getContext(), "Encoding crops...", Toast.LENGTH_SHORT).show();
         new Thread(() -> {
-            ClipEmbedder embedder = ClipEmbedder.get(requireContext());
+            FeatureEmbedder embedder = FeatureEmbedder.get(requireContext());
             if (embedder == null) {
                 requireActivity().runOnUiThread(() ->
                         Toast.makeText(getContext(),
-                                "CLIP model not available (missing assets/models/clip_image_encoder.onnx).",
+                                "Feature encoder not available (missing assets/models/feature_encoder.onnx).",
                                 Toast.LENGTH_LONG).show());
                 return;
             }

@@ -16,3 +16,9 @@
 local.properties
 .env
 debug.keystore
+
+# Intermediate encoder exports (~107 MiB). Regenerate with
+# python/export_encoder_onnx.py; only the int8 graph copied into
+# app/src/main/assets/models/ is committed.
+/python/onnx_export/
+/python/__pycache__/

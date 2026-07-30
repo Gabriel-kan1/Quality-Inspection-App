@@ -21,10 +21,11 @@ import java.util.Map;
  *
  * Holds one prototype embedding per feature type (the mean of that type's
  * example embeddings). Classification is cosine similarity of a query embedding
- * against each prototype, thresholded exactly as in the Python script.
+ * against each prototype, thresholded per {@link #DEFAULT_SIMILARITY_THRESHOLD}.
  *
- * Note: text-prompt scoring is intentionally omitted — the Python config sets
- * TEXT_PROMPT_WEIGHT = 0.0, so combined score == image score.
+ * The Python prototype also scored text prompts, but weighted them at 0.0
+ * (TEXT_PROMPT_WEIGHT), so that path never contributed. It is not reproduced here:
+ * {@link FeatureEmbedder} is a vision-only encoder with no text tower to score with.
  */
 public final class ReferenceLibrary {
 
@@ -36,17 +37,43 @@ public final class ReferenceLibrary {
     public static final String[] FEATURE_TYPES =
             {"bolt_head", "hole", "rivet_head", "screw", "stud"};
 
-    // Starting thresholds (SIMILARITY_THRESHOLD in the Python CONFIG). These are only
-    // the defaults — each library instance carries its own values so {@link ThresholdTuner}
-    // can fit them per-part from that part's confirmed classification history.
-    public static final float DEFAULT_SIMILARITY_THRESHOLD = 0.85f;
-    public static final float DEFAULT_HIGH_CONFIDENCE = 0.92f;
+    // Starting thresholds. These are only the defaults — each library instance carries
+    // its own values so {@link ThresholdTuner} can fit them per-part from that part's
+    // confirmed classification history.
+    //
+    // Calibrated for {@link FeatureEmbedder#ENCODER_ID} by sweeping every
+    // (similarity, margin) pair over leave-one-out prototype classification of the
+    // bundled reference crops (see python/compare_encoders.py). These numbers are
+    // NOT portable across encoders — the previous CLIP encoder scored every crop in
+    // a 0.86-0.97 band, which made a 0.85 threshold unreachable and therefore dead:
+    // it never once rejected anything, and the margin check was left doing all the
+    // work at a setting that discarded half of the *correct* answers as near-ties.
+    //
+    // At 0.74/0.02 the current encoder accepts 94.1% of crops correctly with zero
+    // false accepts over the 34 available crops. Note the inversion: with DINOv2 the
+    // similarity threshold does the rejecting and the margin is a light safety net,
+    // exactly the reverse of the CLIP configuration.
+    public static final float DEFAULT_SIMILARITY_THRESHOLD = 0.74f;
     /**
      * Minimum gap between the best and second-best prototype score. Below this the
-     * match is too close to call (e.g. stud vs bolt_head) and we report "unknown"
-     * with the best guess as closestMatch, rather than silently picking a winner.
+     * match is too close to call and we report "unknown" with the best guess as
+     * closestMatch, rather than silently picking a winner.
+     *
+     * Kept deliberately low rather than removed. The sweep found that this encoder's
+     * mistakes are confidently wrong (the one leave-one-out error scored 0.734 with a
+     * 0.091 margin) rather than near-ties, so raising the margin buys nothing here and
+     * only costs correct answers. It stays non-zero because near-ties remain the
+     * failure mode this check exists for, and they get more likely as inspectors add
+     * feature types that genuinely do sit close together.
      */
-    public static final float DEFAULT_MARGIN_THRESHOLD = 0.03f;
+    public static final float DEFAULT_MARGIN_THRESHOLD = 0.02f;
+    /**
+     * Above this a classification is reported as "high" confidence, which is also what
+     * makes it eligible for {@link ActiveLearningPolicy} spot checks. Set near the upper
+     * quartile of correct scores (measured 0.881) so "high" means genuinely top-tier
+     * rather than merely accepted.
+     */
+    public static final float DEFAULT_HIGH_CONFIDENCE = 0.88f;
 
     private float similarityThreshold = DEFAULT_SIMILARITY_THRESHOLD;
     private float highConfidence = DEFAULT_HIGH_CONFIDENCE;
@@ -60,7 +87,7 @@ public final class ReferenceLibrary {
         BELOW_THRESHOLD,
         /** Score cleared the threshold but two types were too close to call. */
         AMBIGUOUS,
-        /** No prototypes at all (no CLIP model, or nothing labelled yet). */
+        /** No prototypes at all (no encoder model, or nothing labelled yet). */
         NO_LIBRARY
     }
 
@@ -234,13 +261,30 @@ public final class ReferenceLibrary {
     }
 
     // ── Persistence ──────────────────────────────────────────────────────────
-    // Stored as { "type": [floats...] } of averaged prototypes.
+    // Stored as { "_encoder": "<id>", "type": [floats...] } of averaged prototypes.
+
+    /**
+     * Which embedding space this library's prototypes live in. Prototypes are only
+     * meaningful against queries from the same encoder, and {@link #cosine} compares
+     * only the overlapping prefix of two vectors — so a library built by a different
+     * encoder does not fail, it returns confident nonsense. Persisting the id is what
+     * turns that silent corruption into a detectable mismatch.
+     */
+    private String encoderId = FeatureEmbedder.ENCODER_ID;
+
+    /** Key holding {@link #encoderId}; underscore-prefixed so it can't collide with a type name. */
+    private static final String ENCODER_KEY = "_encoder";
+
+    public String encoderId() {
+        return encoderId;
+    }
 
     public void save(File file) {
         try {
             File parent = file.getParentFile();
             if (parent != null && !parent.exists()) parent.mkdirs();
             JSONObject root = new JSONObject();
+            root.put(ENCODER_KEY, encoderId);
             for (String type : counts.keySet()) {
                 float[] proto = prototype(type);
                 JSONArray arr = new JSONArray();
@@ -258,20 +302,47 @@ public final class ReferenceLibrary {
     public static ReferenceLibrary load(File file) {
         if (file == null || !file.exists()) return null;
         try (InputStream is = new java.io.FileInputStream(file)) {
-            return fromJson(readAll(is));
+            ReferenceLibrary lib = fromJson(readAll(is));
+            if (lib == null) {
+                // fromJson already logged why. Named here so the stale file is identifiable.
+                Log.w(TAG, "Ignoring unusable library at " + file
+                        + " — it will be rebuilt from reference crops.");
+            }
+            return lib;
         } catch (Exception e) {
             Log.e(TAG, "load() failed for " + file, e);
             return null;
         }
     }
 
+    /**
+     * Parses a saved library, or returns null if it was written by a different encoder.
+     *
+     * Rejecting is the safe direction: a caller that gets null rebuilds from reference
+     * crops, which is recoverable, whereas accepting a mismatched library means every
+     * subsequent classification is wrong in a way no threshold or log would reveal.
+     * Libraries written before encoder tagging existed have no id and are also rejected,
+     * since they came from the CLIP encoder and their 512-d prototypes cannot be
+     * compared against this encoder's 384-d embeddings.
+     */
     public static ReferenceLibrary fromJson(String json) {
         try {
             JSONObject root = new JSONObject(json);
+            String storedEncoder = root.optString(ENCODER_KEY, null);
+            if (storedEncoder == null || !storedEncoder.equals(FeatureEmbedder.ENCODER_ID)) {
+                Log.w(TAG, "Library was built by encoder '"
+                        + (storedEncoder == null ? "<untagged/legacy>" : storedEncoder)
+                        + "' but this build uses '" + FeatureEmbedder.ENCODER_ID
+                        + "'. Discarding it rather than comparing incompatible embeddings.");
+                return null;
+            }
+
             ReferenceLibrary lib = new ReferenceLibrary();
+            lib.encoderId = storedEncoder;
             java.util.Iterator<String> keys = root.keys();
             while (keys.hasNext()) {
                 String type = keys.next();
+                if (ENCODER_KEY.equals(type)) continue;
                 JSONArray arr = root.getJSONArray(type);
                 float[] proto = new float[arr.length()];
                 for (int i = 0; i < arr.length(); i++) proto[i] = (float) arr.getDouble(i);
