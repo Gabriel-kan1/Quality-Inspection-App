@@ -22,3 +22,10 @@ debug.keystore
 # app/src/main/assets/models/ is committed.
 /python/onnx_export/
 /python/__pycache__/
+
+# Local development aids. None of these affect what the app does or how it
+# builds -- they are assistant context, editor tooling and convenience scripts
+# for this machine, so they stay out of the repo.
+/CLAUDE.md
+/.claude/
+/scripts/
