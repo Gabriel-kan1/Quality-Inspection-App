@@ -96,10 +96,9 @@ def load_clip_int8():
     return "clip_int8", embed, None, mib
 
 
-def load_clip_fp32():
+def _load_clip_fp32(name, model_id):
     from transformers import CLIPVisionModelWithProjection
-    model = CLIPVisionModelWithProjection.from_pretrained(
-        "openai/clip-vit-base-patch32").eval()
+    model = CLIPVisionModelWithProjection.from_pretrained(model_id).eval()
     params = sum(p.numel() for p in model.parameters())
 
     @torch.no_grad()
@@ -107,7 +106,7 @@ def load_clip_fp32():
         x = torch.from_numpy(preprocess(path, CLIP_MEAN, CLIP_STD))
         return model(pixel_values=x).image_embeds[0].numpy()
 
-    return "clip_fp32", embed, params, None
+    return name, embed, params, None
 
 
 def _load_dinov2(concat_patches):
@@ -158,7 +157,13 @@ EXPORT_DIR = REPO / "python" / "onnx_export"
 
 ENCODERS = [
     load_clip_int8,
-    load_clip_fp32,
+    lambda: _load_clip_fp32("clip_b32_fp32", "openai/clip-vit-base-patch32"),
+    # Same objective, same training data, same embedding dim as B/32 -- only the patch
+    # size differs (16px vs 32px, so 196 vs 49 tokens at 224x224). That isolates the two
+    # competing explanations for why CLIP could not separate these classes: if patch size
+    # is the binding constraint, B/16 lands between B/32 and DINOv2; if the caption
+    # bottleneck is, B/16 stays down with B/32 no matter how many tokens it gets.
+    lambda: _load_clip_fp32("clip_b16_fp32", "openai/clip-vit-base-patch16"),
     lambda: _load_dinov2(False),
     lambda: _load_dinov2(True),
     lambda: load_onnx("dino_onnx_fp32", EXPORT_DIR / "dinov2_small_cls_fp32.onnx",
