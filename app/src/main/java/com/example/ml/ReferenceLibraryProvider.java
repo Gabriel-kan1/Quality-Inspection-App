@@ -24,14 +24,15 @@ import java.util.zip.CRC32;
  *      (filesDir/clip_lib/&lt;partId&gt;.json).
  *   2. The default library, cached at filesDir/clip_lib/_default.json.
  *      Built by embedding the bundled reference crops in
- *      assets/reference_crops/&lt;type&gt;/*.jpg with {@link ClipEmbedder}.
+ *      assets/reference_crops/&lt;type&gt;/*.jpg with {@link FeatureEmbedder}.
  *
  * The default library is content-addressed: a hash of every crop's bytes under
- * assets/reference_crops/ is stored alongside the cache (_default.sig). Editing,
- * adding, or removing crops changes the hash, so the next call to {@link #getDefault}
- * detects the mismatch and rebuilds automatically -- mirrors the rebuild_needed
- * check in build_reference_library() / the Python script's REFERENCE_DIR watch,
- * but content-aware rather than just folder-name-aware.
+ * assets/reference_crops/, plus {@link FeatureEmbedder#ENCODER_ID}, is stored alongside
+ * the cache (_default.sig). Editing, adding, or removing crops -- or swapping the encoder
+ * -- changes the hash, so the next call to {@link #getDefault} detects the mismatch and
+ * rebuilds automatically. Mirrors the rebuild_needed check in build_reference_library() /
+ * the Python script's REFERENCE_DIR watch, but content-aware rather than just
+ * folder-name-aware.
  *
  * Returns null when nothing is available (no model, no crops, nothing built);
  * callers then classify everything as "unknown".
@@ -39,6 +40,12 @@ import java.util.zip.CRC32;
 public final class ReferenceLibraryProvider {
 
     private static final String TAG = "RefLibProvider";
+    /**
+     * Historical name — the first encoder was CLIP. Kept as-is deliberately: it is a path
+     * on existing installs, and renaming it would orphan every per-part library inspectors
+     * have already built rather than letting {@link ReferenceLibrary#fromJson} report the
+     * encoder mismatch and prompt a rebuild.
+     */
     private static final String DIR = "clip_lib";
     private static final String DEFAULT_FILE = "_default.json";
     private static final String DEFAULT_SIG_FILE = "_default.sig";
@@ -95,9 +102,9 @@ public final class ReferenceLibraryProvider {
 
     /** Embeds bundled reference crops (assets/reference_crops/&lt;type&gt;/*) into a library. */
     private static ReferenceLibrary bootstrapFromAssets(Context context) {
-        ClipEmbedder embedder = ClipEmbedder.get(context);
+        FeatureEmbedder embedder = FeatureEmbedder.get(context);
         if (embedder == null) {
-            Log.w(TAG, "No CLIP model available; cannot build default library.");
+            Log.w(TAG, "No encoder model available; cannot build default library.");
             return null;
         }
         ReferenceLibrary lib = new ReferenceLibrary();
@@ -125,9 +132,20 @@ public final class ReferenceLibraryProvider {
         return lib;
     }
 
-    /** Content hash of every crop under assets/reference_crops/, sorted for determinism. */
+    /**
+     * Content hash of every crop under assets/reference_crops/, sorted for determinism,
+     * plus the encoder identity.
+     *
+     * The encoder has to be in here: prototypes are only comparable to embeddings from
+     * the model that produced them, so changing the model invalidates the cache just as
+     * surely as editing a crop does. Hashing only the crops meant an encoder swap left a
+     * stale cache that still matched its signature and was loaded without complaint.
+     * {@link ReferenceLibrary#fromJson} independently rejects mismatched libraries; this
+     * makes the rebuild happen for the right reason rather than as a side effect.
+     */
     private static String computeCropsSignature(Context context) {
         CRC32 crc = new CRC32();
+        crc.update((FeatureEmbedder.ENCODER_ID + ":").getBytes(StandardCharsets.UTF_8));
         for (String type : ReferenceLibrary.FEATURE_TYPES) {
             String dir = CROPS_ASSET_DIR + "/" + type;
             for (String name : listCropFiles(context, dir)) {

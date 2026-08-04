@@ -7,7 +7,7 @@ import android.graphics.RectF;
 import android.net.Uri;
 import android.util.Log;
 
-import com.example.ml.ClipEmbedder;
+import com.example.ml.FeatureEmbedder;
 import com.example.ml.ReferenceLibrary;
 
 import org.opencv.android.OpenCVLoader;
@@ -266,9 +266,9 @@ public class HardwareFeatureExtractor {
     }
 
     /**
-     * Runs the OpenCV extraction pipeline and classifies each detected crop with CLIP
+     * Runs the OpenCV extraction pipeline and classifies each detected crop with the feature encoder
      * against the supplied {@link ReferenceLibrary}. When {@code library} is null or empty
-     * (no reference set, or CLIP unavailable) every feature is labelled "unknown".
+     * (no reference set, or the encoder is unavailable) every feature is labelled "unknown".
      */
     public static AnalysisResult extractFeatures(Context context, String uriString, ReferenceLibrary library) {
         return extractFeatures(context, uriString, library, null);
@@ -289,7 +289,7 @@ public class HardwareFeatureExtractor {
         }
 
         boolean canClassify = library != null && !library.isEmpty();
-        ClipEmbedder embedder = canClassify ? ClipEmbedder.get(context) : null;
+        FeatureEmbedder embedder = canClassify ? FeatureEmbedder.get(context) : null;
 
         String filename = getFilename(uriString);
         Log.d(TAG, "Running OpenCV Pipeline for: " + filename);
@@ -316,7 +316,7 @@ public class HardwareFeatureExtractor {
             diagnosticBitmap = Bitmap.createBitmap(rgbaVisual.cols(), rgbaVisual.rows(), Bitmap.Config.ARGB_8888);
             Utils.matToBitmap(rgbaVisual, diagnosticBitmap);
 
-            // STEP 3-6 — OpenCV crop extraction + CLIP classification
+            // STEP 3-6 — OpenCV crop extraction + embedding classification
             performDynamicDetection(src, e.edgesClosed, embedder, library, sink, features);
 
             src.release();
@@ -330,7 +330,7 @@ public class HardwareFeatureExtractor {
         return new AnalysisResult(features, diagnosticBitmap);
     }
 
-    private static void performDynamicDetection(Mat src, Mat edges, ClipEmbedder embedder,
+    private static void performDynamicDetection(Mat src, Mat edges, FeatureEmbedder embedder,
                                                 ReferenceLibrary library, CropSink sink,
                                                 List<ExtractedFeature> outFeatures) {
         float imgWidth = (float) src.width();
@@ -507,7 +507,7 @@ public class HardwareFeatureExtractor {
 
         // Safety valve. Several geometry filters above are commented out, so a noisy or
         // low-contrast photo can yield an effectively unbounded number of boxes; each one
-        // costs a CLIP inference and a PNG write. Keep the largest, which are the ones most
+        // costs an encoder inference and a PNG write. Keep the largest, which are the ones most
         // likely to be real hardware rather than texture noise.
         if (boxes.size() > MAX_DETECTIONS) {
             Log.w(TAG, "Detection count " + boxes.size() + " exceeds MAX_DETECTIONS ("

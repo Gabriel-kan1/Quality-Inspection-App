@@ -1,45 +1,61 @@
-CLIP IMAGE ENCODER — MODEL FILE GOES HERE
-=========================================
+FEATURE ENCODER — MODEL FILE
+============================
 
-The app expects an ONNX CLIP (ViT-B/32) VISION encoder at:
+    app/src/main/assets/models/feature_encoder.onnx     (23 MiB, int8)
 
-    app/src/main/assets/models/clip_image_encoder.onnx
+Loaded by com.example.ml.FeatureEmbedder. The app still builds and runs without
+it — classification falls back to "unknown" and FeatureEmbedder logs a warning.
 
-It is loaded by com.example.ml.ClipEmbedder. The app will still build and run
-without it — classification simply falls back to "unknown" until the file is
-present (ClipEmbedder logs a warning).
+WHAT IT IS
+----------
+DINOv2 ViT-S/14 (facebook/dinov2-small), vision only, reduced to its CLS token
+and dynamically quantised to int8. Regenerate it with:
 
-WHY IT IS NOT COMMITTED
------------------------
-The model is ~45-350 MB depending on quantisation, which is too large to keep
-in the repo. Drop it in locally (git ignores large binaries here) or wire a
-Gradle download task.
+    python python/export_encoder_onnx.py
 
-HOW TO GET ONE (any CLIP ViT-B/32 vision export works)
-------------------------------------------------------
-The reference library is built on-device with THIS SAME encoder, so the model
-only has to be self-consistent — it does NOT have to match the desktop
-sentence-transformers output byte-for-byte. Options:
+WHY NOT CLIP
+------------
+This app previously shipped an int8 CLIP ViT-B/32 vision encoder. It was
+replaced because it measurably could not separate these five feature types.
+Measured by python/compare_encoders.py — leave-one-out prototype classification
+over the bundled reference crops:
 
-1. Prebuilt (easiest): download a CLIP ViT-B/32 vision ONNX, e.g. from
-   Hugging Face "Xenova/clip-vit-base-patch32" (onnx/vision_model.onnx or a
-   quantised variant), rename to clip_image_encoder.onnx, and place it here.
+                        top-1     class separation   median runner-up margin
+    CLIP ViT-B/32 int8  79.4%     0.060              0.036
+    DINOv2-S int8       97.1%     0.271              0.175
 
-2. Export it yourself (Python, one-off):
-       pip install optimum[exporters] onnx onnxruntime
-       optimum-cli export onnx \
-         --model openai/clip-vit-base-patch32 \
-         --task feature-extraction clip_onnx/
-   then use the vision encoder graph, optionally int8-quantise with
-   onnxruntime.quantization, and copy it here as clip_image_encoder.onnx.
+Separation = mean intra-class cosine minus mean inter-class cosine. CLIP fitted
+all five types into a 0.06-wide cosine band, so the runner-up margin check had
+to be set at 0.03 — right at the median of *correct* answers — which discarded
+roughly half of them as "too close to call". DINOv2 gives ~5x the headroom.
 
-INPUT / OUTPUT CONTRACT (see ClipEmbedder.java)
------------------------------------------------
-- Input : one float32 tensor, shape [1, 3, 224, 224], NCHW, CLIP-normalised
-          (mean 0.48145466/0.4578275/0.40821073, std 0.26862954/0.26130258/0.27577711).
-          The input NAME is read dynamically from the model, so it can be
-          "pixel_values", "input", etc.
-- Output: the first output tensor, flattened to a 1-D embedding vector
-          (512-d projected image_embeds OR 768-d pooled output — both fine).
+Two other findings from that comparison:
+  - int8 cost CLIP ~9 points of top-1 (88.2% fp32 -> 79.4% int8). It costs
+    DINOv2 almost nothing (97.1% at both precisions), which is why shipping
+    int8 here is safe. Do not assume that for a future encoder — measure it.
+  - CLIP's text tower was never used (the Python prototype sets
+    TEXT_PROMPT_WEIGHT = 0.0), so its one distinguishing capability was dead
+    weight. Nothing is lost by moving to a vision-only encoder.
+
+INPUT / OUTPUT CONTRACT (see FeatureEmbedder.java)
+--------------------------------------------------
+- Input : "pixel_values", float32, fixed shape [1, 3, 224, 224], NCHW,
+          ImageNet-normalised (mean 0.485/0.456/0.406, std 0.229/0.224/0.225).
+          NOT CLIP's normalisation constants — they differ.
+- Output: "image_embeds", float32 [1, 384] — the CLS token.
+
+The export deliberately emits a SINGLE output. A stock HuggingFace export
+exposes both last_hidden_state and pooler_output, and the old
+ClipEmbedder.pickOutputName() would have silently picked whichever matched
+first — possibly not the one that was benchmarked. One output, one name.
+
+IF YOU SWAP THE ENCODER AGAIN
+-----------------------------
+Prototypes are only comparable to query embeddings from the SAME encoder, and
+cosine() tolerates mismatched dimensions by truncating — so a stale library
+produces plausible-looking garbage rather than an error. Bump ENCODER_ID in
+FeatureEmbedder; ReferenceLibrary tags every saved library with it and rejects
+libraries written by a different encoder. Also re-run the threshold sweep:
+ReferenceLibrary's defaults are calibrated per-encoder, not universal.
 
 Keep noCompress "onnx" in app/build.gradle.kts so ONNX Runtime can memory-map it.

@@ -37,8 +37,19 @@ public final class ActiveLearningPolicy {
     /**
      * Scores below this are treated as "resembles nothing in the library" rather than
      * "near the boundary", and are queued behind the genuinely borderline cases.
+     *
+     * Anchored to the encoder's mean similarity between crops of *different* types
+     * (measured 0.47 for {@link FeatureEmbedder#ENCODER_ID}). Scoring no better than an
+     * arbitrary mismatched pair is what "resembles nothing" actually means, so the
+     * constant is derived from the embedding space rather than picked by feel.
+     *
+     * This was 0.45 under the previous CLIP encoder, which never scored any crop below
+     * 0.86 — the branch it guards was unreachable, so every unknown was ranked as a
+     * boundary case and novel-feature crops competed for review slots with junk
+     * contours. Re-derive this with python/compare_encoders.py if the encoder changes;
+     * an inter-class mean is encoder-specific, not a universal constant.
      */
-    public static float NOISE_FLOOR = 0.45f;
+    public static float NOISE_FLOOR = 0.50f;
 
     public enum Kind {
         UNKNOWN,

@@ -20,8 +20,8 @@ import java.util.List;
  * Each reviewed {@link ClassificationEvent} records what the classifier scored and what
  * the human said it actually was. Replaying candidate threshold pairs over that history
  * tells us which pair would have produced the most correct answers, which is a far better
- * basis than guessing 0.85 and hoping. The search is a plain grid — a few hundred events
- * times ~600 combinations is trivial, and it avoids gradient/convexity assumptions that
+ * basis than shipping one global guess. The search is a plain grid — a few hundred events
+ * times ~2,000 combinations is trivial, and it avoids gradient/convexity assumptions that
  * don't hold for a step-function accuracy metric.
  *
  * Guards that keep this from making things worse:
@@ -47,7 +47,17 @@ public final class ThresholdTuner {
      */
     public static final float MIN_ACCURACY = 0.60f;
 
-    private static final float SIM_MIN = 0.60f, SIM_MAX = 0.98f, SIM_STEP = 0.01f;
+    /**
+     * Search bounds, scaled to the score distribution {@link FeatureEmbedder} actually
+     * produces: correct matches land between roughly 0.65 and 0.93 on the bundled crops,
+     * so the grid brackets that with a little room on each side.
+     *
+     * These were 0.60-0.98 when the encoder was CLIP, whose scores all sat above 0.86 —
+     * two thirds of that range addressed scores that could never occur. Bounds that don't
+     * overlap the encoder's real output cost accuracy silently: the grid spends its search
+     * on dead values and the fit is drawn from whatever narrow slice happens to be live.
+     */
+    private static final float SIM_MIN = 0.50f, SIM_MAX = 0.95f, SIM_STEP = 0.01f;
     /**
      * The margin floor is deliberately above zero. Tuning may loosen the ambiguity check but
      * must never switch it off: two prototypes scoring within a hair of each other means the
@@ -56,8 +66,12 @@ public final class ThresholdTuner {
      * Without a floor the search will happily pick 0 whenever the history is one-sided — a run
      * of reviews that all agreed with the top guess is enough — and the classifier goes back to
      * silently committing on coin-flips, which is the failure this check exists to prevent.
+     *
+     * The ceiling was 0.12, which predates the encoder swap and is now below the median
+     * runner-up gap of a correct match (0.185). The tuner could not have reached a useful
+     * margin even when the history called for one; it now spans the observed range.
      */
-    private static final float MARGIN_MIN = 0.02f, MARGIN_MAX = 0.12f, MARGIN_STEP = 0.005f;
+    private static final float MARGIN_MIN = 0.02f, MARGIN_MAX = 0.25f, MARGIN_STEP = 0.005f;
 
     public static final class Tuned {
         public final float similarityThreshold;
@@ -81,9 +95,31 @@ public final class ThresholdTuner {
     /**
      * Fits thresholds over a part's confirmed history. Returns null when there isn't
      * enough evidence, or when nothing beats the defaults by a meaningful margin.
+     *
+     * Events from a different encoder are dropped before anything is counted, including
+     * the {@link #MIN_EVENTS} check — a mixed history is worse than a short one. Scores
+     * from two encoders don't share a numeric range, so replaying one threshold across
+     * both fits to an average of two distributions and lands somewhere useful for
+     * neither. The filter is here rather than in the query so every caller inherits it.
      */
-    public static Tuned fit(List<ClassificationEvent> reviewed) {
-        if (reviewed == null || reviewed.size() < MIN_EVENTS) return null;
+    public static List<ClassificationEvent> forCurrentEncoder(List<ClassificationEvent> events) {
+        List<ClassificationEvent> kept = new java.util.ArrayList<>();
+        if (events == null) return kept;
+        for (ClassificationEvent e : events) {
+            if (FeatureEmbedder.ENCODER_ID.equals(e.getEncoderId())) kept.add(e);
+        }
+        int dropped = events.size() - kept.size();
+        if (dropped > 0) {
+            Log.d(TAG, "Ignoring " + dropped + " of " + events.size()
+                    + " confirmed events from a previous encoder; fitting on " + kept.size()
+                    + " scored by '" + FeatureEmbedder.ENCODER_ID + "'.");
+        }
+        return kept;
+    }
+
+    public static Tuned fit(List<ClassificationEvent> allReviewed) {
+        List<ClassificationEvent> reviewed = forCurrentEncoder(allReviewed);
+        if (reviewed.size() < MIN_EVENTS) return null;
 
         float baseline = accuracyAt(reviewed,
                 ReferenceLibrary.DEFAULT_SIMILARITY_THRESHOLD,
@@ -153,8 +189,12 @@ public final class ThresholdTuner {
             return ReferenceLibrary.UNKNOWN;
         }
         if (e.getPredictedScore() < sim) return ReferenceLibrary.UNKNOWN;
+        // Inclusive, matching ReferenceLibrary.classify(): a gap sitting exactly on the
+        // threshold is a tie, not a pass. With a strict "<" here the replay credited a
+        // threshold pair for boundary cases the live classifier would have rejected, so
+        // the tuner optimised against behaviour the app does not have.
         if (e.getRunnerUpType() != null
-                && (e.getPredictedScore() - e.getRunnerUpScore()) < margin) {
+                && (e.getPredictedScore() - e.getRunnerUpScore()) <= margin) {
             return ReferenceLibrary.UNKNOWN;
         }
         return winner;
@@ -167,6 +207,9 @@ public final class ThresholdTuner {
             File dir = new File(context.getFilesDir(), DIR);
             if (!dir.exists()) dir.mkdirs();
             JSONObject root = new JSONObject();
+            // Thresholds are only meaningful for the score distribution they were fitted
+            // against, so they are tagged like libraries are. See load().
+            root.put("encoder", FeatureEmbedder.ENCODER_ID);
             root.put("similarityThreshold", tuned.similarityThreshold);
             root.put("marginThreshold", tuned.marginThreshold);
             root.put("sampleSize", tuned.sampleSize);
@@ -181,6 +224,16 @@ public final class ThresholdTuner {
         }
     }
 
+    /**
+     * Loads a part's fitted thresholds, or null to fall back to the defaults.
+     *
+     * Thresholds fitted against a different encoder are discarded. A value is only
+     * meaningful relative to the score distribution it was fitted on: a threshold fitted
+     * for an encoder whose scores all sat above 0.86, applied to one that tops out at
+     * 0.93, rejects nearly every detection and reports the part as entirely unknown.
+     * Falling back to the calibrated defaults is always recoverable; the tuner refits from
+     * this part's history once enough same-encoder confirmations exist.
+     */
     public static Tuned load(Context context, String partId) {
         File f = fileFor(context, partId);
         if (!f.exists()) return null;
@@ -190,6 +243,14 @@ public final class ThresholdTuner {
             int n;
             while ((n = is.read(buf)) != -1) bos.write(buf, 0, n);
             JSONObject root = new JSONObject(new String(bos.toByteArray(), StandardCharsets.UTF_8));
+            String storedEncoder = root.optString("encoder", null);
+            if (storedEncoder == null || !storedEncoder.equals(FeatureEmbedder.ENCODER_ID)) {
+                Log.w(TAG, "Discarding thresholds for " + partId + " fitted by encoder '"
+                        + (storedEncoder == null ? "<untagged/legacy>" : storedEncoder)
+                        + "'; this build uses '" + FeatureEmbedder.ENCODER_ID
+                        + "'. Falling back to defaults until they can be refitted.");
+                return null;
+            }
             return new Tuned(
                     (float) root.getDouble("similarityThreshold"),
                     (float) root.getDouble("marginThreshold"),
