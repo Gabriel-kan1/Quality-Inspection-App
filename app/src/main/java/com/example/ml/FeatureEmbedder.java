@@ -18,38 +18,56 @@ import ai.onnxruntime.OrtEnvironment;
 import ai.onnxruntime.OrtSession;
 
 /**
- * On-device CLIP image encoder (ViT-B/32), mirroring get_embedding() in
- * python/EdgeComputingImprove.py. Wraps an ONNX Runtime session over a bundled
- * CLIP vision-encoder model and turns a crop Bitmap into an embedding vector.
+ * On-device image encoder for the few-shot reference library. Wraps an ONNX Runtime
+ * session over the bundled DINOv2 ViT-S/14 vision encoder and turns a crop Bitmap
+ * into a 384-d embedding vector.
  *
- * Model asset: assets/{@link #MODEL_ASSET}. Expected input: a single float32
- * tensor of shape [1, 3, 224, 224] (NCHW, CLIP-normalised). The output vector
- * can be the projected image_embeds (512-d) or a pooled hidden state (768-d) —
- * either works, because the reference library is built with THIS SAME encoder,
- * so only self-consistency matters (not parity with desktop sentence-transformers).
+ * Model asset: assets/{@link #MODEL_ASSET}, exported by
+ * python/export_encoder_onnx.py. See assets/models/README_MODEL.txt for the I/O
+ * contract and for why this replaced CLIP (it separated these five feature types
+ * roughly 4x better in the python/compare_encoders.py benchmark).
  *
- * To (re)generate the model: export the vision tower of openai/clip-vit-base-patch32
- * to ONNX (e.g. optimum-cli / transformers.js exports), optionally int8-quantise,
- * and place it at app/src/main/assets/{@link #MODEL_ASSET}.
+ * Only self-consistency matters: prototypes are built with the same encoder that
+ * embeds queries, so the absolute embedding values are irrelevant as long as both
+ * sides come from one model. {@link #ENCODER_ID} is what enforces that — see
+ * {@link ReferenceLibrary#encoderId()}.
  */
-public final class ClipEmbedder {
+public final class FeatureEmbedder {
 
-    private static final String TAG = "ClipEmbedder";
-    public static final String MODEL_ASSET = "models/clip_image_encoder.onnx";
+    private static final String TAG = "FeatureEmbedder";
+    public static final String MODEL_ASSET = "models/feature_encoder.onnx";
+
+    /**
+     * Identity of the embedding space this encoder produces, stored in every library
+     * this app writes so stale libraries can be rejected instead of silently misread.
+     *
+     * BUMP THIS whenever the model asset changes in a way that moves embeddings —
+     * different architecture, different weights, different preprocessing, different
+     * output tensor. Quantisation alone does not require a bump (int8 and fp32 DINOv2
+     * agree to cosine 0.986, well inside the noise the prototypes already average over).
+     */
+    public static final String ENCODER_ID = "dinov2-s14-cls-384";
 
     private static final int INPUT_SIZE = 224;
-    // CLIP image normalisation constants (OpenAI CLIP preprocessing).
-    private static final float[] MEAN = {0.48145466f, 0.4578275f, 0.40821073f};
-    private static final float[] STD  = {0.26862954f, 0.26130258f, 0.27577711f};
+    /**
+     * ImageNet normalisation, which is what DINOv2 was trained with. These are NOT
+     * interchangeable with CLIP's constants: swapping them silently degrades every
+     * embedding rather than failing, so they belong next to the model that needs them.
+     */
+    private static final float[] MEAN = {0.485f, 0.456f, 0.406f};
+    private static final float[] STD  = {0.229f, 0.224f, 0.225f};
 
-    private static volatile ClipEmbedder instance;
+    /** The single output the export emits; see README_MODEL.txt. */
+    private static final String EXPECTED_OUTPUT = "image_embeds";
+
+    private static volatile FeatureEmbedder instance;
 
     private final OrtEnvironment env;
     private final OrtSession session;
     private final String inputName;
     private final String outputName;
 
-    private ClipEmbedder(OrtEnvironment env, OrtSession session, String inputName, String outputName) {
+    private FeatureEmbedder(OrtEnvironment env, OrtSession session, String inputName, String outputName) {
         this.env = env;
         this.session = session;
         this.inputName = inputName;
@@ -58,13 +76,13 @@ public final class ClipEmbedder {
 
     /**
      * Returns the shared embedder, or null if the model asset is missing or fails
-     * to load. Callers should treat null as "no CLIP available" and degrade to
+     * to load. Callers should treat null as "no encoder available" and degrade to
      * an "unknown" classification rather than crashing.
      */
-    public static ClipEmbedder get(Context context) {
-        ClipEmbedder local = instance;
+    public static FeatureEmbedder get(Context context) {
+        FeatureEmbedder local = instance;
         if (local != null) return local;
-        synchronized (ClipEmbedder.class) {
+        synchronized (FeatureEmbedder.class) {
             if (instance == null) {
                 instance = create(context.getApplicationContext());
             }
@@ -72,22 +90,37 @@ public final class ClipEmbedder {
         }
     }
 
-    private static ClipEmbedder create(Context context) {
+    private static FeatureEmbedder create(Context context) {
         try {
             byte[] modelBytes = readAsset(context, MODEL_ASSET);
             OrtEnvironment env = OrtEnvironment.getEnvironment();
             OrtSession.SessionOptions opts = new OrtSession.SessionOptions();
             OrtSession session = env.createSession(modelBytes, opts);
             String inputName = session.getInputNames().iterator().next();
-            String outputName = pickOutputName(session.getOutputNames());
-            Log.d(TAG, "CLIP model loaded. input=" + inputName
+            String outputName = resolveOutputName(session.getOutputNames());
+            Log.d(TAG, "Encoder loaded (" + ENCODER_ID + "). input=" + inputName
                     + " outputs=" + session.getOutputNames() + " using=" + outputName);
-            return new ClipEmbedder(env, session, inputName, outputName);
+            return new FeatureEmbedder(env, session, inputName, outputName);
         } catch (Throwable t) {
-            Log.e(TAG, "Failed to load CLIP model asset '" + MODEL_ASSET
+            Log.e(TAG, "Failed to load encoder asset '" + MODEL_ASSET
                     + "'. Classification will fall back to 'unknown'.", t);
             return null;
         }
+    }
+
+    /**
+     * Resolves which output tensor to read. The bundled export has exactly one, named
+     * {@link #EXPECTED_OUTPUT}; anything else means the asset was regenerated by
+     * different tooling, so log loudly rather than quietly reading a tensor that may
+     * not be the one the thresholds were calibrated against.
+     */
+    private static String resolveOutputName(java.util.Set<String> outputs) {
+        if (outputs.contains(EXPECTED_OUTPUT)) return EXPECTED_OUTPUT;
+        String fallback = outputs.iterator().next();
+        Log.w(TAG, "Model has no '" + EXPECTED_OUTPUT + "' output (found " + outputs
+                + "); falling back to '" + fallback + "'. Embeddings may not match the"
+                + " calibrated thresholds — re-export with python/export_encoder_onnx.py.");
+        return fallback;
     }
 
     /**
@@ -152,37 +185,23 @@ public final class ClipEmbedder {
         return fb;
     }
 
-    /**
-     * Picks the most embedding-like output so different CLIP vision exports all work:
-     * prefer a projected "image_embeds", then a pooled output, else the first output.
-     */
-    private static String pickOutputName(java.util.Set<String> outputs) {
-        for (String name : outputs) {
-            if (name.toLowerCase().contains("image_embeds")) return name;
-        }
-        for (String name : outputs) {
-            String l = name.toLowerCase();
-            if (l.contains("pooler") || l.contains("pooled") || l.contains("embed")) return name;
-        }
-        return outputs.iterator().next();
-    }
-
     /** Reads the chosen output tensor and flattens it to a float[D] vector. */
     private float[] extractVector(OrtSession.Result result) throws Exception {
         OnnxValue value = result.get(outputName).orElseGet(() -> result.get(0));
         Object raw = value.getValue();
         if (raw instanceof float[][]) {
-            // [1, D] — projected/pooled embedding.
+            // [1, D] — the expected shape.
             return ((float[][]) raw)[0];
         }
         if (raw instanceof float[]) {
             return (float[]) raw;
         }
         if (raw instanceof float[][][]) {
-            // [1, tokens, D] last_hidden_state — use the CLS token (index 0).
+            // [1, tokens, D] last_hidden_state — take the CLS token, which is what the
+            // bundled export returns directly and what the thresholds were fitted on.
             return ((float[][][]) raw)[0][0];
         }
-        throw new IllegalStateException("Unsupported CLIP output type: " + raw.getClass());
+        throw new IllegalStateException("Unsupported encoder output type: " + raw.getClass());
     }
 
     private static byte[] readAsset(Context context, String path) throws Exception {

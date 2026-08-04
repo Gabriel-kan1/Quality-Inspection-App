@@ -22,7 +22,7 @@ public final class LearningCropStore {
 
     private static final String TAG = "LearningCropStore";
     private static final String DIR = "learning_crops";
-    /** Crops are only ever fed to a 224x224 CLIP encoder, so there's no point storing more. */
+    /** Crops are only ever fed to a 224x224 encoder, so there's no point storing more. */
     private static final int MAX_EDGE = 256;
 
     private LearningCropStore() {}
