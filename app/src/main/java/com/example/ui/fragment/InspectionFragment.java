@@ -1,13 +1,15 @@
 package com.example.ui.fragment;
 
+import android.Manifest;
+import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
-import android.graphics.BitmapFactory;
 import android.graphics.Color;
 import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
@@ -18,6 +20,13 @@ import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import androidx.camera.core.CameraSelector;
+import androidx.camera.core.ImageAnalysis;
+import androidx.camera.core.ImageCapture;
+import androidx.camera.core.ImageCaptureException;
+import androidx.camera.core.ImageProxy;
+import androidx.camera.core.Preview;
+import androidx.camera.lifecycle.ProcessCameraProvider;
 import androidx.core.content.ContextCompat;
 import androidx.fragment.app.Fragment;
 import androidx.navigation.Navigation;
@@ -25,7 +34,10 @@ import androidx.navigation.Navigation;
 import com.example.R;
 import com.example.data.AppDatabase;
 import com.example.data.entity.ReferenceProfile;
+import com.example.ml.AlignmentGate;
+import com.example.ml.HoldTimer;
 import com.example.ui.util.AssetBitmaps;
+import com.example.ui.view.TrafficLightView;
 import com.example.databinding.FragmentInspectionBinding;
 
 import java.io.File;
@@ -33,23 +45,71 @@ import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.text.SimpleDateFormat;
 import java.util.Locale;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicBoolean;
 
+/**
+ * Capture screen for an inspection.
+ *
+ * <p>The camera feed is gated: each frame is scored against the part's reference photo by
+ * {@link AlignmentGate}, and the shutter only fires once the operator has held the phone
+ * inside tolerance for {@link HoldTimer#DEFAULT_HOLD_MS}. Capture is automatic at that
+ * point, because asking for a button press at the decisive moment reintroduces exactly the
+ * shake the hold was there to eliminate.
+ */
 public class InspectionFragment extends Fragment {
 
     private static final String TAG = "InspectionFragment";
+
+    /** Where the frames the gate scores come from. */
+    private enum Mode {
+        /** Live camera, full traffic light with the three-second hold. */
+        LIVE,
+        /** A saved still. Scored once and lit red or green, but no hold — a static image
+         *  cannot drift, so a dwell over it would be theatre. */
+        STILL
+    }
 
     private FragmentInspectionBinding binding;
     private String partId = "";
     private ReferenceProfile referenceProfile = null;
     private Uri selectedImageExternalUri = null;
     private boolean isGhostEnabled = true;
-    private boolean isAligned = false;
-    private Handler alignmentSimulatorHandler;
+
+    /** Written on the main thread, read by the analysis thread to drop stale frames. */
+    private volatile Mode mode = Mode.LIVE;
+    private boolean referenceMissing = false;
+    private boolean debugReadoutVisible = false;
+
+    private Handler mainHandler;
+    private ExecutorService analysisExecutor;
+    private ProcessCameraProvider cameraProvider;
+    private ImageCapture imageCapture;
+
+    /** Built off the reference photo once, then read from the analysis thread only. */
+    private volatile AlignmentGate alignmentGate;
+    private final HoldTimer holdTimer = new HoldTimer();
+    /** Latches the moment the dwell completes so the shutter fires exactly once. */
+    private final AtomicBoolean captureInFlight = new AtomicBoolean(false);
 
     private final ActivityResultLauncher<String> selectImageLauncher =
             registerForActivityResult(new ActivityResultContracts.GetContent(), uri -> {
                 if (uri != null) {
                     persistSelectedImage(uri);
+                }
+            });
+
+    private final ActivityResultLauncher<String> cameraPermissionLauncher =
+            registerForActivityResult(new ActivityResultContracts.RequestPermission(), granted -> {
+                if (granted) {
+                    startCamera();
+                } else {
+                    // Without a camera there is no live gate, so fall back to the still path
+                    // rather than leaving the operator on a dead screen.
+                    Toast.makeText(getContext(),
+                            "Camera denied — inspect a saved image instead.", Toast.LENGTH_LONG).show();
+                    switchToStillMode();
                 }
             });
 
@@ -71,23 +131,27 @@ public class InspectionFragment extends Fragment {
     @Override
     public void onViewCreated(@NonNull View view, @NonNull @Nullable Bundle savedInstanceState) {
         super.onViewCreated(view, savedInstanceState);
-        alignmentSimulatorHandler = new Handler(Looper.getMainLooper());
+        mainHandler = new Handler(Looper.getMainLooper());
+        analysisExecutor = Executors.newSingleThreadExecutor();
 
         binding.tvPartInfo.setText("Part ID: " + partId);
-
-        // Load the stored Reference Profile if it exists
-        loadReferenceProfile();
 
         // Scan the custom user_images folder in assets
         scanAssetsFolder();
 
-        // Standard Alignment start
-        resetAlignmentState();
+        setLight(TrafficLightView.State.OFF, 0f, "PREPARING ALIGNMENT CHECK", null);
 
-        binding.layoutInteractiveTarget.setOnClickListener(v -> launchImageChooser());
+        binding.layoutInteractiveTarget.setOnClickListener(v -> {
+            if (mode == Mode.STILL) launchImageChooser();
+        });
 
         binding.btnCaptureInspect.setOnClickListener(v -> {
-            if (selectedImageExternalUri == null) {
+            if (mode == Mode.LIVE) {
+                // Live capture is driven by the gate, not by this button.
+                Toast.makeText(getContext(),
+                        "Hold the part inside the frame until the light turns green.",
+                        Toast.LENGTH_SHORT).show();
+            } else if (selectedImageExternalUri == null) {
                 launchImageChooser();
             } else {
                 analyzeAndNavigate();
@@ -96,12 +160,452 @@ public class InspectionFragment extends Fragment {
 
         binding.btnToggleGhost.setOnClickListener(v -> toggleGhostOverlay());
 
-        binding.tvSimulateHint.setOnClickListener(v -> triggerAlignmentAchieved());
+        binding.tvModeToggle.setOnClickListener(v -> {
+            if (mode == Mode.LIVE) {
+                switchToStillMode();
+            } else {
+                switchToLiveMode();
+            }
+        });
 
-        binding.btnUsePresetInspection.setOnClickListener(v -> {
-            loadSelectedAsset("chassis_hardware_preset.jpg");
+        // Long-press the hint to expose the raw alignment numbers while tuning thresholds.
+        binding.tvAlignmentHint.setOnLongClickListener(v -> {
+            debugReadoutVisible = !debugReadoutVisible;
+            binding.tvAlignmentDebug.setVisibility(debugReadoutVisible ? View.VISIBLE : View.GONE);
+            return true;
+        });
+
+        binding.btnGoToReferenceSetup.setOnClickListener(v -> {
+            Bundle args = new Bundle();
+            args.putString("partId", partId);
+            if (isAdded() && getView() != null) {
+                Navigation.findNavController(getView())
+                        .navigate(R.id.action_inspection_to_reference_setup, args);
+            }
+        });
+
+        binding.btnUsePresetInspection.setOnClickListener(v ->
+                loadSelectedAsset("chassis_hardware_preset.jpg"));
+
+        // Everything else waits on the reference: without one there is nothing to gate against.
+        loadReferenceProfile();
+    }
+
+    // ── Reference profile & gate construction ───────────────────────────
+
+    private void loadReferenceProfile() {
+        // Indexing the reference takes long enough that the fragment can be gone by the time
+        // it finishes, so hold the application context rather than reaching for the fragment's.
+        final android.content.Context context = requireContext().getApplicationContext();
+        new Thread(() -> {
+            AppDatabase db = AppDatabase.getInstance(context);
+            ReferenceProfile profile = db.referenceProfileDao().getProfileByPartType(partId);
+
+            String uri = profile != null ? profile.getImageUri() : null;
+            boolean usable = uri != null && !"dummy_placeholder".equals(uri);
+
+            // Build the gate on this background thread — encoding the reference is an ONNX
+            // inference, far too slow to run on the main thread.
+            AlignmentGate gate = null;
+            if (usable) {
+                Bitmap reference = HardwareFeatureExtractor.loadBitmap(context, uri, 1280);
+                if (reference != null) {
+                    gate = AlignmentGate.fromReference(context, reference);
+                    reference.recycle();
+                }
+            }
+
+            final AlignmentGate builtGate = gate;
+            final boolean gateUsable = usable;
+            mainHandler.post(() -> {
+                if (!isAdded() || binding == null) return;
+                referenceProfile = profile;
+                alignmentGate = builtGate;
+                applyGhostOverlay(gateUsable ? uri : null);
+
+                if (!gateUsable) {
+                    blockForMissingReference("This part has no reference photo.");
+                } else if (builtGate == null) {
+                    // Either the feature encoder is missing from assets or the reference
+                    // could not be encoded. Without it every frame would score the same,
+                    // so the gate would be decorative rather than a check.
+                    blockForMissingReference("The feature encoder could not read this reference photo.");
+                } else {
+                    requestCameraAndStart();
+                }
+            });
+        }).start();
+    }
+
+    /** Puts the screen into the blocked state: no gate, no capture, only a route to setup. */
+    private void blockForMissingReference(String reason) {
+        referenceMissing = true;
+        binding.layoutNoReference.setVisibility(View.VISIBLE);
+        binding.layoutUploadPlaceholder.setVisibility(View.GONE);
+        binding.previewCamera.setVisibility(View.GONE);
+        binding.viewTrafficLight.setVisibility(View.GONE);
+        binding.tvAlignmentHint.setVisibility(View.GONE);
+        binding.tvModeToggle.setVisibility(View.GONE);
+        binding.cardAssetsFolderInspect.setVisibility(View.GONE);
+
+        binding.tvAlignmentState.setText("BLOCKED");
+        binding.tvAlignmentState.setBackgroundColor(
+                ContextCompat.getColor(requireContext(), R.color.orange_warn));
+        binding.layoutCameraEnclosure.setBackgroundResource(R.drawable.align_border_idle);
+
+        binding.tvOperatorTip.setText(reason + " Alignment cannot be verified, so inspection is blocked.");
+        binding.btnCaptureInspect.setEnabled(false);
+        binding.btnCaptureInspect.setText("REFERENCE REQUIRED");
+        binding.btnCaptureInspect.setBackgroundColor(
+                ContextCompat.getColor(requireContext(), R.color.color_border));
+        binding.btnToggleGhost.setEnabled(false);
+    }
+
+    private void applyGhostOverlay(@Nullable String imageUri) {
+        if (imageUri == null) {
+            binding.ivGhostOverlay.setVisibility(View.GONE);
+            binding.tvGhostStatusIndicator.setText("NO ACTIVE GHOST OVERLAY");
+            return;
+        }
+        if (imageUri.startsWith("file:///android_asset/")) {
+            String assetPath = imageUri.substring("file:///android_asset/".length());
+            Bitmap ghost = AssetBitmaps.decodeSampled(requireContext(), assetPath, 1080);
+            if (ghost != null) {
+                binding.ivGhostOverlay.setImageBitmap(ghost);
+            } else {
+                binding.ivGhostOverlay.setImageURI(Uri.parse(imageUri));
+            }
+        } else {
+            binding.ivGhostOverlay.setImageURI(Uri.parse(imageUri));
+        }
+        binding.ivGhostOverlay.setVisibility(isGhostEnabled ? View.VISIBLE : View.GONE);
+        binding.tvGhostStatusIndicator.setText("GHOST OVERLAY ON (35%)");
+    }
+
+    // ── Live camera ─────────────────────────────────────────────────────
+
+    private void requestCameraAndStart() {
+        if (ContextCompat.checkSelfPermission(requireContext(), Manifest.permission.CAMERA)
+                == PackageManager.PERMISSION_GRANTED) {
+            startCamera();
+        } else {
+            cameraPermissionLauncher.launch(Manifest.permission.CAMERA);
+        }
+    }
+
+    private void startCamera() {
+        if (!isAdded() || binding == null || referenceMissing) return;
+        mode = Mode.LIVE;
+        applyModeChrome();
+
+        com.google.common.util.concurrent.ListenableFuture<ProcessCameraProvider> future =
+                ProcessCameraProvider.getInstance(requireContext());
+        future.addListener(() -> {
+            if (!isAdded() || binding == null) return;
+            try {
+                cameraProvider = future.get();
+                bindCameraUseCases();
+            } catch (Exception e) {
+                Log.e(TAG, "Camera provider unavailable", e);
+                Toast.makeText(getContext(),
+                        "Camera unavailable — inspect a saved image instead.", Toast.LENGTH_LONG).show();
+                switchToStillMode();
+            }
+        }, ContextCompat.getMainExecutor(requireContext()));
+    }
+
+    private void bindCameraUseCases() {
+        Preview preview = new Preview.Builder().build();
+        preview.setSurfaceProvider(binding.previewCamera.getSurfaceProvider());
+
+        ImageAnalysis analysis = new ImageAnalysis.Builder()
+                // Alignment is about where the phone is right now, so a backlog of stale
+                // frames is worse than useless — always score the newest one.
+                .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                // The encoder wants colour, and RGBA lets toBitmap() hand one over without
+                // a YUV conversion of our own.
+                .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_RGBA_8888)
+                .build();
+        analysis.setAnalyzer(analysisExecutor, this::analyzeFrame);
+
+        imageCapture = new ImageCapture.Builder()
+                .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
+                .build();
+
+        try {
+            cameraProvider.unbindAll();
+            cameraProvider.bindToLifecycle(getViewLifecycleOwner(),
+                    CameraSelector.DEFAULT_BACK_CAMERA, preview, analysis, imageCapture);
+            holdTimer.reset();
+            AlignmentGate gate = alignmentGate;
+            if (gate != null) gate.resetMotion();
+            captureInFlight.set(false);
+            setLight(TrafficLightView.State.RED, 0f, "POINT AT THE PART", null);
+            binding.tvOperatorTip.setText(
+                    "Frame the area like the ghost and hold steady for 3 seconds. Capture is automatic.");
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to bind camera use cases", e);
+            Toast.makeText(getContext(), "Camera bind failed: " + e.getMessage(), Toast.LENGTH_LONG).show();
+            switchToStillMode();
+        }
+    }
+
+    /**
+     * Scores one preview frame. Runs on {@link #analysisExecutor}; touches no views except
+     * through {@link #mainHandler}.
+     */
+    private void analyzeFrame(@NonNull ImageProxy image) {
+        Bitmap frame = null;
+        Bitmap upright = null;
+        try {
+            AlignmentGate gate = alignmentGate;
+            if (gate == null || mode != Mode.LIVE || captureInFlight.get()) return;
+
+            frame = image.toBitmap();
+            upright = rotateToUpright(frame, image.getImageInfo().getRotationDegrees());
+
+            AlignmentGate.Reading reading = gate.evaluate(upright);
+            long now = SystemClock.elapsedRealtime();
+            float progress = holdTimer.update(reading.inTolerance, now);
+            boolean passed = holdTimer.isSatisfied();
+
+            mainHandler.post(() -> onReading(reading, progress, passed));
+        } catch (Exception e) {
+            Log.e(TAG, "Frame analysis failed", e);
+        } finally {
+            if (upright != null && upright != frame) upright.recycle();
+            if (frame != null) frame.recycle();
+            image.close();
+        }
+    }
+
+    /**
+     * Rotates a frame upright. The encoder is not rotation invariant and the reference was
+     * encoded upright, so a sideways frame would score as a different area entirely.
+     */
+    private static Bitmap rotateToUpright(Bitmap frame, int rotationDegrees) {
+        if (rotationDegrees == 0) return frame;
+        android.graphics.Matrix matrix = new android.graphics.Matrix();
+        matrix.postRotate(rotationDegrees);
+        return Bitmap.createBitmap(frame, 0, 0, frame.getWidth(), frame.getHeight(), matrix, true);
+    }
+
+    /** Applies one frame's verdict to the traffic light, and fires the shutter on a pass. */
+    private void onReading(AlignmentGate.Reading reading, float progress, boolean passed) {
+        if (!isAdded() || binding == null || mode != Mode.LIVE) return;
+
+        if (passed) {
+            if (captureInFlight.compareAndSet(false, true)) {
+                setLight(TrafficLightView.State.GREEN, 1f, "ALIGNED — CAPTURING", reading.debugLine());
+                captureAlignedFrame();
+            }
+            return;
+        }
+
+        if (reading.inTolerance) {
+            long remaining = holdTimer.remainingMs();
+            setLight(TrafficLightView.State.AMBER, progress,
+                    String.format(Locale.US, "HOLD STILL — %.1fs", remaining / 1000f),
+                    reading.debugLine());
+        } else {
+            // Carrying the match strength on the red light gives the operator something to
+            // maximise; without directional hints it is the only feedback that framing is
+            // improving before the light actually flips.
+            setLight(TrafficLightView.State.RED, 0f,
+                    reading.hint + "  ·  " + reading.matchPercent() + "%",
+                    reading.debugLine());
+        }
+    }
+
+    /** Takes the full-resolution still once the dwell has completed. */
+    private void captureAlignedFrame() {
+        if (imageCapture == null) {
+            captureInFlight.set(false);
+            return;
+        }
+
+        File outputDir = requireContext().getExternalFilesDir("captured_inspections");
+        if (outputDir != null && !outputDir.exists()) {
+            outputDir.mkdirs();
+        }
+        String timeStamp = new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault())
+                .format(new java.util.Date());
+        File photoFile = new File(outputDir, "COMP_" + partId + "_" + timeStamp + ".jpg");
+
+        ImageCapture.OutputFileOptions options =
+                new ImageCapture.OutputFileOptions.Builder(photoFile).build();
+
+        imageCapture.takePicture(options, ContextCompat.getMainExecutor(requireContext()),
+                new ImageCapture.OnImageSavedCallback() {
+                    @Override
+                    public void onImageSaved(@NonNull ImageCapture.OutputFileResults results) {
+                        if (!isAdded() || binding == null) return;
+                        selectedImageExternalUri = Uri.fromFile(photoFile);
+                        binding.tvOperatorTip.setText("Alignment held. Running geometric verification...");
+                        Toast.makeText(getContext(), "Aligned and captured.", Toast.LENGTH_SHORT).show();
+                        navigateToResults(selectedImageExternalUri.toString());
+                    }
+
+                    @Override
+                    public void onError(@NonNull ImageCaptureException e) {
+                        Log.e(TAG, "Auto-capture failed", e);
+                        if (!isAdded() || binding == null) return;
+                        Toast.makeText(getContext(),
+                                "Capture failed: " + e.getMessage(), Toast.LENGTH_LONG).show();
+                        // Let the operator re-earn the green rather than stranding the gate.
+                        holdTimer.reset();
+                        captureInFlight.set(false);
+                    }
+                });
+    }
+
+    // ── Still-image path ────────────────────────────────────────────────
+
+    private void switchToStillMode() {
+        if (referenceMissing) return;
+        mode = Mode.STILL;
+        if (cameraProvider != null) cameraProvider.unbindAll();
+        holdTimer.reset();
+        captureInFlight.set(false);
+        applyModeChrome();
+        if (selectedImageExternalUri != null) {
+            scoreStillImage(selectedImageExternalUri.toString());
+        } else {
+            setLight(TrafficLightView.State.OFF, 0f, "CHOOSE AN IMAGE TO SCORE", null);
+        }
+    }
+
+    private void switchToLiveMode() {
+        if (referenceMissing) return;
+        selectedImageExternalUri = null;
+        binding.ivChassisPreview.setVisibility(View.GONE);
+        binding.ivChassisPreview.setImageDrawable(null);
+        requestCameraAndStart();
+    }
+
+    /** Shows or hides the chrome that only makes sense in one of the two modes. */
+    private void applyModeChrome() {
+        boolean live = mode == Mode.LIVE;
+        binding.previewCamera.setVisibility(live ? View.VISIBLE : View.GONE);
+        binding.viewTrafficLight.setVisibility(View.VISIBLE);
+        binding.tvAlignmentHint.setVisibility(View.VISIBLE);
+        binding.cardAssetsFolderInspect.setVisibility(live ? View.GONE : View.VISIBLE);
+        binding.layoutUploadPlaceholder.setVisibility(
+                !live && selectedImageExternalUri == null ? View.VISIBLE : View.GONE);
+        binding.tvModeToggle.setText(live
+                ? "Inspect a saved image instead"
+                : "Back to live camera gate");
+
+        // Kept enabled in live mode so a press explains why nothing happened, rather than
+        // leaving the operator prodding a dead button.
+        binding.btnCaptureInspect.setEnabled(true);
+        if (live) {
+            binding.btnCaptureInspect.setText("AUTO-CAPTURE ON GREEN");
+            binding.btnCaptureInspect.setBackgroundColor(
+                    ContextCompat.getColor(requireContext(), R.color.color_border));
+        } else {
+            binding.btnCaptureInspect.setText(
+                    selectedImageExternalUri == null ? "CHOOSE IMAGE" : "ANALYZE CHASSIS");
+            binding.btnCaptureInspect.setBackgroundColor(ContextCompat.getColor(requireContext(),
+                    selectedImageExternalUri == null ? R.color.blue_primary : R.color.green_pass_header));
+        }
+    }
+
+    /**
+     * Scores a chosen still once. No dwell — the light reports how well the saved image is
+     * framed, and a red one is a warning rather than a block, so deliberately misaligned
+     * assets stay usable for testing the detection pipeline.
+     */
+    private void scoreStillImage(String uriString) {
+        AlignmentGate gate = alignmentGate;
+        if (gate == null) return;
+
+        setLight(TrafficLightView.State.OFF, 0f, "SCORING IMAGE...", null);
+        // Runs on the analysis executor rather than a fresh thread: AlignmentGate reuses
+        // scratch Mats across calls, so every use of it has to stay on one thread.
+        ExecutorService executor = analysisExecutor;
+        if (executor == null || executor.isShutdown()) return;
+        // Resolved here rather than inside the worker: requireContext() throws once the
+        // fragment detaches, and decoding plus scoring easily outlives a back press.
+        final android.content.Context context = requireContext().getApplicationContext();
+        executor.execute(() -> {
+            Bitmap bitmap = HardwareFeatureExtractor.loadBitmap(context, uriString, 1280);
+            if (bitmap == null) return;
+            AlignmentGate.Reading reading;
+            try {
+                // A still has no predecessor, so the motion estimate must not carry over
+                // from whatever was scored before it.
+                gate.resetMotion();
+                reading = gate.evaluate(bitmap);
+            } catch (Exception e) {
+                Log.e(TAG, "Still scoring failed", e);
+                return;
+            } finally {
+                bitmap.recycle();
+            }
+
+            final AlignmentGate.Reading result = reading;
+            mainHandler.post(() -> {
+                if (!isAdded() || binding == null || mode != Mode.STILL) return;
+                String strength = result.matchPercent() + "% match";
+                if (result.inTolerance) {
+                    setLight(TrafficLightView.State.GREEN, 1f,
+                            "SAME AREA — " + strength, result.debugLine());
+                    binding.tvOperatorTip.setText(
+                            "Saved image shows the reference area (" + strength + "). Ready to analyze.");
+                } else {
+                    setLight(TrafficLightView.State.RED, 0f,
+                            "NOT THE REFERENCE AREA — " + strength, result.debugLine());
+                    binding.tvOperatorTip.setText(
+                            "Saved image doesn't match the reference area (" + strength
+                                    + "). You can still analyze it, but detections may be unreliable.");
+                }
+            });
         });
     }
+
+    /** Drives every piece of alignment chrome from a single place so they can't disagree. */
+    private void setLight(TrafficLightView.State state, float progress,
+                          String hint, @Nullable String debug) {
+        if (binding == null) return;
+        binding.viewTrafficLight.setState(state, progress);
+        binding.tvAlignmentHint.setText(hint);
+
+        int borderRes;
+        int chipColor;
+        String chipText;
+        switch (state) {
+            case GREEN:
+                borderRes = R.drawable.align_border_green;
+                chipColor = R.color.green_pass;
+                chipText = "ALIGNED";
+                break;
+            case AMBER:
+                borderRes = R.drawable.align_border_amber;
+                chipColor = R.color.orange_warn;
+                chipText = "HOLDING";
+                break;
+            case RED:
+                borderRes = R.drawable.align_border_red;
+                chipColor = R.color.red_fail;
+                chipText = "NOT ALIGNED";
+                break;
+            default:
+                borderRes = R.drawable.align_border_idle;
+                chipColor = R.color.color_border;
+                chipText = "STANDBY";
+                break;
+        }
+        binding.layoutCameraEnclosure.setBackgroundResource(borderRes);
+        binding.tvAlignmentState.setText(chipText);
+        binding.tvAlignmentState.setBackgroundColor(ContextCompat.getColor(requireContext(), chipColor));
+
+        binding.tvAlignmentDebug.setText(debug == null ? "" : debug);
+        binding.tvAlignmentDebug.setVisibility(
+                debugReadoutVisible && debug != null ? View.VISIBLE : View.GONE);
+    }
+
+    // ── Asset browser (unchanged behaviour, still mode only) ────────────
 
     private void scanAssetsFolder() {
         try {
@@ -142,7 +646,7 @@ public class InspectionFragment extends Fragment {
             itemLayout.setOrientation(android.widget.LinearLayout.HORIZONTAL);
             itemLayout.setGravity(android.view.Gravity.CENTER_VERTICAL);
             itemLayout.setPadding((int)(8 * getResources().getDisplayMetrics().density), 0, (int)(12 * getResources().getDisplayMetrics().density), 0);
-            
+
             // Layout Params with Margins
             android.widget.LinearLayout.LayoutParams params = new android.widget.LinearLayout.LayoutParams(
                     android.widget.LinearLayout.LayoutParams.WRAP_CONTENT,
@@ -213,7 +717,14 @@ public class InspectionFragment extends Fragment {
     }
 
     private void loadSelectedAsset(String filename) {
+        if (referenceMissing) return;
         try {
+            // Clear first so the mode switch doesn't queue a pointless score of the image
+            // that is about to be replaced.
+            if (mode == Mode.LIVE) {
+                selectedImageExternalUri = null;
+                switchToStillMode();
+            }
             selectedImageExternalUri = Uri.parse("file:///android_asset/chassis_images/" + filename);
             // Preview only — the analysis pipeline re-loads the asset at its own resolution,
             // so there's no reason to hold a 4032x3024 bitmap for an on-screen preview.
@@ -223,12 +734,8 @@ public class InspectionFragment extends Fragment {
             binding.ivChassisPreview.setVisibility(View.VISIBLE);
             binding.layoutUploadPlaceholder.setVisibility(View.GONE);
 
-            binding.btnCaptureInspect.setText("ANALYZE CHASSIS");
-            binding.btnCaptureInspect.setBackgroundColor(ContextCompat.getColor(requireContext(), R.color.green_pass_header));
-            binding.tvOperatorTip.setText("Locking coordinates. Simulating geometric verification analysis...");
-
-            // Trigger simulated tuning
-            simulateAlignmentTuning();
+            applyModeChrome();
+            scoreStillImage(selectedImageExternalUri.toString());
             Toast.makeText(getContext(), "Local inspection asset loaded: " + filename, Toast.LENGTH_SHORT).show();
         } catch (Exception e) {
             Toast.makeText(getContext(), "Failed to load asset: " + e.getMessage(), Toast.LENGTH_SHORT).show();
@@ -418,40 +925,6 @@ public class InspectionFragment extends Fragment {
         }
     }
 
-    private void loadReferenceProfile() {
-        new Thread(() -> {
-            AppDatabase db = AppDatabase.getInstance(requireContext());
-            referenceProfile = db.referenceProfileDao().getProfileByPartType(partId);
-
-            requireActivity().runOnUiThread(() -> {
-                if (referenceProfile != null && referenceProfile.getImageUri() != null) {
-                    String imgUriStr = referenceProfile.getImageUri();
-                    if ("dummy_placeholder".equals(imgUriStr)) {
-                        binding.ivGhostOverlay.setVisibility(View.GONE);
-                        binding.tvGhostStatusIndicator.setText("DEFAULT REFERENCING (NO OVERLAY)");
-                    } else {
-                        if (imgUriStr.startsWith("file:///android_asset/")) {
-                            String assetPath = imgUriStr.substring("file:///android_asset/".length());
-                            Bitmap ghost = AssetBitmaps.decodeSampled(requireContext(), assetPath, 1080);
-                            if (ghost != null) {
-                                binding.ivGhostOverlay.setImageBitmap(ghost);
-                            } else {
-                                binding.ivGhostOverlay.setImageURI(Uri.parse(imgUriStr));
-                            }
-                        } else {
-                            binding.ivGhostOverlay.setImageURI(Uri.parse(imgUriStr));
-                        }
-                        binding.ivGhostOverlay.setVisibility(isGhostEnabled ? View.VISIBLE : View.GONE);
-                        binding.tvGhostStatusIndicator.setText("GHOST OVERLAY ON (35%)");
-                    }
-                } else {
-                    binding.ivGhostOverlay.setVisibility(View.GONE);
-                    binding.tvGhostStatusIndicator.setText("NO ACTIVE GHOST OVERLAY");
-                }
-            });
-        }).start();
-    }
-
     private void persistSelectedImage(Uri inputUri) {
         try {
             InputStream inputStream = requireContext().getContentResolver().openInputStream(inputUri);
@@ -477,18 +950,18 @@ public class InspectionFragment extends Fragment {
             outputStream.close();
             inputStream.close();
 
+            if (mode == Mode.LIVE) {
+                selectedImageExternalUri = null;
+                switchToStillMode();
+            }
             selectedImageExternalUri = Uri.fromFile(photoFile);
 
             binding.ivChassisPreview.setImageURI(selectedImageExternalUri);
             binding.ivChassisPreview.setVisibility(View.VISIBLE);
             binding.layoutUploadPlaceholder.setVisibility(View.GONE);
 
-            binding.btnCaptureInspect.setText("ANALYZE CHASSIS");
-            binding.btnCaptureInspect.setBackgroundColor(ContextCompat.getColor(requireContext(), R.color.green_pass_header));
-            binding.tvOperatorTip.setText("Locking coordinates. Simulating geometric verification analysis...");
-
-            // Trigger simulated tuning
-            simulateAlignmentTuning();
+            applyModeChrome();
+            scoreStillImage(selectedImageExternalUri.toString());
 
         } catch (Exception e) {
             Log.e(TAG, "Failed to copy chassis inspection photo", e);
@@ -498,7 +971,10 @@ public class InspectionFragment extends Fragment {
 
     private void toggleGhostOverlay() {
         isGhostEnabled = !isGhostEnabled;
-        if (isGhostEnabled && referenceProfile != null && !"dummy_placeholder".equals(referenceProfile.getImageUri())) {
+        boolean hasGhost = referenceProfile != null
+                && referenceProfile.getImageUri() != null
+                && !"dummy_placeholder".equals(referenceProfile.getImageUri());
+        if (isGhostEnabled && hasGhost) {
             binding.ivGhostOverlay.setVisibility(View.VISIBLE);
             binding.btnToggleGhost.setText("GHOST OFF");
             binding.tvGhostStatusIndicator.setText("GHOST OVERLAY ON (35%)");
@@ -509,43 +985,12 @@ public class InspectionFragment extends Fragment {
         }
     }
 
-    private void resetAlignmentState() {
-        binding.tvAlignmentState.setText("WAITING USER PHOTO...");
-        binding.tvAlignmentState.setBackgroundColor(ContextCompat.getColor(requireContext(), R.color.orange_warn));
-        binding.layoutCameraEnclosure.setBackgroundResource(R.drawable.align_border_red);
-        isAligned = false;
-    }
-
-    private void simulateAlignmentTuning() {
-        binding.tvAlignmentState.setText("ALIGNING...");
-        binding.tvAlignmentState.setBackgroundColor(ContextCompat.getColor(requireContext(), R.color.red_fail));
-        binding.layoutCameraEnclosure.setBackgroundResource(R.drawable.align_border_red);
-        isAligned = false;
-
-        alignmentSimulatorHandler.postDelayed(() -> {
-            if (isAdded() && binding != null) {
-                triggerAlignmentAchieved();
-            }
-        }, 1800); // Transitions to success in 1.8 seconds
-    }
-
-    private void triggerAlignmentAchieved() {
-        isAligned = true;
-        binding.tvAlignmentState.setText("ALIGNED (98%)");
-        binding.tvAlignmentState.setBackgroundColor(ContextCompat.getColor(requireContext(), R.color.green_pass));
-        binding.layoutCameraEnclosure.setBackgroundResource(R.drawable.align_border_green);
-        binding.tvOperatorTip.setText("Alignment matched reference gold standard! Ready.");
-        Toast.makeText(getContext(), "Position matched. Locked.", Toast.LENGTH_SHORT).show();
-    }
-
     private void analyzeAndNavigate() {
         if (selectedImageExternalUri == null) return;
 
         binding.btnCaptureInspect.setEnabled(false);
         Toast.makeText(getContext(), "Running local geometric verification...", Toast.LENGTH_SHORT).show();
-
-        // 1-second delay to simulate complex computer vision processing
-        alignmentSimulatorHandler.postDelayed(() -> navigateToResults(selectedImageExternalUri.toString()), 1000);
+        navigateToResults(selectedImageExternalUri.toString());
     }
 
     private void navigateToResults(String imageUri) {
@@ -560,9 +1005,29 @@ public class InspectionFragment extends Fragment {
     @Override
     public void onDestroyView() {
         super.onDestroyView();
-        if (alignmentSimulatorHandler != null) {
-            alignmentSimulatorHandler.removeCallbacksAndMessages(null);
+        if (mainHandler != null) {
+            mainHandler.removeCallbacksAndMessages(null);
         }
+        if (cameraProvider != null) {
+            cameraProvider.unbindAll();
+            cameraProvider = null;
+        }
+
+        // Order matters: the gate owns native OpenCV buffers the GC knows nothing about, and
+        // freeing them under a frame that is still being scored is a native crash rather than
+        // an exception. Drain the analysis thread first, then release.
+        AlignmentGate gate = alignmentGate;
+        alignmentGate = null;
+        if (analysisExecutor != null) {
+            analysisExecutor.shutdown();
+            try {
+                analysisExecutor.awaitTermination(1, java.util.concurrent.TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            analysisExecutor = null;
+        }
+        if (gate != null) gate.release();
         binding = null;
     }
 }
