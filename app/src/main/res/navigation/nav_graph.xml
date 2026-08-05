@@ -59,6 +59,14 @@
         <action
             android:id="@+id/action_inspection_to_results"
             app:destination="@id/navigation_results" />
+        <!-- Escape route for a part whose reference was skipped: the alignment gate has
+             nothing to compare against, so the only way forward is back to setup. Pops
+             the inspection screen so the operator can't return to a still-blocked gate. -->
+        <action
+            android:id="@+id/action_inspection_to_reference_setup"
+            app:destination="@id/navigation_reference_setup"
+            app:popUpTo="@id/navigation_inspection"
+            app:popUpToInclusive="true" />
     </fragment>
 
     <fragment

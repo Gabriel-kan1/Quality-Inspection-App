@@ -56,11 +56,16 @@ public class BarcodeScanFragment extends Fragment {
                 Bundle args = new Bundle();
                 args.putString("partId", partId);
                 
-                if (profile != null) {
-                    // Profile exists, go directly to Inspection Screen
+                // A placeholder profile means setup was skipped, so there's no image for the
+                // alignment gate to work against and inspection would open already blocked.
+                // Treat it the same as having no profile at all and ask for a reference.
+                boolean hasReference = profile != null
+                        && profile.getImageUri() != null
+                        && !"dummy_placeholder".equals(profile.getImageUri());
+
+                if (hasReference) {
                     Navigation.findNavController(requireView()).navigate(R.id.action_barcode_to_inspection, args);
                 } else {
-                    // No profile exists, go to Setup Screen to take/select a reference photo
                     Navigation.findNavController(requireView()).navigate(R.id.action_barcode_to_reference_setup, args);
                 }
             });
