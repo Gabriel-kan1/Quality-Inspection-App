@@ -101,62 +101,36 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="28dp"
-                android:text="PRE-CONFIGURED TESTING PROFILES"
+                android:text="PART PROFILES"
                 android:textColor="@color/gray_text_secondary"
                 android:textSize="11sp"
                 android:textStyle="bold"
                 android:letterSpacing="0.1" />
 
             <TextView
+                android:id="@+id/tv_profiles_subtitle"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="4dp"
-                android:text="Quick-select preset part templates for emulator testing:"
+                android:text="Loading saved profiles..."
                 android:textColor="@color/gray_text_secondary"
                 android:textSize="12sp" />
 
-            <!-- Selectable Part Preset Chips/Buttons -->
-            <LinearLayout
+            <!-- One row per part: reference thumbnail beside the identifier, built at runtime
+                 so the operator can recognise a part by its photo rather than its ID string. -->
+            <ScrollView
                 android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:layout_marginTop="12dp">
+                android:layout_height="0dp"
+                android:layout_weight="1"
+                android:layout_marginTop="12dp"
+                android:scrollbars="none">
 
-                <Button
-                    android:id="@+id/btn_preset_1"
-                    style="@style/Widget.Material3.Button.TonalButton"
+                <LinearLayout
+                    android:id="@+id/layout_profile_rows"
                     android:layout_width="match_parent"
-                    android:layout_height="54dp"
-                    android:text="CHASSIS-8821-B"
-                    android:textColor="@color/blue_primary"
-                    android:gravity="start|center_vertical"
-                    android:paddingStart="16dp"
-                    android:textStyle="bold"
-                    android:layout_marginBottom="8dp" />
-
-                <Button
-                    android:id="@+id/btn_preset_2"
-                    style="@style/Widget.Material3.Button.TonalButton"
-                    android:layout_width="match_parent"
-                    android:layout_height="54dp"
-                    android:text="PART-CHASSIS-A03"
-                    android:textColor="@color/blue_primary"
-                    android:gravity="start|center_vertical"
-                    android:paddingStart="16dp"
-                    android:textStyle="bold"
-                    android:layout_marginBottom="8dp" />
-
-                <Button
-                    android:id="@+id/btn_preset_3"
-                    style="@style/Widget.Material3.Button.TonalButton"
-                    android:layout_width="match_parent"
-                    android:layout_height="54dp"
-                    android:text="ENGINE-COV-X42"
-                    android:textColor="@color/blue_primary"
-                    android:gravity="start|center_vertical"
-                    android:paddingStart="16dp"
-                    android:textStyle="bold" />
-            </LinearLayout>
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical" />
+            </ScrollView>
 
         </LinearLayout>
     </com.google.android.material.card.MaterialCardView>
