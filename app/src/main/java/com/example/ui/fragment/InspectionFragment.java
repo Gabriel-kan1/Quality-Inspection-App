@@ -185,7 +185,7 @@ public class InspectionFragment extends Fragment {
         });
 
         binding.btnUsePresetInspection.setOnClickListener(v ->
-                loadSelectedAsset("chassis_hardware_preset.jpg"));
+                loadSelectedAsset("reference.jpg"));
 
         // Everything else waits on the reference: without one there is nothing to gate against.
         loadReferenceProfile();
@@ -554,10 +554,12 @@ public class InspectionFragment extends Fragment {
                     binding.tvOperatorTip.setText(
                             "Saved image shows the reference area (" + strength + "). Ready to analyze.");
                 } else {
+                    // The hint distinguishes the wrong area from the right area shot at the
+                    // wrong distance; a still that is merely too far is not "not the area".
                     setLight(TrafficLightView.State.RED, 0f,
-                            "NOT THE REFERENCE AREA — " + strength, result.debugLine());
+                            result.hint + " — " + strength, result.debugLine());
                     binding.tvOperatorTip.setText(
-                            "Saved image doesn't match the reference area (" + strength
+                            "Saved image isn't framed like the reference (" + strength
                                     + "). You can still analyze it, but detections may be unreliable.");
                 }
             });
