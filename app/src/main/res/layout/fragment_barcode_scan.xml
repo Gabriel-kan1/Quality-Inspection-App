@@ -189,6 +189,19 @@
                 android:textColor="@color/blue_dark_accent"
                 android:textStyle="bold" />
 
+            <!-- Lets an operator replace a reference photo that was already saved for this
+                 part, instead of being routed straight past setup into inspection. -->
+            <Button
+                android:id="@+id/btn_change_reference"
+                style="@style/Widget.Material3.Button.OutlinedButton"
+                android:layout_width="match_parent"
+                android:layout_height="52dp"
+                android:layout_marginTop="10dp"
+                android:text="CHOOSE A DIFFERENT REFERENCE IMAGE"
+                android:textColor="@color/blue_primary"
+                android:textStyle="bold"
+                app:strokeColor="@color/color_border" />
+
         </LinearLayout>
 
     </com.google.android.material.card.MaterialCardView>
