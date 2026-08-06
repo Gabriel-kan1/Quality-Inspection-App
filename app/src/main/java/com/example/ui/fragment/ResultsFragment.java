@@ -1,5 +1,7 @@
 package com.example.ui.fragment;
 
+import android.content.Context;
+import android.content.SharedPreferences;
 import android.graphics.Bitmap;
 import android.graphics.Color;
 import android.os.Bundle;
@@ -30,6 +32,7 @@ import com.example.ml.FeatureTypeRegistry;
 import com.example.ml.LearningCropStore;
 import com.example.ml.ReferenceLibrary;
 import com.example.ml.ReferenceLibraryProvider;
+import com.example.ml.ScaleCalibration;
 import com.example.ml.ThresholdTuner;
 
 import java.util.ArrayList;
@@ -42,6 +45,10 @@ import java.util.Random;
 import java.util.Set;
 
 public class ResultsFragment extends Fragment {
+
+    /** Remembers whether the edge preview is expanded, so the choice survives the next inspection. */
+    private static final String PREFS = "results_view_prefs";
+    private static final String KEY_CANNY_EXPANDED = "canny_edges_expanded";
 
     private FragmentResultsBinding binding;
     private String partId = "";
@@ -92,7 +99,31 @@ public class ResultsFragment extends Fragment {
 
         binding.btnSaveReport.setOnClickListener(v -> saveRecordAndProceed());
 
+        setUpCannyEdgesToggle();
+
         runFeatureVerificationPipeline();
+    }
+
+    /**
+     * The edge preview is a diagnostic view rather than something an inspector needs on
+     * every run, so it collapses away. The bitmap is still set on the (hidden) ImageView
+     * when the pipeline finishes — expanding just reveals it, no re-analysis.
+     */
+    private void setUpCannyEdgesToggle() {
+        SharedPreferences prefs = requireContext().getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        applyCannyEdgesExpanded(prefs.getBoolean(KEY_CANNY_EXPANDED, false));
+
+        binding.headerCannyEdges.setOnClickListener(v -> {
+            boolean expanded = binding.ivCannyEdges.getVisibility() != View.VISIBLE;
+            applyCannyEdgesExpanded(expanded);
+            prefs.edit().putBoolean(KEY_CANNY_EXPANDED, expanded).apply();
+        });
+    }
+
+    private void applyCannyEdgesExpanded(boolean expanded) {
+        binding.ivCannyEdges.setVisibility(expanded ? View.VISIBLE : View.GONE);
+        // Filled triangle pointing down when open, right when closed.
+        binding.tvCannyEdgesChevron.setText(expanded ? "▾" : "▸");
     }
 
     private void runFeatureVerificationPipeline() {
@@ -242,7 +273,66 @@ public class ResultsFragment extends Fragment {
 
         buildFeatureRows();
         buildLegend();
+        buildMeasurements();
         buildLearningStatus();
+    }
+
+    /**
+     * Reports physical sizes, or explains why there are none. A missing calibration marker
+     * must read as "not measured" rather than silently showing an empty section — an absent
+     * dimension is recoverable, a fabricated one is not.
+     */
+    private void buildMeasurements() {
+        LinearLayout container = binding.layoutMeasurementRows;
+        container.removeAllViews();
+
+        ScaleCalibration cal = analysisResult != null ? analysisResult.calibration : null;
+        if (cal == null) {
+            binding.tvCalibrationStatus.setText(String.format(Locale.US,
+                    "No calibration marker found — dimensions not measured.\n"
+                            + "Place a %.0f mm square marker flat beside the part, in frame.",
+                    ScaleCalibration.MARKER_SIZE_MM));
+            return;
+        }
+
+        int measured = 0;
+        for (HardwareFeatureExtractor.ExtractedFeature f : analysisResult.features) {
+            if (f.measurement == null) continue;
+            measured++;
+            LinearLayout row = new LinearLayout(requireContext());
+            row.setOrientation(LinearLayout.HORIZONTAL);
+            row.setPadding(0, dp(4), 0, dp(4));
+
+            TextView name = new TextView(requireContext());
+            name.setLayoutParams(new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+            name.setText(FeatureTypeRegistry.displayName(requireContext(), f.type));
+            name.setTextColor(ContextCompat.getColor(requireContext(), R.color.white));
+            name.setTextSize(13f);
+            row.addView(name);
+
+            TextView value = new TextView(requireContext());
+            value.setText(f.measurement.shortLabel(f.type));
+            value.setTypeface(android.graphics.Typeface.MONOSPACE);
+            value.setTextColor(ContextCompat.getColor(requireContext(), R.color.white));
+            value.setTextSize(13f);
+            row.addView(value);
+
+            container.addView(row);
+        }
+
+        binding.tvCalibrationStatus.setText(String.format(Locale.US,
+                "%d of %d detections measured.\n%s",
+                measured, analysisResult.features.size(), cal.describe()));
+
+        if (cal.squareness < 0.90) {
+            TextView warn = new TextView(requireContext());
+            warn.setText("Marker looks oblique — measurements assume a perpendicular shot, "
+                    + "so accuracy is reduced. Re-shoot square to the part.");
+            warn.setTextColor(ContextCompat.getColor(requireContext(), R.color.orange_warn));
+            warn.setTextSize(11.5f);
+            warn.setPadding(0, dp(8), 0, 0);
+            container.addView(warn);
+        }
     }
 
     /** Surfaces the state of the learning loop so it isn't an invisible black box. */
