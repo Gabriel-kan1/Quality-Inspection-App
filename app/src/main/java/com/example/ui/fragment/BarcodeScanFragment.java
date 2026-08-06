@@ -44,6 +44,18 @@ public class BarcodeScanFragment extends Fragment {
             }
             checkReferenceAndProceed(enteredPartId);
         });
+
+        // Go straight to setup so an already-configured part can be given a new reference photo.
+        binding.btnChangeReference.setOnClickListener(v -> {
+            String enteredPartId = binding.etPartId.getText().toString().trim();
+            if (enteredPartId.isEmpty()) {
+                Toast.makeText(getContext(), "Please enter a valid Part ID", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            Bundle args = new Bundle();
+            args.putString("partId", enteredPartId);
+            Navigation.findNavController(requireView()).navigate(R.id.action_barcode_to_reference_setup, args);
+        });
     }
 
     private void checkReferenceAndProceed(String partId) {
