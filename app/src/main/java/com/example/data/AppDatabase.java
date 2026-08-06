@@ -17,7 +17,7 @@ import com.example.data.entity.InspectionRecord;
 import com.example.data.entity.ReferenceProfile;
 
 @Database(entities = {InspectionRecord.class, FeatureResult.class, ReferenceProfile.class,
-        ClassificationEvent.class}, version = 4, exportSchema = false)
+        ClassificationEvent.class}, version = 5, exportSchema = false)
 public abstract class AppDatabase extends RoomDatabase {
     private static volatile AppDatabase INSTANCE;
 
@@ -49,13 +49,43 @@ public abstract class AppDatabase extends RoomDatabase {
         }
     };
 
+    /**
+     * Makes ReferenceProfile.partType unique, so saving a reference photo replaces the part's
+     * previous one instead of stacking another row beside it.
+     *
+     * Duplicates already exist in the wild and have to go before the index can be created.
+     * The survivor per part is chosen deliberately rather than by id: a real photo always
+     * beats a {@code dummy_placeholder}, and only then does the newest win. Picking purely by
+     * newest would keep a placeholder written by a later "skip setup" and preserve exactly the
+     * blocked state this migration exists to clear.
+     *
+     * Window functions would express this more directly but are unavailable on the SQLite
+     * shipped with API 24, so it is a correlated subquery.
+     */
+    static final Migration MIGRATION_4_5 = new Migration(4, 5) {
+        @Override
+        public void migrate(@NonNull SupportSQLiteDatabase db) {
+            db.execSQL("DELETE FROM ReferenceProfile WHERE id NOT IN ("
+                    + "  SELECT ("
+                    + "    SELECT p2.id FROM ReferenceProfile p2"
+                    + "    WHERE p2.partType = p1.partType"
+                    + "    ORDER BY CASE WHEN p2.imageUri = 'dummy_placeholder' THEN 1 ELSE 0 END,"
+                    + "             p2.createdAt DESC, p2.id DESC"
+                    + "    LIMIT 1"
+                    + "  ) FROM ReferenceProfile p1 GROUP BY p1.partType"
+                    + ")");
+            db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_ReferenceProfile_partType"
+                    + " ON ReferenceProfile (partType)");
+        }
+    };
+
     public static AppDatabase getInstance(final Context context) {
         if (INSTANCE == null) {
             synchronized (AppDatabase.class) {
                 if (INSTANCE == null) {
                     INSTANCE = Room.databaseBuilder(context.getApplicationContext(),
                                     AppDatabase.class, "shop_quality_inspection_db")
-                            .addMigrations(MIGRATION_3_4)
+                            .addMigrations(MIGRATION_3_4, MIGRATION_4_5)
                             // Retained as a backstop for the older unversioned upgrade paths
                             // that shipped before MIGRATION_3_4 existed. Any NEW schema change
                             // should add its own Migration rather than rely on this.
