@@ -39,14 +39,47 @@ import java.util.Locale;
  *                   whole 0.218  whole_light 0.198
  * </pre>
  *
+ * <h3>Why similarity alone does not settle shooting distance</h3>
+ *
+ * The encoder is partly scale tolerant, so "the right area photographed from twice as far
+ * away" still scores well: against {@code stud1.jpg} the mid-range {@code screws_two.jpg}
+ * reaches 0.717 and {@code screws_three.jpg} 0.676, both clearing the threshold despite
+ * framing the cluster at a fraction of the reference's size. Raising the threshold is not
+ * the fix — it takes genuine same-distance shots with it, and it cannot tell the operator
+ * which way to move.
+ *
+ * <p>What separates the two cases is a <em>scale probe</em>: re-score the frame's centre
+ * 50% crop against the reference. If zooming in improves the match, the frame was showing
+ * the area too small — the operator is too far away. The mirror image, scoring the frame
+ * against a centre crop of the <em>reference</em>, catches being too close. Measured over
+ * 252 labelled asset pairs (python/scale_probe_study.py):
+ *
+ * <pre>
+ *   crop-in gain      correctly framed  mean -0.070 (p90 +0.012)
+ *                     too far away      mean +0.156 (p10 +0.025)
+ *   crop-reference    correctly framed  mean -0.087 (p90 +0.008)
+ *   gain              too close         mean +0.218 (p10 +0.159)
+ * </pre>
+ *
+ * The populations barely overlap, so {@link #SCALE_GAIN_TOLERANCE} sits between them. At
+ * the current threshold this removes roughly two thirds of the wrong-distance false
+ * accepts (23 to 8 over that pair set) while rejecting none of the correctly framed
+ * shots — measured at every threshold from 0.60 to 0.80, the probe never cost a true
+ * accept. Two cues that sound more direct were tried first and both failed: median
+ * detected-blob diameter wandered by 3x across crops of one image (the contours are
+ * surface grain, not hardware), and the texture's spatial-frequency centroid flattened
+ * out at close range where sensor noise dominates the spectrum, and moved the wrong way
+ * entirely on {@code corner.jpg}.
+ *
  * <h3>What this costs</h3>
  *
  * An embedding says "right area" but not "off by 12% to the left", so there are no
  * directional pan or rotate hints — that geometry genuinely is not recoverable from these
- * images by any method tested. Framing is still gated, just indirectly: similarity falls
- * off as the operator backs away, which is why the extreme wide shot {@code screws_none}
- * (0.499) lands below threshold. What the operator gets instead is a match strength to
- * maximise, plus a steadiness check so the captured frame is not motion-blurred.
+ * images by any method tested. Distance is now reported ("move closer" / "back off"),
+ * bearing still is not. The probe costs one extra encoder pass, charged only on frames
+ * that already clear the threshold: below it the frame is rejected regardless, so the
+ * probe would not change the verdict. The too-close side is free — the cropped reference
+ * is encoded once when the gate is built.
  *
  * <p>Instances are not thread-safe; {@link #evaluate} is meant to be called from a single
  * camera-analysis thread.
@@ -63,17 +96,40 @@ public final class AlignmentGate {
     /**
      * Cosine similarity a frame must reach to count as the reference area.
      *
-     * <p>0.57 sits in the gap measured over the bundled assets: it clears every same-area
-     * shot that is close enough to inspect (lowest is screws_two at 0.578) and rejects
-     * every different-area shot (highest is zero.jpg at 0.510). The margin is ~0.07, so
-     * expect to re-fit this against your own reference photos — the debug readout on the
-     * inspection screen shows the live figure.
+     * <p>Fitted to the gap measured over the bundled assets. With a close reference such as
+     * {@code stud1.jpg}, same-area shots at the same distance sit at 0.81 and above while
+     * different areas top out around 0.49; the widest reference set pushes the worst
+     * different-area confusion to 0.72 ({@code head1.jpg} against {@code one.jpg}, two
+     * extreme close-ups of near-identical plain metal), which no threshold in this range
+     * separates. Expect to re-fit against your own reference photos — the debug readout on
+     * the inspection screen shows the live figure. Note that shooting distance is no longer
+     * this threshold's job; see {@link #SCALE_GAIN_TOLERANCE}.
      */
-    private static float MATCH_THRESHOLD = 0.57f;
+    private static float MATCH_THRESHOLD = 0.7f;
 
     /** Below this fraction of the threshold the frame is treated as showing nothing
      *  relevant at all, which earns a blunter hint than "keep adjusting". */
-    private static float NO_MATCH_FRACTION = 0.6f;
+    private static float NO_MATCH_FRACTION = 0.7f;
+
+    /**
+     * How much a scale probe may improve the match before the frame counts as being shot
+     * from the wrong distance rather than merely framed loosely.
+     *
+     * <p>0.10 sits above the p90 of correctly framed frames (+0.012) and below the p10 of
+     * too-far ones (+0.025) with room to spare, deliberately biased towards letting a
+     * borderline frame through: a gain this large means the reference area is visibly
+     * smaller (or larger) than it was when the reference was saved, not that framing is
+     * a few percent off.
+     */
+    private static float SCALE_GAIN_TOLERANCE = 0.10f;
+
+    /**
+     * Fraction of each side kept by the probe crop. 0.5 quarters the visible area, which
+     * is a big enough scale step to move the similarity decisively when the distance is
+     * wrong; smaller probes clipped the hardware out of frame on correctly framed shots
+     * and larger ones (0.75) blurred the two populations back together.
+     */
+    private static final float PROBE_CROP = 0.5f;
 
     /**
      * Mean per-pixel luminance change between consecutive thumbnails, above which the phone
@@ -89,7 +145,7 @@ public final class AlignmentGate {
     // ─────────────────────────────────────────────────────────────
 
     /** Why a frame was rejected, in the order the operator should act on it. */
-    public enum Fault { NONE, NO_MATCH, WEAK_MATCH, MOVING }
+    public enum Fault { NONE, NO_MATCH, WEAK_MATCH, TOO_FAR, TOO_CLOSE, MOVING }
 
     /** One frame's verdict. Immutable so it can be handed straight to the UI thread. */
     public static final class Reading {
@@ -100,39 +156,77 @@ public final class AlignmentGate {
         public final String hint;
         /** Cosine similarity to the reference, -1..1. NaN when the frame could not be encoded. */
         public final float similarity;
+        /**
+         * How much scoring the frame's centre crop instead improved the match. Positive
+         * means the reference area appears too small — the phone is too far away. NaN when
+         * the probe did not run, which is every frame that fell short of the threshold.
+         */
+        public final float farGain;
+        /** The mirror measure against a cropped reference; positive means too close. */
+        public final float closeGain;
         /** Mean luminance change since the previous frame, 0-255. NaN on the first frame. */
         public final float motion;
 
-        Reading(boolean inTolerance, Fault fault, String hint, float similarity, float motion) {
+        Reading(boolean inTolerance, Fault fault, String hint, float similarity,
+                float farGain, float closeGain, float motion) {
             this.inTolerance = inTolerance;
             this.fault = fault;
             this.hint = hint;
             this.similarity = similarity;
+            this.farGain = farGain;
+            this.closeGain = closeGain;
             this.motion = motion;
+        }
+
+        /**
+         * Similarity after the distance penalty, which is what the operator is shown.
+         *
+         * <p>Raw cosine overstates a wrong-distance frame — the same hardware at half the
+         * size still reads as broadly the right area — so a frame that only scores well
+         * because the probe found the content at another scale is docked by exactly that
+         * much. Correctly framed frames have negative gains and are untouched.
+         */
+        public float adjustedSimilarity() {
+            if (Float.isNaN(similarity)) return Float.NaN;
+            float penalty = 0f;
+            if (!Float.isNaN(farGain)) penalty = Math.max(penalty, farGain);
+            if (!Float.isNaN(closeGain)) penalty = Math.max(penalty, closeGain);
+            return similarity - penalty;
         }
 
         /** Match strength as a 0-100 figure for display. */
         public int matchPercent() {
-            if (Float.isNaN(similarity)) return 0;
-            return Math.max(0, Math.min(100, Math.round(similarity * 100f)));
+            float value = adjustedSimilarity();
+            if (Float.isNaN(value)) return 0;
+            return Math.max(0, Math.min(100, Math.round(value * 100f)));
         }
 
         /** Compact numeric dump for the debug readout and logcat. */
         public String debugLine() {
-            return String.format(Locale.US, "sim %.3f (need %.2f) · motion %.1f (max %.1f)",
-                    similarity, MATCH_THRESHOLD, motion, MAX_MOTION);
+            String scale = "";
+            if (!Float.isNaN(farGain) || !Float.isNaN(closeGain)) {
+                scale = String.format(Locale.US, " · zoom %+.3f/%+.3f (max %.2f)",
+                        farGain, closeGain, SCALE_GAIN_TOLERANCE);
+            }
+            return String.format(Locale.US, "sim %.3f (need %.2f) · motion %.1f (max %.1f)%s",
+                    similarity, MATCH_THRESHOLD, motion, MAX_MOTION, scale);
         }
     }
 
     private final FeatureEmbedder embedder;
     private final float[] referenceEmbedding;
+    /** The reference's centre crop, encoded once so the too-close test is free per frame.
+     *  Null when it could not be encoded, which disables that test rather than the gate. */
+    private final float[] referenceZoomEmbedding;
 
     /** Luminance thumbnail of the previous frame, for the motion estimate. */
     private int[] previousThumb;
 
-    private AlignmentGate(FeatureEmbedder embedder, float[] referenceEmbedding) {
+    private AlignmentGate(FeatureEmbedder embedder, float[] referenceEmbedding,
+                          float[] referenceZoomEmbedding) {
         this.embedder = embedder;
         this.referenceEmbedding = referenceEmbedding;
+        this.referenceZoomEmbedding = referenceZoomEmbedding;
     }
 
     /**
@@ -154,8 +248,22 @@ public final class AlignmentGate {
             return null;
         }
         normalise(vector);
+
+        float[] zoomVector = null;
+        Bitmap zoomed = centreCrop(reference, PROBE_CROP);
+        if (zoomed != null) {
+            zoomVector = embedder.embed(zoomed);
+            if (zoomed != reference) zoomed.recycle();
+            if (zoomVector != null) {
+                normalise(zoomVector);
+            } else {
+                Log.w(TAG, "Reference centre crop could not be encoded — "
+                        + "frames that are too close will not be caught.");
+            }
+        }
+
         Log.d(TAG, "Reference encoded, " + vector.length + " dims.");
-        return new AlignmentGate(embedder, vector);
+        return new AlignmentGate(embedder, vector, zoomVector);
     }
 
     /**
@@ -166,7 +274,8 @@ public final class AlignmentGate {
      */
     public Reading evaluate(Bitmap frame) {
         if (frame == null) {
-            return new Reading(false, Fault.NO_MATCH, "NO FRAME", Float.NaN, Float.NaN);
+            return new Reading(false, Fault.NO_MATCH, "NO FRAME",
+                    Float.NaN, Float.NaN, Float.NaN, Float.NaN);
         }
 
         float motion = measureMotion(frame);
@@ -174,35 +283,104 @@ public final class AlignmentGate {
         float[] vector = embedder.embed(frame);
         if (vector == null) {
             return new Reading(false, Fault.NO_MATCH, "NO MATCH — POINT AT THE PART",
-                    Float.NaN, motion);
+                    Float.NaN, Float.NaN, Float.NaN, motion);
         }
         normalise(vector);
         float similarity = dot(vector, referenceEmbedding);
 
-        return classify(similarity, motion);
+        // A frame short of the threshold is rejected whatever the probes say, so skip them
+        // and spare the encoder pass — that is most frames while the operator is still
+        // hunting for the area.
+        if (similarity < MATCH_THRESHOLD) {
+            return classify(similarity, Float.NaN, Float.NaN, motion);
+        }
+
+        float closeGain = Float.NaN;
+        if (referenceZoomEmbedding != null) {
+            closeGain = dot(vector, referenceZoomEmbedding) - similarity;
+        }
+
+        // Only worth paying for the frame's crop when it is not already failing the cheap
+        // test — the two faults are reported one at a time anyway.
+        float farGain = Float.NaN;
+        if (!(closeGain > SCALE_GAIN_TOLERANCE)) {
+            farGain = measureFarGain(frame, similarity);
+        }
+
+        return classify(similarity, farGain, closeGain, motion);
     }
 
-    /** Applies the thresholds and picks the single most useful thing to tell the operator. */
+    /**
+     * Re-scores the frame's centre crop against the reference. A positive result means the
+     * match improves when the frame is zoomed in, i.e. the area is being shot too small.
+     * Returns NaN when the crop could not be encoded, which suppresses the test rather than
+     * failing the frame.
+     */
+    private float measureFarGain(Bitmap frame, float baseSimilarity) {
+        Bitmap probe = centreCrop(frame, PROBE_CROP);
+        if (probe == null) return Float.NaN;
+        try {
+            float[] vector = embedder.embed(probe);
+            if (vector == null) return Float.NaN;
+            normalise(vector);
+            return dot(vector, referenceEmbedding) - baseSimilarity;
+        } finally {
+            if (probe != frame) probe.recycle();
+        }
+    }
+
+    /** Centre crop keeping {@code fraction} of each side, or null if the source is too small. */
+    private static Bitmap centreCrop(Bitmap src, float fraction) {
+        if (src == null) return null;
+        int w = Math.round(src.getWidth() * fraction);
+        int h = Math.round(src.getHeight() * fraction);
+        if (w < 8 || h < 8) return null;
+        return Bitmap.createBitmap(src, (src.getWidth() - w) / 2, (src.getHeight() - h) / 2, w, h);
+    }
+
+    /** Convenience for callers with no scale probe, such as the threshold tests. */
     static Reading classify(float similarity, float motion) {
+        return classify(similarity, Float.NaN, Float.NaN, motion);
+    }
+
+    /**
+     * Applies the thresholds and picks the single most useful thing to tell the operator.
+     *
+     * <p>Distance faults outrank motion: a frame held at the wrong distance is steady-wrong,
+     * and telling the operator to hold still would strand them there. NaN gains mean the
+     * probe did not run and simply skip their test.
+     */
+    static Reading classify(float similarity, float farGain, float closeGain, float motion) {
         boolean matches = similarity >= MATCH_THRESHOLD;
         // The first frame has no predecessor to compare against, so it cannot be judged
         // moving; the hold needs several frames anyway, so nothing is let through early.
         boolean steady = Float.isNaN(motion) || motion <= MAX_MOTION;
 
-        if (matches && steady) {
-            return new Reading(true, Fault.NONE, "HOLD STILL", similarity, motion);
+        if (!matches) {
+            if (similarity < MATCH_THRESHOLD * NO_MATCH_FRACTION) {
+                return new Reading(false, Fault.NO_MATCH, "NO MATCH — POINT AT THE PART",
+                        similarity, farGain, closeGain, motion);
+            }
+            // Close but short: the operator is looking at roughly the right thing, and
+            // moving closer or squaring up is what raises the score.
+            return new Reading(false, Fault.WEAK_MATCH, "CLOSE — FRAME IT LIKE THE GHOST",
+                    similarity, farGain, closeGain, motion);
         }
-        if (matches) {
-            return new Reading(false, Fault.MOVING, "STEADY THE PHONE", similarity, motion);
+
+        if (closeGain > SCALE_GAIN_TOLERANCE) {
+            return new Reading(false, Fault.TOO_CLOSE, "TOO CLOSE — BACK OFF",
+                    similarity, farGain, closeGain, motion);
         }
-        if (similarity < MATCH_THRESHOLD * NO_MATCH_FRACTION) {
-            return new Reading(false, Fault.NO_MATCH, "NO MATCH — POINT AT THE PART",
-                    similarity, motion);
+        if (farGain > SCALE_GAIN_TOLERANCE) {
+            return new Reading(false, Fault.TOO_FAR, "TOO FAR — MOVE CLOSER",
+                    similarity, farGain, closeGain, motion);
         }
-        // Close but short: the operator is looking at roughly the right thing, and moving
-        // closer or squaring up is what raises the score.
-        return new Reading(false, Fault.WEAK_MATCH, "CLOSE — FRAME IT LIKE THE GHOST",
-                similarity, motion);
+        if (!steady) {
+            return new Reading(false, Fault.MOVING, "STEADY THE PHONE",
+                    similarity, farGain, closeGain, motion);
+        }
+        return new Reading(true, Fault.NONE, "HOLD STILL",
+                similarity, farGain, closeGain, motion);
     }
 
     /**
