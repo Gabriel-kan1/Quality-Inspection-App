@@ -351,6 +351,17 @@ public class ReferenceSetupFragment extends Fragment {
     private static final int SPINNER_BG = Color.WHITE;
     private static final int SPINNER_TEXT = Color.rgb(60, 60, 66);
 
+    /**
+     * The type to open a row on: the nearest prototype regardless of score, or null when there
+     * was nothing to compare against (no encoder, or an empty library on a part's first setup).
+     * {@code "none"} is the sentinel {@code closestMatch} carries in that case.
+     */
+    private static String closestUsable(ReferenceLibrary.Classification c) {
+        if (c == null) return null;
+        if (c.closestMatch != null && !"none".equals(c.closestMatch)) return c.closestMatch;
+        return ReferenceLibrary.UNKNOWN.equals(c.type) ? null : c.type;
+    }
+
     /** Rebuilds every row's dropdown after the type catalog changes. Set while the dialog is up. */
     private Runnable pendingRebuildOptions = null;
 
@@ -383,7 +394,7 @@ public class ReferenceSetupFragment extends Fragment {
         root.setPadding(dp(20), dp(28), dp(20), dp(20));
 
         android.widget.TextView title = new android.widget.TextView(getContext());
-        title.setText("CLASSIFY EVERY DETECTED FEATURE");
+        title.setText("REVIEW DETECTED FEATURES");
         title.setTextColor(Color.rgb(74, 222, 128));
         title.setTextSize(16f);
         title.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
@@ -428,7 +439,8 @@ public class ReferenceSetupFragment extends Fragment {
                     ? "SAVE REFERENCE (" + done + " classified)"
                     : "CLASSIFY ALL TO CONTINUE (" + done + "/" + chosen.length + ")");
             sub.setText(done == chosen.length
-                    ? "Every detection has a type. These define the expected features for this part."
+                    ? "Pre-filled with the closest match for each crop — correct any that are"
+                            + " wrong. These define the expected features for this part."
                     : "Give every crop a type. Anything left unnamed is excluded from the counts,"
                             + " the alignment landmarks and the positional report.");
         };
@@ -484,10 +496,15 @@ public class ReferenceSetupFragment extends Fragment {
 
             spinners.add(spinner);
             optionKeysPerRow.add(new ArrayList<>());
-            // Pre-select only an accepted classification. A rejected guess is exactly the case
-            // a human is being asked about, so pre-filling it would launder a low-confidence
-            // score into a confirmed label.
-            chosen[index] = (c != null && !ReferenceLibrary.UNKNOWN.equals(c.type)) ? c.type : null;
+            // Default every row to the nearest prototype, whether or not the score cleared the
+            // threshold, so the operator reviews and corrects rather than naming each crop from
+            // scratch. closestMatch rather than type: type is "unknown" for anything rejected,
+            // which is most of a busy reference and would leave the operator doing all the work.
+            //
+            // The cost is that a low-confidence guess is saved as a confirmed label unless
+            // somebody notices — the per-row score is shown above each dropdown for exactly
+            // that reason. Only a crop the classifier could not rank at all stays unset.
+            chosen[index] = closestUsable(c);
         }
 
         // Adapter population is a separate pass so creating a type can rebuild every row's
@@ -508,6 +525,11 @@ public class ReferenceSetupFragment extends Fragment {
                 }
                 keys.add(NEW_TYPE_KEY);
                 labels.add("+ Create new type...");
+
+                // A preset the catalog does not offer — a prototype whose type was never
+                // registered — would show as "choose a type" while still counting as answered,
+                // enabling save on a row nobody actually set. Drop it back to unset instead.
+                if (chosen[i] != null && !keys.contains(chosen[i])) chosen[i] = null;
 
                 android.widget.Spinner sp = spinners.get(i);
                 android.widget.ArrayAdapter<String> adapter = new android.widget.ArrayAdapter<String>(

@@ -36,6 +36,7 @@ import com.example.ml.FeatureLocalisation;
 import com.example.ml.FeatureTypeRegistry;
 import com.example.ml.LearningCropStore;
 import com.example.ml.ReferenceLibrary;
+import com.example.report.AdvisoryNotes;
 import com.example.ml.ReferenceLibraryProvider;
 import com.example.ml.ScaleCalibration;
 import com.example.ml.ThresholdTuner;
@@ -453,6 +454,7 @@ public class ResultsFragment extends Fragment {
 
         binding.chassisOverlayView.setExpectedSlots(missingSlotMarkers());
         buildFeatureRows();
+        buildResultWarnings();
         buildLegend();
         buildLocalisation();
         buildMeasurements();
@@ -1343,17 +1345,128 @@ public class ResultsFragment extends Fragment {
         return ordered;
     }
 
-    /** Builds one summary-table row per feature type in {@link #orderedTypes}. */
+    /**
+     * Builds the quantitative table: one row per <em>critical</em> feature type.
+     *
+     * Advisory and ignored types are deliberately absent, matching what the filed report does.
+     * A scratch count sitting in an expected-vs-detected table beside a bolt count invites
+     * reading it as a defect tally, which is the confusion the severity scale exists to
+     * remove — advisory findings get trended in the warning notes below instead, and ignored
+     * ones are background the operator has already declared uninteresting. "unknown" is
+     * unclassified noise and was never a finding either.
+     */
     private void buildFeatureRows() {
         LinearLayout container = binding.layoutFeatureRows;
         container.removeAllViews();
         boolean first = true;
         for (String type : orderedTypes) {
+            if (!isCriticalType(type)) continue;
             if (!first) container.addView(divider());
             first = false;
             int expected = count(expectedCounts, type);
             int detected = count(detectedCounts, type);
             container.addView(featureRow(type, expected, detected));
+        }
+        if (first) {
+            TextView empty = new TextView(requireContext());
+            empty.setText("No critical feature types in this part's reference — nothing to"
+                    + " compare. Re-grade a type as critical during reference setup.");
+            empty.setTextColor(ContextCompat.getColor(requireContext(), R.color.gray_text_secondary));
+            empty.setTextSize(12f);
+            container.addView(empty);
+        }
+    }
+
+    /** True for a classified type the operator graded critical. Never true for "unknown". */
+    private boolean isCriticalType(String type) {
+        return type != null
+                && !ReferenceLibrary.UNKNOWN.equals(type)
+                && FeatureTypeRegistry.isCritical(requireContext(), type);
+    }
+
+    /**
+     * Trends every advisory type against this part's own history and shows the ones worth
+     * mentioning, matching the filed report.
+     *
+     * The history query touches the database, so it runs off the UI thread and the card is
+     * populated when it returns. An inspection with no advisory findings hides the card
+     * entirely — an empty "warnings" heading reads as a clean bill of health, which is not
+     * the same as having nothing to trend.
+     */
+    private void buildResultWarnings() {
+        binding.layoutResultWarningRows.removeAllViews();
+        binding.cardResultWarnings.setVisibility(View.GONE);
+
+        final List<String> advisoryTypes = new ArrayList<>();
+        for (String type : orderedTypes) {
+            if (ReferenceLibrary.UNKNOWN.equals(type)) continue;
+            if (FeatureTypeRegistry.severityOf(requireContext(), type)
+                    == FeatureTypeRegistry.Severity.ADVISORY) {
+                advisoryTypes.add(type);
+            }
+        }
+        if (advisoryTypes.isEmpty()) return;
+
+        final android.content.Context context = requireContext().getApplicationContext();
+        final Map<String, Integer> detectedSnapshot = new LinkedHashMap<>(detectedCounts);
+        final Map<String, String> displayNames = new LinkedHashMap<>();
+        for (String type : advisoryTypes) {
+            displayNames.put(type, FeatureTypeRegistry.displayName(requireContext(), type));
+        }
+
+        new Thread(() -> {
+            AppDatabase db = AppDatabase.getInstance(context);
+            List<AdvisoryNotes.Note> notes = new ArrayList<>();
+            for (String type : advisoryTypes) {
+                String name = displayNames.get(type);
+                // Keyed by display name because that is what FeatureResult rows store.
+                List<Integer> history = db.inspectionDao().getHistoricalDetectedCounts(
+                        partId, name, -1L, AdvisoryNotes.HISTORY_WINDOW);
+                notes.add(AdvisoryNotes.forType(name, count(detectedSnapshot, type), history));
+            }
+            requireActivity().runOnUiThread(() -> {
+                if (!isAdded() || binding == null) return;
+                renderResultWarnings(notes);
+            });
+        }).start();
+    }
+
+    private void renderResultWarnings(List<AdvisoryNotes.Note> notes) {
+        binding.layoutResultWarningRows.removeAllViews();
+        if (notes.isEmpty()) {
+            binding.cardResultWarnings.setVisibility(View.GONE);
+            return;
+        }
+        binding.cardResultWarnings.setVisibility(View.VISIBLE);
+
+        List<AdvisoryNotes.Note> ordered = new ArrayList<>(notes);
+        java.util.Collections.sort(ordered, (a, b) -> a.level.ordinal() - b.level.ordinal());
+        for (AdvisoryNotes.Note note : ordered) {
+            LinearLayout row = new LinearLayout(requireContext());
+            row.setOrientation(LinearLayout.HORIZONTAL);
+            row.setPadding(0, dp(5), 0, dp(5));
+
+            View bar = new View(requireContext());
+            LinearLayout.LayoutParams barLp = new LinearLayout.LayoutParams(dp(3),
+                    LinearLayout.LayoutParams.MATCH_PARENT);
+            barLp.rightMargin = dp(8);
+            bar.setLayoutParams(barLp);
+            bar.setBackgroundColor(ContextCompat.getColor(requireContext(),
+                    note.level == AdvisoryNotes.Level.ELEVATED
+                            ? R.color.amber_advisory : R.color.gray_text_secondary));
+            row.addView(bar);
+
+            TextView tv = new TextView(requireContext());
+            tv.setLayoutParams(new LinearLayout.LayoutParams(0,
+                    LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+            tv.setText(note.text);
+            tv.setTextSize(12f);
+            tv.setTextColor(ContextCompat.getColor(requireContext(),
+                    note.level == AdvisoryNotes.Level.ELEVATED
+                            ? R.color.white : R.color.gray_text_secondary));
+            row.addView(tv);
+
+            binding.layoutResultWarningRows.addView(row);
         }
     }
 

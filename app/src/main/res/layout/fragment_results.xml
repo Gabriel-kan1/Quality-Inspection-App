@@ -268,9 +268,54 @@
 
                 </LinearLayout>
 
-                <!-- Feature rows (one per detected/expected feature type, built at runtime) -->
+                <!-- Feature rows (one per critical feature type, built at runtime) -->
                 <LinearLayout
                     android:id="@+id/layout_feature_rows"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical" />
+
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
+        <!-- Warning notes: advisory types, trended against this part's history rather than
+             counted. Hidden when the inspection produced no advisory findings. -->
+        <com.google.android.material.card.MaterialCardView
+            android:id="@+id/card_result_warnings"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="24dp"
+            android:visibility="gone"
+            app:cardBackgroundColor="@color/surface_card"
+            app:cardCornerRadius="16dp"
+            app:strokeColor="@color/gray_text_secondary"
+            app:strokeWidth="1dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="16dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="WARNING NOTES"
+                    android:textColor="@color/amber_advisory"
+                    android:textSize="12sp"
+                    android:textStyle="bold"
+                    android:layout_marginBottom="4dp" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Non-critical findings. Trended against this part's history; they do not affect the verdict."
+                    android:textColor="@color/gray_text_secondary"
+                    android:textSize="11sp"
+                    android:layout_marginBottom="10dp" />
+
+                <LinearLayout
+                    android:id="@+id/layout_result_warning_rows"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:orientation="vertical" />
