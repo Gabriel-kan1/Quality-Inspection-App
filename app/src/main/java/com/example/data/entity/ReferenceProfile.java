@@ -26,6 +26,11 @@ public class ReferenceProfile {
      * call sites, each repeating both the sentinel string and the null guard around it. A
      * sixth that forgot either half would silently treat the placeholder as a photo and try
      * to decode it. Prefer {@link #hasRealImage()} over comparing against this directly.
+     *
+     * <p><b>Read-only now.</b> Nothing writes a placeholder since the "skip setup" button was
+     * removed — a part is either given a labelled reference or has no profile row at all. The
+     * sentinel stays because rows written by earlier builds are still on devices, and
+     * {@link #hasRealImage()} is what keeps them from being decoded as photographs.
      */
     public static final String PLACEHOLDER_URI = "dummy_placeholder";
 

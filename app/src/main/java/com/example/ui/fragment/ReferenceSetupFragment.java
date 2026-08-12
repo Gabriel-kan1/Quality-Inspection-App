@@ -27,8 +27,12 @@ import com.example.ui.util.AssetBitmaps;
 import com.example.databinding.FragmentReferenceSetupBinding;
 import com.example.ml.HardwareFeatureExtractor;
 import com.example.ml.FeatureEmbedder;
+import com.example.ml.FeatureLayout;
+import com.example.ml.FeatureTypeRegistry;
+import com.example.ml.LayoutMatcher;
 import com.example.ml.ReferenceLibrary;
 import com.example.ml.ReferenceLibraryProvider;
+import com.example.ml.ThresholdTuner;
 
 import java.io.File;
 import java.io.FileOutputStream;
@@ -45,6 +49,30 @@ public class ReferenceSetupFragment extends Fragment {
     private FragmentReferenceSetupBinding binding;
     private String partId = "";
     private Uri selectedImageExternalUri = null;
+    /**
+     * Guards against a slow analysis of a discarded image overwriting a newer one's results.
+     * Incremented every time a reference is chosen; a finishing pass only publishes if its
+     * token still matches.
+     */
+    private int analysisToken = 0;
+
+    /** Last analysed reference: its detections, and one crop per detection for labelling. */
+    private HardwareFeatureExtractor.AnalysisResult pendingResult = null;
+    /**
+     * Crops kept alive for the labelling dialog, keyed by the extractor's 1-based box id.
+     * Keyed rather than a list because a detection whose crop failed to decode still produces
+     * a feature, and a plain append would silently shift every later thumbnail by one.
+     */
+    private final java.util.Map<Integer, Bitmap> pendingCrops = new java.util.LinkedHashMap<>();
+
+    /**
+     * Longest side kept for a retained crop. Large enough that {@link FeatureEmbedder} sees
+     * essentially what it would have seen from the full-size crop (it resizes to 224 itself),
+     * small enough that a few dozen of them do not put tens of megabytes into native memory —
+     * where, on Android 8+, a leak grows the process until the kernel kills it rather than
+     * raising OutOfMemoryError.
+     */
+    private static final int CROP_KEEP_PX = 256;
 
     private final ActivityResultLauncher<String> selectImageLauncher =
             registerForActivityResult(new ActivityResultContracts.GetContent(), uri -> {
@@ -80,54 +108,272 @@ public class ReferenceSetupFragment extends Fragment {
         // Click on the upload zone to pick an image
         binding.layoutUploadZone.setOnClickListener(v -> launchImageChooser());
 
+        // Saving a reference goes through labelling: an unclassified detection contributes
+        // nothing to the counts, the landmarks or the positional report, so a reference saved
+        // without this step silently defines much less than it appears to.
         binding.btnCaptureReference.setOnClickListener(v -> {
             if (selectedImageExternalUri == null) {
                 launchImageChooser();
+            } else if (pendingResult == null) {
+                Toast.makeText(getContext(), "Still analysing this image — one moment.",
+                        Toast.LENGTH_SHORT).show();
             } else {
-                saveReferenceToDb(selectedImageExternalUri.toString());
+                showClassifyAllDialog(this::proceedToInspection);
             }
         });
-
-        binding.btnSkip.setOnClickListener(v -> skipSetupReference());
 
         binding.btnUsePresetReference.setOnClickListener(v -> {
             loadSelectedAsset("chassis_hardware_preset.jpg");
         });
 
+        // Same flow as SAVE REFERENCE — labelling and library building were always one act,
+        // and having them on two buttons let an operator save a reference whose crops had
+        // never been labelled at all.
         binding.btnBuildLibrary.setOnClickListener(v -> {
             if (selectedImageExternalUri == null) {
                 Toast.makeText(getContext(), "Choose or load a reference image first.", Toast.LENGTH_SHORT).show();
                 launchImageChooser();
+            } else if (pendingResult == null) {
+                Toast.makeText(getContext(), "Still analysing this image — one moment.",
+                        Toast.LENGTH_SHORT).show();
             } else {
-                startBuildLibrary(selectedImageExternalUri.toString());
+                showClassifyAllDialog(this::proceedToInspection);
             }
         });
     }
 
-    // ── Few-shot library builder ────────────────────────────────────────
 
-    private static final String[] LABEL_OPTIONS =
-            {"skip", "bolt_head", "hole", "rivet_head", "screw", "stud"};
+    // ── Reference preview: the same pass an inspection runs ──────────────
 
-    /** Extracts feature crops from the selected reference image, then shows the labelling dialog. */
-    private void startBuildLibrary(String uriString) {
-        Toast.makeText(getContext(), "Detecting features in reference image...", Toast.LENGTH_SHORT).show();
+    /**
+     * Detects and classifies the chosen reference exactly as an inspection would, then draws
+     * the result on the same overlay the results screen uses.
+     *
+     * A reference photo is not a picture, it is the definition of what "correct" means for
+     * this part: its detections become the expected counts and the localisation layout. Until
+     * now the operator chose one blind and only discovered what it contained by running an
+     * inspection against it — which is how a reference yielding three usable features instead
+     * of five went unnoticed.
+     *
+     * Deliberately the same call, library and tuned thresholds as
+     * {@code ResultsFragment.runFeatureVerificationPipeline}. A preview classified by a
+     * different configuration than the real pass would be worse than none.
+     */
+    private void analyseReference(String uriString) {
+        final int token = ++analysisToken;
+        final android.content.Context context = requireContext().getApplicationContext();
+
+        binding.cardReferenceAnalysis.setVisibility(View.VISIBLE);
+        binding.tvReferenceAnalysisStatus.setText("Analysing reference image...");
+        binding.layoutReferenceTypeRows.removeAllViews();
+        binding.tvReferenceLocalisationReadiness.setText("");
+
         new Thread(() -> {
-            List<HardwareFeatureExtractor.CropRegion> crops =
-                    HardwareFeatureExtractor.extractCrops(requireContext(), uriString);
+            ReferenceLibrary library = ReferenceLibraryProvider.effectiveFor(context, partId);
+            if (library == null) library = new ReferenceLibrary();
+            ThresholdTuner.applyTo(context, partId, library);
+
+            // The sink keeps a scaled copy of every crop instead of writing one: nothing here
+            // belongs in the learning store (these are not inspections the operator filed), but
+            // the labelling step needs the pixels, and the extractor frees each crop as soon as
+            // this returns.
+            final java.util.Map<Integer, Bitmap> crops = new java.util.LinkedHashMap<>();
+            HardwareFeatureExtractor.AnalysisResult result =
+                    HardwareFeatureExtractor.extractFeatures(context, uriString, library,
+                            (crop, index) -> {
+                                Bitmap kept = scaleForKeeping(crop);
+                                if (kept != null) crops.put(index, kept);
+                                return null;
+                            });
+            if (result.processedBitmap != null) result.processedBitmap.recycle();
+
             requireActivity().runOnUiThread(() -> {
-                if (!isAdded() || binding == null) return;
-                if (crops.isEmpty()) {
-                    Toast.makeText(getContext(), "No features detected in this image.", Toast.LENGTH_LONG).show();
-                } else {
-                    showLabelDialog(crops);
+                if (!isAdded() || binding == null || token != analysisToken) {
+                    for (Bitmap b : crops.values()) b.recycle();
+                    return;
                 }
+                releasePendingCrops();
+                pendingResult = result;
+                pendingCrops.putAll(crops);
+                showReferenceAnalysis(uriString, result);
             });
         }).start();
     }
 
-    /** Fullscreen dialog: one row per crop (thumbnail + type dropdown) + a save button. */
-    private void showLabelDialog(List<HardwareFeatureExtractor.CropRegion> crops) {
+    /** Aspect-preserving copy bounded to {@link #CROP_KEEP_PX}, or the original if already small. */
+    private static Bitmap scaleForKeeping(Bitmap crop) {
+        if (crop == null || crop.isRecycled()) return null;
+        int w = crop.getWidth(), h = crop.getHeight();
+        if (w <= 0 || h <= 0) return null;
+        int longest = Math.max(w, h);
+        if (longest <= CROP_KEEP_PX) return crop.copy(Bitmap.Config.ARGB_8888, false);
+        float scale = (float) CROP_KEEP_PX / longest;
+        return Bitmap.createScaledBitmap(crop,
+                Math.max(1, Math.round(w * scale)), Math.max(1, Math.round(h * scale)), true);
+    }
+
+    private void releasePendingCrops() {
+        for (Bitmap b : pendingCrops.values()) {
+            if (b != null && !b.isRecycled()) b.recycle();
+        }
+        pendingCrops.clear();
+        pendingResult = null;
+    }
+
+    /** Renders the overlay, the per-type breakdown, and whether localisation will be possible. */
+    private void showReferenceAnalysis(String uriString,
+                                       HardwareFeatureExtractor.AnalysisResult result) {
+        binding.ivReferencePreview.setVisibility(View.GONE);
+        binding.overlayReferencePreview.setVisibility(View.VISIBLE);
+        binding.overlayReferencePreview.setResultData(uriString, result.features);
+
+        if (result.features.isEmpty()) {
+            binding.tvReferenceAnalysisStatus.setText(
+                    "No features detected in this image. It will define an empty reference —"
+                            + " nothing to compare an inspection against.");
+            binding.tvReferenceLocalisationReadiness.setText("");
+            return;
+        }
+
+        // Counts by type, in the order the types were first seen.
+        java.util.Map<String, Integer> counts = new java.util.LinkedHashMap<>();
+        for (HardwareFeatureExtractor.ExtractedFeature f : result.features) {
+            Integer prev = counts.get(f.type);
+            counts.put(f.type, prev == null ? 1 : prev + 1);
+        }
+
+        binding.tvReferenceAnalysisStatus.setText(String.format(Locale.getDefault(),
+                "%d feature%s detected across %d type%s. These become the expected counts for"
+                        + " every inspection of this part.",
+                result.features.size(), result.features.size() == 1 ? "" : "s",
+                counts.size(), counts.size() == 1 ? "" : "s"));
+
+        int landmarks = 0;
+        int criticalSlots = 0;
+        binding.layoutReferenceTypeRows.removeAllViews();
+        for (java.util.Map.Entry<String, Integer> e : counts.entrySet()) {
+            String type = e.getKey();
+            int count = e.getValue();
+            boolean unknown = ReferenceLibrary.UNKNOWN.equals(type);
+            FeatureTypeRegistry.Severity severity =
+                    unknown ? null : FeatureTypeRegistry.severityOf(requireContext(), type);
+
+            // Mirrors the layout builder: unclassified detections are never landmarks, and an
+            // IGNORED type is background by the operator's own grading.
+            if (!unknown && severity != FeatureTypeRegistry.Severity.IGNORED) {
+                landmarks += count;
+                if (severity == FeatureTypeRegistry.Severity.CRITICAL) criticalSlots += count;
+            }
+
+            binding.layoutReferenceTypeRows.addView(
+                    typeRow(type, count, severity, unknown));
+        }
+
+        binding.tvReferenceLocalisationReadiness.setText(readinessText(landmarks, criticalSlots));
+        binding.tvReferenceLocalisationReadiness.setTextColor(
+                LayoutMatcher.tooSmallToRegister(landmarks) || criticalSlots == 0
+                        ? ContextCompat.getColor(requireContext(), R.color.orange_warn)
+                        : ContextCompat.getColor(requireContext(), R.color.green_pass));
+    }
+
+    /** One "swatch — name — count — severity" row, matching the results screen's legend style. */
+    private View typeRow(String type, int count, FeatureTypeRegistry.Severity severity, boolean unknown) {
+        android.widget.LinearLayout row = new android.widget.LinearLayout(requireContext());
+        row.setOrientation(android.widget.LinearLayout.HORIZONTAL);
+        row.setGravity(android.view.Gravity.CENTER_VERTICAL);
+        row.setPadding(0, dp(3), 0, dp(3));
+
+        View swatch = new View(requireContext());
+        swatch.setLayoutParams(new android.widget.LinearLayout.LayoutParams(dp(12), dp(12)));
+        swatch.setBackgroundColor(ReferenceLibrary.colorFor(type));
+        row.addView(swatch);
+
+        android.widget.TextView name = new android.widget.TextView(requireContext());
+        android.widget.LinearLayout.LayoutParams nameLp = new android.widget.LinearLayout.LayoutParams(
+                0, android.widget.LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
+        nameLp.setMarginStart(dp(8));
+        name.setLayoutParams(nameLp);
+        name.setText(unknown ? "Unclassified"
+                : FeatureTypeRegistry.displayName(requireContext(), type));
+        name.setTextColor(ContextCompat.getColor(requireContext(), R.color.white));
+        name.setTextSize(12f);
+        row.addView(name);
+
+        android.widget.TextView tail = new android.widget.TextView(requireContext());
+        tail.setText(unknown
+                ? count + "  ·  not a landmark"
+                : count + "  ·  " + severity.label.toLowerCase(Locale.US));
+        tail.setTextColor(ContextCompat.getColor(requireContext(), R.color.gray_text_secondary));
+        tail.setTextSize(11f);
+        row.addView(tail);
+
+        return row;
+    }
+
+    /**
+     * Says up front whether this reference can support the positional check, and why not when
+     * it cannot. Discovering that only after filing an inspection is what made a weaker
+     * reference photo look like a broken feature.
+     */
+    private String readinessText(int landmarks, int criticalSlots) {
+        if (criticalSlots == 0) {
+            return "No critical features here, so inspections of this part will have no"
+                    + " positional check and nothing to pass or fail on. Re-grade a type as"
+                    + " critical, or choose a photo where the hardware is clearer.";
+        }
+        if (LayoutMatcher.tooSmallToRegister(landmarks)) {
+            return String.format(Locale.getDefault(),
+                    "Only %d usable landmark%s — too few to register a position against, so"
+                            + " localisation will be unavailable. Choose a photo where more"
+                            + " hardware is clearly visible.",
+                    landmarks, landmarks == 1 ? "" : "s");
+        }
+        return String.format(Locale.getDefault(),
+                "%d landmark%s for alignment, %d critical position%s reported. Localisation"
+                        + " will be available, and tolerates up to %d missing.",
+                landmarks, landmarks == 1 ? "" : "s",
+                criticalSlots, criticalSlots == 1 ? "" : "s",
+                landmarks - LayoutMatcher.requiredInliers(landmarks));
+    }
+
+    // ── Reference labelling: every detection gets an explicit type ───────
+
+    /** Sentinel option that opens the "create a new type" sub-dialog. */
+    private static final String NEW_TYPE_KEY = "__new__";
+
+    /**
+     * Spinner colours for the labelling dialog: a white field with dark grey text.
+     *
+     * Set on the collapsed row and the popup together. The platform's dropdown item styling
+     * takes its text colour from the theme, which on this dark fullscreen dialog is light —
+     * so a white popup left at the default renders near-invisible text.
+     */
+    private static final int SPINNER_BG = Color.WHITE;
+    private static final int SPINNER_TEXT = Color.rgb(60, 60, 66);
+
+    /** Rebuilds every row's dropdown after the type catalog changes. Set while the dialog is up. */
+    private Runnable pendingRebuildOptions = null;
+
+    /**
+     * Makes the operator name every feature the detector found in the reference.
+     *
+     * A reference photo defines what "correct" means for the part: its detections become the
+     * expected counts, the registration landmarks and the reported positions. Anything left
+     * unclassified is dead weight — not counted, not a landmark, not reportable — so a
+     * reference saved with two thirds of its detections unknown quietly produces a far weaker
+     * check than the operator thinks they set up. Requiring an answer for each one is what
+     * makes the reference mean what it appears to mean.
+     *
+     * The classifier's own guess pre-selects each row it was confident enough to accept, so
+     * this is confirmation rather than data entry.
+     */
+    private void showClassifyAllDialog(Runnable onSaved) {
+        if (pendingResult == null || pendingResult.features.isEmpty()) {
+            Toast.makeText(getContext(), "No features detected — nothing to classify.",
+                    Toast.LENGTH_LONG).show();
+            return;
+        }
+
         android.app.Dialog dialog = new android.app.Dialog(requireContext(),
                 android.R.style.Theme_DeviceDefault_NoActionBar_Fullscreen);
 
@@ -137,7 +383,7 @@ public class ReferenceSetupFragment extends Fragment {
         root.setPadding(dp(20), dp(28), dp(20), dp(20));
 
         android.widget.TextView title = new android.widget.TextView(getContext());
-        title.setText("LABEL DETECTED FEATURES");
+        title.setText("CLASSIFY EVERY DETECTED FEATURE");
         title.setTextColor(Color.rgb(74, 222, 128));
         title.setTextSize(16f);
         title.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
@@ -145,24 +391,53 @@ public class ReferenceSetupFragment extends Fragment {
         root.addView(title);
 
         android.widget.TextView sub = new android.widget.TextView(getContext());
-        sub.setText("Assign a hardware type to each crop (or leave 'skip'). These build the reference library for this part.");
         sub.setTextColor(Color.LTGRAY);
         sub.setTextSize(11f);
         sub.setGravity(android.view.Gravity.CENTER);
-        sub.setPadding(0, dp(4), 0, dp(16));
+        sub.setPadding(0, dp(4), 0, dp(14));
         root.addView(sub);
 
         android.widget.ScrollView scroll = new android.widget.ScrollView(getContext());
-        android.widget.LinearLayout.LayoutParams scrollParams = new android.widget.LinearLayout.LayoutParams(
-                android.widget.LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f);
-        scroll.setLayoutParams(scrollParams);
-
+        scroll.setLayoutParams(new android.widget.LinearLayout.LayoutParams(
+                android.widget.LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f));
         android.widget.LinearLayout list = new android.widget.LinearLayout(getContext());
         list.setOrientation(android.widget.LinearLayout.VERTICAL);
+        scroll.addView(list);
+        root.addView(scroll);
 
+        android.widget.Button save = new android.widget.Button(getContext());
+        save.setTextColor(Color.WHITE);
+        save.setBackgroundColor(Color.rgb(26, 70, 128));
+        android.widget.LinearLayout.LayoutParams saveLp = new android.widget.LinearLayout.LayoutParams(
+                android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+                android.widget.LinearLayout.LayoutParams.WRAP_CONTENT);
+        saveLp.setMargins(0, dp(12), 0, 0);
+        save.setLayoutParams(saveLp);
+        root.addView(save);
+
+        final List<HardwareFeatureExtractor.ExtractedFeature> features = pendingResult.features;
+        final String[] chosen = new String[features.size()];
         final List<android.widget.Spinner> spinners = new ArrayList<>();
+        final List<List<String>> optionKeysPerRow = new ArrayList<>();
+
+        final Runnable refreshSave = () -> {
+            int done = 0;
+            for (String c : chosen) if (c != null) done++;
+            save.setEnabled(done == chosen.length);
+            save.setText(done == chosen.length
+                    ? "SAVE REFERENCE (" + done + " classified)"
+                    : "CLASSIFY ALL TO CONTINUE (" + done + "/" + chosen.length + ")");
+            sub.setText(done == chosen.length
+                    ? "Every detection has a type. These define the expected features for this part."
+                    : "Give every crop a type. Anything left unnamed is excluded from the counts,"
+                            + " the alignment landmarks and the positional report.");
+        };
+
         int thumb = dp(64);
-        for (HardwareFeatureExtractor.CropRegion crop : crops) {
+        for (int i = 0; i < features.size(); i++) {
+            final int index = i;
+            HardwareFeatureExtractor.ExtractedFeature f = features.get(i);
+
             android.widget.LinearLayout row = new android.widget.LinearLayout(getContext());
             row.setOrientation(android.widget.LinearLayout.HORIZONTAL);
             row.setGravity(android.view.Gravity.CENTER_VERTICAL);
@@ -176,91 +451,306 @@ public class ReferenceSetupFragment extends Fragment {
             android.widget.ImageView img = new android.widget.ImageView(getContext());
             img.setLayoutParams(new android.widget.LinearLayout.LayoutParams(thumb, thumb));
             img.setScaleType(android.widget.ImageView.ScaleType.CENTER_CROP);
-            img.setImageBitmap(crop.bitmap);
+            Bitmap crop = pendingCrops.get(index + 1);
+            if (crop != null && !crop.isRecycled()) img.setImageBitmap(crop);
             row.addView(img);
 
-            android.widget.Spinner spinner = new android.widget.Spinner(getContext());
-            android.widget.LinearLayout.LayoutParams spLp = new android.widget.LinearLayout.LayoutParams(
+            android.widget.LinearLayout col = new android.widget.LinearLayout(getContext());
+            col.setOrientation(android.widget.LinearLayout.VERTICAL);
+            android.widget.LinearLayout.LayoutParams colLp = new android.widget.LinearLayout.LayoutParams(
                     0, android.widget.LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
-            spLp.setMarginStart(dp(12));
-            spinner.setLayoutParams(spLp);
-            android.widget.ArrayAdapter<String> adapter = new android.widget.ArrayAdapter<>(
-                    requireContext(), android.R.layout.simple_spinner_dropdown_item, LABEL_OPTIONS);
-            spinner.setAdapter(adapter);
-            row.addView(spinner);
-            spinners.add(spinner);
+            colLp.setMarginStart(dp(12));
+            col.setLayoutParams(colLp);
 
+            android.widget.TextView guess = new android.widget.TextView(getContext());
+            guess.setTextColor(Color.rgb(150, 150, 158));
+            guess.setTextSize(10f);
+            ReferenceLibrary.Classification c = f.classification;
+            guess.setText(c == null || "none".equals(c.closestMatch)
+                    ? "#" + (index + 1) + " · no suggestion"
+                    : String.format(Locale.US, "#%d · closest: %s (%.2f)", index + 1,
+                            FeatureTypeRegistry.displayName(requireContext(), c.closestMatch), c.score));
+            col.addView(guess);
+
+            android.widget.Spinner spinner = new android.widget.Spinner(getContext());
+            spinner.setLayoutParams(new android.widget.LinearLayout.LayoutParams(
+                    android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+                    android.widget.LinearLayout.LayoutParams.WRAP_CONTENT));
+            spinner.setPopupBackgroundDrawable(
+                    new android.graphics.drawable.ColorDrawable(SPINNER_BG));
+            col.addView(spinner);
+            row.addView(col);
             list.addView(row);
-        }
-        scroll.addView(list);
-        root.addView(scroll);
 
-        android.widget.Button save = new android.widget.Button(getContext());
-        save.setText("SAVE LIBRARY");
-        save.setTextColor(Color.WHITE);
-        save.setBackgroundColor(Color.rgb(26, 70, 128));
-        android.widget.LinearLayout.LayoutParams saveLp = new android.widget.LinearLayout.LayoutParams(
-                android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
-                android.widget.LinearLayout.LayoutParams.WRAP_CONTENT);
-        saveLp.setMargins(0, dp(12), 0, 0);
-        save.setLayoutParams(saveLp);
+            spinners.add(spinner);
+            optionKeysPerRow.add(new ArrayList<>());
+            // Pre-select only an accepted classification. A rejected guess is exactly the case
+            // a human is being asked about, so pre-filling it would launder a low-confidence
+            // score into a confirmed label.
+            chosen[index] = (c != null && !ReferenceLibrary.UNKNOWN.equals(c.type)) ? c.type : null;
+        }
+
+        // Adapter population is a separate pass so creating a type can rebuild every row's
+        // options at once when the catalog gains an entry.
+        final Runnable rebuildOptions = () -> {
+            List<FeatureTypeRegistry.TypeInfo> types = FeatureTypeRegistry.getAll(requireContext());
+            for (int i = 0; i < spinners.size(); i++) {
+                List<String> keys = optionKeysPerRow.get(i);
+                List<String> labels = new ArrayList<>();
+                keys.clear();
+                keys.add(null);
+                labels.add("— choose a type —");
+                for (FeatureTypeRegistry.TypeInfo t : types) {
+                    keys.add(t.key);
+                    labels.add(t.severity == FeatureTypeRegistry.Severity.CRITICAL
+                            ? t.displayName
+                            : t.displayName + " (" + t.severity.label.toLowerCase(Locale.US) + ")");
+                }
+                keys.add(NEW_TYPE_KEY);
+                labels.add("+ Create new type...");
+
+                android.widget.Spinner sp = spinners.get(i);
+                android.widget.ArrayAdapter<String> adapter = new android.widget.ArrayAdapter<String>(
+                        requireContext(), android.R.layout.simple_spinner_dropdown_item, labels) {
+                    @NonNull @Override
+                    public View getView(int position, View convertView, @NonNull ViewGroup parent) {
+                        return paint(super.getView(position, convertView, parent));
+                    }
+                    @Override
+                    public View getDropDownView(int position, View convertView, @NonNull ViewGroup parent) {
+                        return paint(super.getDropDownView(position, convertView, parent));
+                    }
+                    private View paint(View v) {
+                        v.setBackgroundColor(SPINNER_BG);
+                        if (v instanceof android.widget.TextView) {
+                            ((android.widget.TextView) v).setTextColor(SPINNER_TEXT);
+                        }
+                        return v;
+                    }
+                };
+                sp.setOnItemSelectedListener(null);
+                sp.setAdapter(adapter);
+                int sel = chosen[i] == null ? 0 : Math.max(0, keys.indexOf(chosen[i]));
+                sp.setSelection(sel);
+
+                final int rowIndex = i;
+                sp.setOnItemSelectedListener(new android.widget.AdapterView.OnItemSelectedListener() {
+                    @Override public void onItemSelected(android.widget.AdapterView<?> parent, View v, int pos, long id) {
+                        String key = optionKeysPerRow.get(rowIndex).get(pos);
+                        if (NEW_TYPE_KEY.equals(key)) {
+                            showCreateTypeDialog(rowIndex, chosen);
+                            return;
+                        }
+                        chosen[rowIndex] = key;
+                        refreshSave.run();
+                    }
+                    @Override public void onNothingSelected(android.widget.AdapterView<?> parent) {}
+                });
+            }
+            refreshSave.run();
+        };
+        pendingRebuildOptions = rebuildOptions;
+        rebuildOptions.run();
+
         save.setOnClickListener(v -> {
             save.setEnabled(false);
-            saveLibrary(crops, spinners, dialog);
+            saveClassifiedReference(chosen, dialog, onSaved);
         });
-        root.addView(save);
 
+        dialog.setOnDismissListener(x -> pendingRebuildOptions = null);
         dialog.setContentView(root);
+        dialog.setCancelable(true);
         dialog.show();
     }
 
-    /** Embeds each labelled crop, averages per type, and saves the per-part library. */
-    private void saveLibrary(List<HardwareFeatureExtractor.CropRegion> crops,
-                             List<android.widget.Spinner> spinners,
-                             android.app.Dialog dialog) {
-        Toast.makeText(getContext(), "Encoding crops...", Toast.LENGTH_SHORT).show();
+    /**
+     * Name + severity for a type the catalog does not have yet, mirroring the review dialog on
+     * the results screen so the scale means the same thing wherever it is set.
+     */
+    private void showCreateTypeDialog(int rowIndex, String[] chosen) {
+        android.app.Dialog d = new android.app.Dialog(requireContext());
+
+        android.widget.LinearLayout root = new android.widget.LinearLayout(getContext());
+        root.setOrientation(android.widget.LinearLayout.VERTICAL);
+        root.setBackgroundColor(Color.rgb(28, 27, 31));
+        root.setPadding(dp(20), dp(20), dp(20), dp(20));
+
+        android.widget.TextView title = new android.widget.TextView(getContext());
+        title.setText("NEW FEATURE TYPE");
+        title.setTextColor(Color.WHITE);
+        title.setTextSize(14f);
+        title.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        root.addView(title);
+
+        android.widget.EditText nameInput = new android.widget.EditText(getContext());
+        nameInput.setHint("Name (e.g. Scratch)");
+        nameInput.setTextColor(Color.WHITE);
+        nameInput.setHintTextColor(Color.rgb(180, 180, 188));
+        root.addView(nameInput);
+
+        android.widget.TextView heading = new android.widget.TextView(getContext());
+        heading.setText("How should this type be reported?");
+        heading.setTextColor(Color.WHITE);
+        heading.setTextSize(11f);
+        heading.setPadding(0, dp(14), 0, dp(4));
+        root.addView(heading);
+
+        android.widget.SeekBar seek = new android.widget.SeekBar(getContext());
+        seek.setMax(FeatureTypeRegistry.Severity.maxLevel());
+        root.addView(seek);
+
+        android.widget.LinearLayout ends = new android.widget.LinearLayout(getContext());
+        ends.setOrientation(android.widget.LinearLayout.HORIZONTAL);
+        android.widget.TextView left = new android.widget.TextView(getContext());
+        left.setText("CRITICAL");
+        left.setTextSize(9.5f);
+        left.setTextColor(Color.rgb(180, 180, 188));
+        left.setLayoutParams(new android.widget.LinearLayout.LayoutParams(
+                0, android.widget.LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        android.widget.TextView right = new android.widget.TextView(getContext());
+        right.setText("IGNORED");
+        right.setTextSize(9.5f);
+        right.setGravity(android.view.Gravity.END);
+        right.setTextColor(Color.rgb(180, 180, 188));
+        right.setLayoutParams(new android.widget.LinearLayout.LayoutParams(
+                0, android.widget.LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        ends.addView(left);
+        ends.addView(right);
+        root.addView(ends);
+
+        android.widget.TextView value = new android.widget.TextView(getContext());
+        value.setTextColor(Color.WHITE);
+        value.setTextSize(11.5f);
+        value.setPadding(dp(10), dp(8), dp(10), dp(8));
+        root.addView(value);
+
+        android.widget.Button create = new android.widget.Button(getContext());
+        create.setText("CREATE");
+        create.setTextColor(Color.WHITE);
+        create.setBackgroundColor(Color.rgb(26, 70, 128));
+        create.setEnabled(false);
+        root.addView(create);
+
+        final FeatureTypeRegistry.Severity[] severity = {null};
+        final Runnable refresh = () -> {
+            if (severity[0] == null) {
+                value.setText("Not set — drag the slider to choose.");
+                value.setBackgroundColor(Color.rgb(50, 50, 55));
+            } else {
+                int bg;
+                switch (severity[0]) {
+                    case CRITICAL: bg = Color.rgb(120, 40, 44); break;
+                    case ADVISORY: bg = Color.rgb(112, 82, 26); break;
+                    default:       bg = Color.rgb(58, 58, 66); break;
+                }
+                value.setText(severity[0].label.toUpperCase(Locale.US) + " — " + severity[0].blurb);
+                value.setBackgroundColor(bg);
+            }
+            create.setEnabled(nameInput.getText().toString().trim().length() > 0 && severity[0] != null);
+        };
+        refresh.run();
+
+        seek.setOnSeekBarChangeListener(new android.widget.SeekBar.OnSeekBarChangeListener() {
+            @Override public void onProgressChanged(android.widget.SeekBar bar, int progress, boolean fromUser) {
+                severity[0] = FeatureTypeRegistry.Severity.fromLevel(
+                        FeatureTypeRegistry.Severity.maxLevel() - progress);
+                refresh.run();
+            }
+            @Override public void onStartTrackingTouch(android.widget.SeekBar bar) {}
+            @Override public void onStopTrackingTouch(android.widget.SeekBar bar) {}
+        });
+        nameInput.addTextChangedListener(new android.text.TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s, int a, int b, int c) {}
+            @Override public void onTextChanged(CharSequence s, int a, int b, int c) {}
+            @Override public void afterTextChanged(android.text.Editable s) { refresh.run(); }
+        });
+
+        create.setOnClickListener(v -> {
+            String displayName = nameInput.getText().toString().trim();
+            String key = FeatureTypeRegistry.keyFor(displayName);
+            if (key.isEmpty() || severity[0] == null) return;
+            FeatureTypeRegistry.upsert(requireContext(), key, displayName, severity[0]);
+            chosen[rowIndex] = key;
+            d.dismiss();
+        });
+
+        // Backing out must not leave the row showing "+ Create new type..." as though it were an
+        // answer, so the dropdowns are rebuilt on either exit path.
+        d.setOnDismissListener(x -> {
+            if (pendingRebuildOptions != null) pendingRebuildOptions.run();
+        });
+
+        d.setContentView(root);
+        d.show();
+    }
+
+    /**
+     * Embeds every labelled crop into this part's library, saves it, and records the reference
+     * profile so inspections compute their expected counts from this image.
+     */
+    private void saveClassifiedReference(String[] chosen, android.app.Dialog dialog, Runnable onSaved) {
+        final android.content.Context context = requireContext().getApplicationContext();
+        final String uri = selectedImageExternalUri.toString();
+        final List<Bitmap> crops = new ArrayList<>();
+        for (int i = 0; i < chosen.length; i++) crops.add(pendingCrops.get(i + 1));
+        final List<HardwareFeatureExtractor.ExtractedFeature> features = pendingResult.features;
+
+        Toast.makeText(getContext(), "Encoding labelled crops...", Toast.LENGTH_SHORT).show();
         new Thread(() -> {
-            FeatureEmbedder embedder = FeatureEmbedder.get(requireContext());
+            FeatureEmbedder embedder = FeatureEmbedder.get(context);
             if (embedder == null) {
-                requireActivity().runOnUiThread(() ->
-                        Toast.makeText(getContext(),
-                                "Feature encoder not available (missing assets/models/feature_encoder.onnx).",
-                                Toast.LENGTH_LONG).show());
+                requireActivity().runOnUiThread(() -> Toast.makeText(getContext(),
+                        "Feature encoder unavailable (missing assets/models/feature_encoder.onnx).",
+                        Toast.LENGTH_LONG).show());
                 return;
             }
 
-            ReferenceLibrary lib = new ReferenceLibrary();
+            // Extends the part's existing library rather than replacing it: labels confirmed
+            // during past inspections are scarce, hard-won examples, and setting a new reference
+            // photo must not discard them.
+            ReferenceLibrary lib = ReferenceLibrary.load(
+                    ReferenceLibraryProvider.fileForPart(context, partId));
+            if (lib == null) lib = new ReferenceLibrary();
+
             int labelled = 0;
-            for (int i = 0; i < crops.size(); i++) {
-                String type = (String) spinners.get(i).getSelectedItem();
-                if (type == null || "skip".equals(type)) continue;
-                float[] emb = embedder.embed(crops.get(i).bitmap);
+            for (int i = 0; i < chosen.length; i++) {
+                Bitmap crop = crops.get(i);
+                if (chosen[i] == null || crop == null || crop.isRecycled()) continue;
+                float[] emb = embedder.embed(crop);
                 if (emb != null) {
-                    lib.addExample(type, emb);
+                    lib.addExample(chosen[i], emb);
                     labelled++;
                 }
             }
+            lib.save(ReferenceLibraryProvider.fileForPart(context, partId));
+
+            // The labels are the reference, not just training data. Persisting them as the
+            // part's layout is what makes an inspection compare against what the operator
+            // actually said, instead of re-classifying the reference photo every run and
+            // getting a different answer as the library drifts — a borderline crop scoring
+            // either side of the threshold changed the expected counts and the slot list
+            // without the photo changing at all.
+            FeatureLayout layout = new FeatureLayout();
+            layout.setReferenceUri(uri);
+            for (int i = 0; i < chosen.length; i++) {
+                if (chosen[i] == null) continue;
+                android.graphics.RectF r = features.get(i).rectFraction;
+                if (r == null) continue;
+                layout.addSlot(chosen[i], (r.left + r.right) / 2f, (r.top + r.bottom) / 2f);
+            }
+            layout.save(context, partId);
+
+            AppDatabase db = AppDatabase.getInstance(context);
+            db.referenceProfileDao().insertProfile(
+                    new ReferenceProfile(partId, uri, System.currentTimeMillis()));
 
             final int count = labelled;
-            if (lib.isEmpty()) {
-                requireActivity().runOnUiThread(() ->
-                        Toast.makeText(getContext(), "No crops were labelled — nothing saved.", Toast.LENGTH_LONG).show());
-                return;
-            }
-
-            lib.save(ReferenceLibraryProvider.fileForPart(requireContext(), partId));
-
-            // Also persist the reference profile so inspections compute expected counts from this image.
-            AppDatabase db = AppDatabase.getInstance(requireContext());
-            db.referenceProfileDao().insertProfile(
-                    new ReferenceProfile(partId, selectedImageExternalUri.toString(), System.currentTimeMillis()));
-
+            final int typeCount = lib.types().size();
             requireActivity().runOnUiThread(() -> {
                 if (dialog.isShowing()) dialog.dismiss();
-                Toast.makeText(getContext(),
-                        "Library saved (" + count + " examples across " + lib.types().size() + " types).",
-                        Toast.LENGTH_LONG).show();
-                proceedToInspection();
+                Toast.makeText(getContext(), "Reference saved — " + count
+                        + " examples across " + typeCount + " types.", Toast.LENGTH_LONG).show();
+                if (onSaved != null) onSaved.run();
             });
         }).start();
     }
@@ -381,15 +871,18 @@ public class ReferenceSetupFragment extends Fragment {
     private void loadSelectedAsset(String filename) {
         try {
             selectedImageExternalUri = Uri.parse("file:///android_asset/chassis_images/" + filename);
-            // Preview only — extractCrops() re-loads the asset at its own resolution.
+            // Preview only — analyseReference() re-loads the asset at its own resolution.
             Bitmap bitmap = AssetBitmaps.decodeSampled(
                     requireContext(), "chassis_images/" + filename, 1080);
             if (bitmap != null) binding.ivReferencePreview.setImageBitmap(bitmap);
+            // Plain preview first so the choice registers immediately; the overlay replaces it
+            // when the classification pass finishes a second or two later.
             binding.ivReferencePreview.setVisibility(View.VISIBLE);
+            binding.overlayReferencePreview.setVisibility(View.GONE);
             binding.layoutUploadPlaceholder.setVisibility(View.GONE);
             binding.btnCaptureReference.setText("SAVE REFERENCE");
             binding.btnCaptureReference.setBackgroundColor(ContextCompat.getColor(requireContext(), R.color.green_pass_header));
-            Toast.makeText(getContext(), "Local asset loaded: " + filename, Toast.LENGTH_SHORT).show();
+            analyseReference(selectedImageExternalUri.toString());
         } catch (Exception e) {
             Toast.makeText(getContext(), "Failed to load asset: " + e.getMessage(), Toast.LENGTH_SHORT).show();
         }
@@ -607,9 +1100,11 @@ public class ReferenceSetupFragment extends Fragment {
 
             binding.ivReferencePreview.setImageURI(selectedImageExternalUri);
             binding.ivReferencePreview.setVisibility(View.VISIBLE);
+            binding.overlayReferencePreview.setVisibility(View.GONE);
             binding.layoutUploadPlaceholder.setVisibility(View.GONE);
             binding.btnCaptureReference.setText("SAVE REFERENCE");
             binding.btnCaptureReference.setBackgroundColor(ContextCompat.getColor(requireContext(), R.color.green_pass_header));
+            analyseReference(selectedImageExternalUri.toString());
             Toast.makeText(getContext(), "Image uploaded successfully!", Toast.LENGTH_SHORT).show();
         } catch (Exception e) {
             Log.e(TAG, "Failed to copy reference image", e);
@@ -631,31 +1126,6 @@ public class ReferenceSetupFragment extends Fragment {
         }).start();
     }
 
-    /**
-     * Records that this part was deliberately left without a reference, then returns home.
-     *
-     * <p>It used to continue to the inspection screen, which no longer goes anywhere: the
-     * alignment gate has nothing to compare frames against without a reference photo and
-     * blocks capture outright, so sending the operator there would be a guaranteed dead end.
-     */
-    private void skipSetupReference() {
-        new Thread(() -> {
-            AppDatabase db = AppDatabase.getInstance(requireContext());
-            ReferenceProfile existing = db.referenceProfileDao().getProfileByPartType(partId);
-            if (existing == null) {
-                ReferenceProfile profile = new ReferenceProfile(partId, ReferenceProfile.PLACEHOLDER_URI, System.currentTimeMillis());
-                db.referenceProfileDao().insertProfile(profile);
-            }
-            requireActivity().runOnUiThread(() -> {
-                if (!isAdded() || getView() == null) return;
-                Toast.makeText(getContext(),
-                        "Skipped. This part can't be inspected until a reference photo is captured.",
-                        Toast.LENGTH_LONG).show();
-                Navigation.findNavController(getView()).navigate(R.id.action_reference_setup_to_home);
-            });
-        }).start();
-    }
-
     private void proceedToInspection() {
         Bundle args = new Bundle();
         args.putString("partId", partId);
@@ -666,6 +1136,9 @@ public class ReferenceSetupFragment extends Fragment {
 
     @Override
     public void onDestroyView() {
+        // Crops are native-memory bitmaps; on Android 8+ leaking them grows the process until
+        // the kernel kills it rather than raising OutOfMemoryError.
+        releasePendingCrops();
         super.onDestroyView();
         binding = null;
     }

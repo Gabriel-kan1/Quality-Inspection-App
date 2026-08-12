@@ -124,7 +124,7 @@
         android:layout_margin="16dp"
         android:background="@drawable/reference_guide_border"
         app:layout_constraintTop_toBottomOf="@id/card_assets_folder"
-        app:layout_constraintBottom_toTopOf="@id/card_action_deck"
+        app:layout_constraintBottom_toTopOf="@id/card_reference_analysis"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent">
 
@@ -136,6 +136,15 @@
             android:scaleType="fitCenter"
             android:visibility="gone"
             android:contentDescription="Selected reference design" />
+
+        <!-- Same overlay the inspection screen uses, so the operator sees the reference
+             classified exactly as an inspection would classify it. Replaces the flat preview
+             once analysis finishes. -->
+        <com.example.ui.view.ChassisOverlayView
+            android:id="@+id/overlay_reference_preview"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:visibility="gone" />
 
         <!-- Placeholder Hint -->
         <LinearLayout
@@ -185,6 +194,65 @@
         </LinearLayout>
     </FrameLayout>
 
+    <!-- What this reference actually contributes: the same detection + classification pass an
+         inspection runs, so the operator can see the expected features before saving. -->
+    <com.google.android.material.card.MaterialCardView
+        android:id="@+id/card_reference_analysis"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="16dp"
+        android:layout_marginEnd="16dp"
+        android:layout_marginBottom="8dp"
+        android:visibility="gone"
+        app:cardBackgroundColor="@color/surface_card"
+        app:cardCornerRadius="12dp"
+        app:layout_constraintBottom_toTopOf="@id/card_action_deck"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="14dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="EXPECTED FEATURES IN THIS REFERENCE"
+                android:textColor="@color/blue_primary"
+                android:textSize="11sp"
+                android:textStyle="bold"
+                android:layout_marginBottom="6dp" />
+
+            <TextView
+                android:id="@+id/tv_reference_analysis_status"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Analysing reference image..."
+                android:textColor="@color/white"
+                android:textSize="12sp"
+                android:lineSpacingExtra="2dp" />
+
+            <LinearLayout
+                android:id="@+id/layout_reference_type_rows"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:layout_marginTop="8dp" />
+
+            <TextView
+                android:id="@+id/tv_reference_localisation_readiness"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:textSize="11sp"
+                android:lineSpacingExtra="2dp" />
+
+        </LinearLayout>
+
+    </com.google.android.material.card.MaterialCardView>
+
     <!-- Bottom Operator Actions card -->
     <com.google.android.material.card.MaterialCardView
         android:id="@+id/card_action_deck"
@@ -206,36 +274,15 @@
             android:gravity="center"
             android:padding="20dp">
 
-            <LinearLayout
+            <!-- SHUTTER BUTTON -->
+            <Button
+                android:id="@+id/btn_capture_reference"
                 android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:weightSum="2">
-
-                <!-- SKIP REFERENCING / QUICK USE MOCK DEFAULT -->
-                <Button
-                    android:id="@+id/btn_skip"
-                    style="@style/Widget.Material3.Button.OutlinedButton"
-                    android:layout_width="0dp"
-                    android:layout_height="64dp"
-                    android:layout_weight="0.8"
-                    android:text="SKIP SETUP"
-                    android:textColor="@color/white"
-                    android:layout_marginEnd="8dp" />
-
-                <!-- SHUTTER BUTTON -->
-                <Button
-                    android:id="@+id/btn_capture_reference"
-                    android:layout_width="0dp"
-                    android:layout_height="64dp"
-                    android:layout_weight="1.2"
-                    android:backgroundTint="@color/blue_primary"
-                    android:text="CHOOSE IMAGE"
-                    android:textColor="@color/white"
-                    android:textStyle="bold"
-                    android:layout_marginStart="8dp" />
-
-            </LinearLayout>
+                android:layout_height="64dp"
+                android:backgroundTint="@color/blue_primary"
+                android:text="CHOOSE IMAGE"
+                android:textColor="@color/white"
+                android:textStyle="bold" />
 
             <!-- Build the few-shot detection library from the selected reference image -->
             <Button

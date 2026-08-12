@@ -240,24 +240,41 @@ public class ResultsFragment extends Fragment {
             expectedCounts.clear();
             hasRealReference = ref != null && ref.hasRealImage();
             if (hasRealReference) {
-                // Null sink: the reference pass only contributes counts, so its crops are never
-                // written or retained. This pass previously doubled peak crop memory for nothing.
+                // Preferred source: the labels the operator gave every detection during
+                // reference setup. Those are a human statement of what this part should have,
+                // so they are used verbatim — no re-detection, no re-classification, and
+                // therefore no dependence on lighting or on where the library's decision
+                // boundary happens to sit today.
                 //
-                // The glare branch is pinned to whatever the inspection image used. These two
-                // counts are about to be subtracted from each other, so they have to come out
-                // of the same pipeline — otherwise a reference just under the glare threshold
-                // and an inspection just over it disagree on lighting alone and the part is
-                // reported as failed.
-                HardwareFeatureExtractor.AnalysisResult refResult =
-                        HardwareFeatureExtractor.extractFeatures(context, ref.getImageUri(),
-                                activeLibrary, null, activeResult.glareCorrectionApplied);
-                countByType(refResult.features, expectedCounts);
-                if (refResult.processedBitmap != null) {
-                    // The reference pass only contributes counts; its diagnostic bitmap is a
-                    // full-size ARGB_8888 nobody displays.
-                    refResult.processedBitmap.recycle();
+                // Guarded by the reference URI, so a layout labelled against a photo that has
+                // since been replaced is refused rather than compared against.
+                FeatureLayout labelled =
+                        FeatureLayout.loadFor(context, partId, ref.getImageUri());
+                if (labelled != null) {
+                    expectedCounts.putAll(labelled.countsByType());
+                    referenceLayout = labelled;
+                } else {
+                    // Fallback for references set before labelling existed, or skipped. Classify
+                    // the reference image and take what the classifier makes of it.
+                    //
+                    // Null sink: this pass only contributes counts, so its crops are never
+                    // written or retained. It previously doubled peak crop memory for nothing.
+                    //
+                    // The glare branch is pinned to whatever the inspection image used. These
+                    // two counts are about to be subtracted from each other, so they have to
+                    // come out of the same pipeline — otherwise a reference just under the
+                    // glare threshold and an inspection just over it disagree on lighting alone
+                    // and the part is reported as failed.
+                    HardwareFeatureExtractor.AnalysisResult refResult =
+                            HardwareFeatureExtractor.extractFeatures(context, ref.getImageUri(),
+                                    activeLibrary, null, activeResult.glareCorrectionApplied);
+                    countByType(refResult.features, expectedCounts);
+                    if (refResult.processedBitmap != null) {
+                        // Its diagnostic bitmap is a full-size ARGB_8888 nobody displays.
+                        refResult.processedBitmap.recycle();
+                    }
+                    referenceLayout = buildLayout(refResult.features);
                 }
-                referenceLayout = buildLayout(refResult.features);
             }
 
             // Active learning: rather than prompting on every unknown, ask only about the

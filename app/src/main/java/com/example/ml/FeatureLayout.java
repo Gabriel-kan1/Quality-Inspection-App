@@ -181,6 +181,53 @@ public final class FeatureLayout {
         return new File(dir, PartFiles.safeName(partId) + ".json");
     }
 
+    /**
+     * The reference image these slots were labelled against, or null for a layout that was
+     * derived rather than labelled.
+     *
+     * A layout is only meaningful for the photo it describes. Persisting the URI is what lets
+     * {@link #loadFor} refuse a layout whose reference image has since been replaced, instead
+     * of silently reporting correct hardware as misplaced against an arrangement that no
+     * longer exists.
+     */
+    private String referenceUri;
+
+    public String referenceUri() {
+        return referenceUri;
+    }
+
+    public void setReferenceUri(String uri) {
+        this.referenceUri = uri;
+    }
+
+    /** Slot counts by type — the expected configuration this reference defines. */
+    public java.util.Map<String, Integer> countsByType() {
+        java.util.Map<String, Integer> counts = new java.util.LinkedHashMap<>();
+        for (Slot s : slots) {
+            Integer prev = counts.get(s.type);
+            counts.put(s.type, prev == null ? 1 : prev + 1);
+        }
+        return counts;
+    }
+
+    /**
+     * Loads the layout only if it was labelled against {@code expectedUri}.
+     *
+     * Returns null on a mismatch so the caller falls back to classifying the reference image,
+     * which is recoverable, rather than comparing an inspection against a stale arrangement.
+     */
+    public static FeatureLayout loadFor(Context context, String partId, String expectedUri) {
+        FeatureLayout layout = load(context, partId);
+        if (layout == null) return null;
+        if (layout.referenceUri == null || expectedUri == null
+                || !layout.referenceUri.equals(expectedUri)) {
+            Log.d(TAG, "Layout for " + partId + " was labelled against '" + layout.referenceUri
+                    + "' but the profile now points at '" + expectedUri + "' — ignoring it.");
+            return null;
+        }
+        return layout;
+    }
+
     public void save(Context context, String partId) {
         try {
             JSONArray arr = new JSONArray();
@@ -197,6 +244,7 @@ public final class FeatureLayout {
             }
             JSONObject root = new JSONObject();
             root.put("slots", arr);
+            if (referenceUri != null) root.put("referenceUri", referenceUri);
             try (FileOutputStream fos = new FileOutputStream(fileFor(context, partId))) {
                 fos.write(root.toString().getBytes(StandardCharsets.UTF_8));
             }
@@ -216,6 +264,7 @@ public final class FeatureLayout {
             JSONObject root = new JSONObject(new String(bos.toByteArray(), StandardCharsets.UTF_8));
             JSONArray arr = root.getJSONArray("slots");
             FeatureLayout layout = new FeatureLayout();
+            layout.referenceUri = root.optString("referenceUri", null);
             for (int i = 0; i < arr.length(); i++) {
                 JSONObject o = arr.getJSONObject(i);
                 Slot s = new Slot(o.getInt("id"), o.getString("type"),
