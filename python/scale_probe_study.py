@@ -47,7 +47,11 @@ STD = np.array([0.229, 0.224, 0.225], np.float32)
 
 PROBE = 0.5           # AlignmentGate.PROBE_CROP
 TOLERANCE = 0.10      # AlignmentGate.SCALE_GAIN_TOLERANCE
-THRESHOLD = 0.67      # AlignmentGate.MATCH_THRESHOLD
+THRESHOLD = 0.70      # AlignmentGate.MATCH_THRESHOLD — keep the two in step.
+# The false-accept counts quoted in AlignmentGate's javadoc come from the sweep this script
+# prints, so any change to MATCH_THRESHOLD means changing this line and restating them in
+# the same commit. The sweep below covers 0.60-0.80, so the neighbouring values are visible
+# without editing anything.
 
 # area group, relative shooting distance (1.0 = the framing a close-up reference uses).
 # Distances are read off the assets by eye; they are ordinal, not metrology, which is

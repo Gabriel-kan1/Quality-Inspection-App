@@ -29,8 +29,14 @@ public class AlignmentGateTest {
     // (crop-the-frame, crop-the-reference).
     private static final float SCREWS_TWO_VS_STUD1 = 0.717f;   // ~2.5x too far
     private static final float SCREWS_TWO_FAR_GAIN = 0.168f;
-    private static final float SCREWS_THREE_VS_STUD1 = 0.676f; // ~2.8x too far
-    private static final float SCREWS_THREE_FAR_GAIN = 0.104f;
+    // screws_three against stud1 (0.676, gain +0.104) used to sit here as the second
+    // too-far exemplar. It stopped being one when MATCH_THRESHOLD moved from 0.67 to 0.70:
+    // below the threshold the frame is WEAK_MATCH and the probe never runs, so the pair no
+    // longer demonstrates "similarity alone would have accepted this". screws2 against
+    // stud3 is the same too-far case at a similarity that does clear 0.70.
+    private static final float SCREWS2_VS_STUD3 = 0.714f;      // ~2.5x too far
+    private static final float SCREWS2_FAR_GAIN = 0.158f;
+    private static final float SCREWS2_CLOSE_GAIN = -0.070f;
     private static final float STUD1_VS_SCREWS_TWO = 0.717f;   // the same pair, reference swapped
     private static final float STUD1_CLOSE_GAIN = 0.168f;
 
@@ -72,10 +78,11 @@ public class AlignmentGateTest {
         assertFalse("a shot from 2.5x the reference distance must not pass", r.inTolerance);
         assertEquals(AlignmentGate.Fault.TOO_FAR, r.fault);
 
-        AlignmentGate.Reading nearer = AlignmentGate.classify(
-                SCREWS_THREE_VS_STUD1, SCREWS_THREE_FAR_GAIN, -0.143f, STEADY);
-        assertFalse(nearer.inTolerance);
-        assertEquals(AlignmentGate.Fault.TOO_FAR, nearer.fault);
+        // A second reference, so the rejection is not a property of stud1 alone.
+        AlignmentGate.Reading other = AlignmentGate.classify(
+                SCREWS2_VS_STUD3, SCREWS2_FAR_GAIN, SCREWS2_CLOSE_GAIN, STEADY);
+        assertFalse(other.inTolerance);
+        assertEquals(AlignmentGate.Fault.TOO_FAR, other.fault);
     }
 
     @Test
@@ -144,6 +151,30 @@ public class AlignmentGateTest {
     public void aNearMissIsDistinguishedFromLookingAtNothingRelevant() {
         assertEquals(AlignmentGate.Fault.WEAK_MATCH, AlignmentGate.classify(ZERO, STEADY).fault);
         assertEquals(AlignmentGate.Fault.NO_MATCH, AlignmentGate.classify(WHOLE, STEADY).fault);
+    }
+
+    /**
+     * The tests above pin the decision rule; this one pins the threshold itself, because
+     * raising it makes them fail for reasons that read like arithmetic ("similarity 0.747
+     * should pass") rather than like the actual objection.
+     *
+     * <p>The objection: over the 252 labelled pairs in python/scale_probe_study.py, with the
+     * scale probe on, 0.70 is the last threshold that costs no true accepts —
+     * 0.70 gives 5 false accepts and 0 false rejects; 0.74 gives 2 and 5; 0.80 gives 2 and 9.
+     * Scored against the RANSAC-verified pairs from python/pair_ground_truth.py, recall falls
+     * from 17/19 to 15/19 over the same move, and the pairs lost are proven same-area by
+     * several hundred inliers. Re-run both scripts before changing this.
+     */
+    @Test
+    public void theThresholdStaysWhereTheStudiesPutIt() {
+        // Just below 0.70 must fail and just above must pass; together these pin the value
+        // without reaching into the private constant.
+        assertFalse("threshold must not be looser than 0.70 — see python/scale_probe_study.py",
+                AlignmentGate.classify(0.699f, STEADY).inTolerance);
+        assertTrue("threshold must not be tighter than 0.70 — tightening it rejects same-area"
+                        + " pairs proven by hundreds of RANSAC inliers; see"
+                        + " python/pair_ground_truth.py",
+                AlignmentGate.classify(0.701f, STEADY).inTolerance);
     }
 
     @Test

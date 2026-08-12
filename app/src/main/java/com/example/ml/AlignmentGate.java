@@ -62,10 +62,11 @@ import java.util.Locale;
  * </pre>
  *
  * The populations barely overlap, so {@link #SCALE_GAIN_TOLERANCE} sits between them. At
- * the current threshold this removes roughly two thirds of the wrong-distance false
- * accepts (23 to 8 over that pair set) while rejecting none of the correctly framed
- * shots — measured at every threshold from 0.60 to 0.80, the probe never cost a true
- * accept. Two cues that sound more direct were tried first and both failed: median
+ * the current threshold this removes two thirds of the wrong-distance false accepts (15 to
+ * 5 over that pair set) while rejecting none of the correctly framed shots — measured at
+ * every threshold from 0.60 to 0.80, the probe never cost a true accept: the false-reject
+ * column is identical with the probe on and off. Two cues that sound more direct were
+ * tried first and both failed: median
  * detected-blob diameter wandered by 3x across crops of one image (the contours are
  * surface grain, not hardware), and the texture's spatial-frequency centroid flattened
  * out at close range where sensor noise dominates the spectrum, and moved the wrong way
@@ -89,8 +90,10 @@ public final class AlignmentGate {
     private static final String TAG = "AlignmentGate";
 
     // ─────────────────────────────────────────────────────────────
-    // CONFIG — non-final so they can be adjusted at runtime while tuning against a real
-    // chassis without recompiling the logic.
+    // CONFIG — these were left non-final "so they can be adjusted at runtime while tuning",
+    // but nothing ever adjusted them: there is no setter and no debug screen, so they were
+    // constants that had merely lost the keyword. Restored to final. If runtime tuning is
+    // wanted, add the surface that provides it rather than removing the keyword again.
     // ─────────────────────────────────────────────────────────────
 
     /**
@@ -104,12 +107,31 @@ public final class AlignmentGate {
      * separates. Expect to re-fit against your own reference photos — the debug readout on
      * the inspection screen shows the live figure. Note that shooting distance is no longer
      * this threshold's job; see {@link #SCALE_GAIN_TOLERANCE}.
+     *
+     * <p>0.70 is the knee of both studies, and is the last value that costs nothing. Over the
+     * 252 labelled pairs in {@code python/scale_probe_study.py}, with the probe on:
+     *
+     * <pre>
+     *   threshold   false accepts   false rejects   proven-pair recall
+     *     0.65            9               0              19/19
+     *     0.70            5               0              17/19
+     *     0.74            2               5              15/19
+     *     0.80            2               9              15/19
+     * </pre>
+     *
+     * Recall is scored against the RANSAC-verified same-area pairs from
+     * {@code python/pair_ground_truth.py}, which is the provenance for this number — re-run
+     * both scripts before changing it. Tightening past 0.70 buys three fewer false accepts
+     * and pays nine true accepts for them, including pairs proven same-area by several
+     * hundred inliers ({@code screws_test}/{@code screws_two}, {@code screws2}/{@code
+     * screws_test}). Loosening to 0.65 recovers the last two proven pairs but nearly doubles
+     * the false accepts.
      */
-    private static float MATCH_THRESHOLD = 0.7f;
+    private static final float MATCH_THRESHOLD = 0.7f;
 
     /** Below this fraction of the threshold the frame is treated as showing nothing
      *  relevant at all, which earns a blunter hint than "keep adjusting". */
-    private static float NO_MATCH_FRACTION = 0.7f;
+    private static final float NO_MATCH_FRACTION = 0.7f;
 
     /**
      * How much a scale probe may improve the match before the frame counts as being shot
@@ -121,7 +143,7 @@ public final class AlignmentGate {
      * smaller (or larger) than it was when the reference was saved, not that framing is
      * a few percent off.
      */
-    private static float SCALE_GAIN_TOLERANCE = 0.10f;
+    private static final float SCALE_GAIN_TOLERANCE = 0.10f;
 
     /**
      * Fraction of each side kept by the probe crop. 0.5 quarters the visible area, which
@@ -136,7 +158,7 @@ public final class AlignmentGate {
      * counts as moving. 0-255 scale. Camera noise alone runs about 1-2 on a still handheld
      * phone, so this sits far enough above the noise floor not to trip on it.
      */
-    private static float MAX_MOTION = 6.0f;
+    private static final float MAX_MOTION = 6.0f;
 
     /** Edge of the square thumbnail used for the motion estimate. Small on purpose: this
      *  measures gross camera movement, not detail. */
@@ -222,7 +244,10 @@ public final class AlignmentGate {
     /** Luminance thumbnail of the previous frame, for the motion estimate. */
     private int[] previousThumb;
 
-    private AlignmentGate(FeatureEmbedder embedder, float[] referenceEmbedding,
+    // Package-visible so tests can build a gate around a null embedder and exercise the
+    // parts that do not need one — the motion estimate in particular, which is plain bitmap
+    // arithmetic gating every capture but was previously unreachable without an ONNX session.
+    AlignmentGate(FeatureEmbedder embedder, float[] referenceEmbedding,
                           float[] referenceZoomEmbedding) {
         this.embedder = embedder;
         this.referenceEmbedding = referenceEmbedding;
@@ -387,7 +412,7 @@ public final class AlignmentGate {
      * Mean absolute luminance change against the previous frame, on a 0-255 scale.
      * Returns NaN for the first frame.
      */
-    private float measureMotion(Bitmap frame) {
+    float measureMotion(Bitmap frame) {
         Bitmap thumb = Bitmap.createScaledBitmap(frame, MOTION_THUMB, MOTION_THUMB, true);
         int[] pixels = new int[MOTION_THUMB * MOTION_THUMB];
         thumb.getPixels(pixels, 0, MOTION_THUMB, 0, 0, MOTION_THUMB, MOTION_THUMB);
