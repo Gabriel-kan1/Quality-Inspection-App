@@ -55,8 +55,14 @@ public final class AssetBitmaps {
         }
     }
 
-    /** Largest power-of-two sample size that keeps the longest edge >= reqPx. */
-    private static int sampleSizeFor(int width, int height, int reqPx) {
+    /**
+     * Largest power-of-two sample size that keeps the longest edge >= reqPx.
+     *
+     * Public because every decode in the app needs this: BitmapFactory silently rounds
+     * inSampleSize down to a power of two, so computing it any other way produces a
+     * decode resolution that doesn't match what the caller asked for.
+     */
+    public static int sampleSizeFor(int width, int height, int reqPx) {
         int longest = Math.max(width, height);
         int sample = 1;
         while (longest / (sample * 2) >= reqPx) {

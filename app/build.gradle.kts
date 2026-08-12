@@ -109,6 +109,9 @@ dependencies {
   implementation(libs.retrofit)
   implementation(libs.opencv)
   implementation(libs.onnxruntime.android)
+  // Camera JPEGs and gallery picks carry orientation in EXIF rather than in the pixels;
+  // the encoder is not rotation invariant, so every disk load has to apply it.
+  implementation(libs.androidx.exifinterface)
   testImplementation(libs.androidx.compose.ui.test.junit4)
   testImplementation(libs.androidx.core)
   testImplementation(libs.androidx.junit)
