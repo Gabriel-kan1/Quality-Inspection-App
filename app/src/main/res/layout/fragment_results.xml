@@ -70,7 +70,7 @@
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 
-        <!-- Canny Edges & Filtering Card -->
+        <!-- Canny Edges & Filtering Card (collapsible — diagnostic view, off by default) -->
         <com.google.android.material.card.MaterialCardView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -86,23 +86,49 @@
                 android:orientation="vertical"
                 android:padding="12dp">
 
-                <TextView
-                    android:layout_width="wrap_content"
+                <!-- Tap anywhere on this row to show or hide the edge preview below -->
+                <LinearLayout
+                    android:id="@+id/header_canny_edges"
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="CANNY EDGES &amp; FILTERING"
-                    android:textColor="@color/gray_text_secondary"
-                    android:textSize="12sp"
-                    android:textStyle="bold"
-                    android:layout_marginStart="4dp"
-                    android:layout_marginBottom="8dp"/>
+                    android:background="?attr/selectableItemBackground"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingTop="4dp"
+                    android:paddingBottom="4dp">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="CANNY EDGES &amp; FILTERING"
+                        android:textColor="@color/gray_text_secondary"
+                        android:textSize="12sp"
+                        android:textStyle="bold"
+                        android:layout_marginStart="4dp"/>
+
+                    <TextView
+                        android:id="@+id/tv_canny_edges_chevron"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="&#9656;"
+                        android:textColor="@color/gray_text_secondary"
+                        android:textSize="14sp"
+                        android:textStyle="bold"
+                        android:layout_marginEnd="4dp"/>
+
+                </LinearLayout>
 
                 <ImageView
                     android:id="@+id/iv_canny_edges"
                     android:layout_width="match_parent"
                     android:layout_height="200dp"
+                    android:layout_marginTop="8dp"
                     android:scaleType="fitCenter"
                     android:background="@color/black"
-                    tools:srcCompat="@tools:sample/backgrounds/scenic" />
+                    android:visibility="gone"
+                    tools:srcCompat="@tools:sample/backgrounds/scenic"
+                    tools:visibility="visible" />
 
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
@@ -248,6 +274,94 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:orientation="vertical" />
+
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
+        <!-- Critical Feature Localisation (populated at runtime) -->
+        <com.google.android.material.card.MaterialCardView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="24dp"
+            app:cardBackgroundColor="@color/surface_card"
+            app:cardCornerRadius="16dp"
+            app:strokeColor="@color/gray_text_secondary"
+            app:strokeWidth="1dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="16dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="CRITICAL FEATURE LOCALISATION"
+                    android:textColor="@color/blue_primary"
+                    android:textSize="12sp"
+                    android:textStyle="bold"
+                    android:layout_marginBottom="8dp" />
+
+                <TextView
+                    android:id="@+id/tv_localisation_status"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Registering against the reference layout..."
+                    android:textColor="@color/white"
+                    android:textSize="12sp"
+                    android:lineSpacingExtra="3dp" />
+
+                <LinearLayout
+                    android:id="@+id/layout_localisation_rows"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:layout_marginTop="10dp" />
+
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
+        <!-- Dimensional Measurement (populated at runtime) -->
+        <com.google.android.material.card.MaterialCardView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="24dp"
+            app:cardBackgroundColor="@color/surface_card"
+            app:cardCornerRadius="16dp"
+            app:strokeColor="@color/gray_text_secondary"
+            app:strokeWidth="1dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="16dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="DIMENSIONAL MEASUREMENT"
+                    android:textColor="@color/blue_primary"
+                    android:textSize="12sp"
+                    android:textStyle="bold"
+                    android:layout_marginBottom="8dp" />
+
+                <TextView
+                    android:id="@+id/tv_calibration_status"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Checking for calibration marker..."
+                    android:textColor="@color/white"
+                    android:textSize="12sp"
+                    android:lineSpacingExtra="3dp" />
+
+                <LinearLayout
+                    android:id="@+id/layout_measurement_rows"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:layout_marginTop="10dp" />
 
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>

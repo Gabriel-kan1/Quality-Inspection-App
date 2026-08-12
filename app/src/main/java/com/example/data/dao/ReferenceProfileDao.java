@@ -14,7 +14,15 @@ public interface ReferenceProfileDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     long insertProfile(ReferenceProfile profile);
 
-    @Query("SELECT * FROM ReferenceProfile WHERE partType = :partType LIMIT 1")
+    /**
+     * The unique index on partType means at most one row can match. The ordering is kept as a
+     * backstop so that if a duplicate ever reappears the newest real photo wins rather than
+     * whichever row the query planner reaches first — the previous unordered LIMIT 1 returned
+     * the oldest, which is how a stale placeholder could shadow a saved reference indefinitely.
+     */
+    @Query("SELECT * FROM ReferenceProfile WHERE partType = :partType"
+            + " ORDER BY CASE WHEN imageUri = 'dummy_placeholder' THEN 1 ELSE 0 END,"
+            + " createdAt DESC LIMIT 1")
     ReferenceProfile getProfileByPartType(String partType);
 
     @Query("SELECT * FROM ReferenceProfile ORDER BY createdAt DESC")
