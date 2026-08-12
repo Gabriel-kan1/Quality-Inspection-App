@@ -249,8 +249,8 @@ public class ResultsFragment extends Fragment {
                 //
                 // Guarded by the reference URI, so a layout labelled against a photo that has
                 // since been replaced is refused rather than compared against.
-                FeatureLayout labelled =
-                        FeatureLayout.loadFor(context, partId, ref.getImageUri());
+                FeatureLayout labelled = keepCriticalSlots(context,
+                        FeatureLayout.loadFor(context, partId, ref.getImageUri()));
                 if (labelled != null) {
                     expectedCounts.putAll(labelled.countsByType());
                     referenceLayout = labelled;
@@ -561,6 +561,12 @@ public class ResultsFragment extends Fragment {
                 case MISSING:
                     status.setText("MISSING");
                     status.setTextColor(ContextCompat.getColor(requireContext(), R.color.red_fail));
+                    break;
+                case DISPLACED:
+                    status.setText(String.format(Locale.getDefault(), "%s\n%.0f%% OFF",
+                            FeatureTypeRegistry.displayName(requireContext(), f.foundType),
+                            f.offset * 100));
+                    status.setTextColor(ContextCompat.getColor(requireContext(), R.color.orange_warn));
                     break;
                 case WRONG_TYPE:
                     status.setText("WRONG: " + FeatureTypeRegistry.displayName(requireContext(), f.foundType));
@@ -1235,24 +1241,42 @@ public class ResultsFragment extends Fragment {
     }
 
     /**
-     * Builds the registration layout from the reference pass: every detection whose type the
-     * operator treats as a real feature, i.e. anything not graded
-     * {@link FeatureTypeRegistry.Severity#IGNORED}.
+     * Keeps only slots the operator graded {@link FeatureTypeRegistry.Severity#CRITICAL}.
      *
-     * Deliberately wider than what gets reported. Recovering the transform is pure geometry
-     * and every stable landmark helps, so restricting the layout to critical types only threw
-     * away evidence and shrank the layout below the size an alignment can be believed at —
-     * a reference with two scratches among five detections stopped working entirely. Ignored
-     * types stay out because they are background by the operator's own declaration, and
-     * background moves between shots.
+     * Localisation is a claim about hardware that has a place it is supposed to be. An
+     * advisory type does not: a scratch offered as the occupant of a bolt head's position is
+     * not a finding an inspector can act on, it is noise wearing the vocabulary of a defect.
+     *
+     * Applied on load, not only on save, so layouts already written with advisory or
+     * background slots are healed without a migration. Severity is re-read here rather than
+     * trusted from save time, because the catalog is global and editable — a type re-graded
+     * after the reference was labelled has to leave the layout too.
+     */
+    private FeatureLayout keepCriticalSlots(android.content.Context context, FeatureLayout layout) {
+        if (layout == null) return null;
+        FeatureLayout kept = new FeatureLayout();
+        kept.setReferenceUri(layout.referenceUri());
+        for (FeatureLayout.Slot s : layout.slots()) {
+            if (FeatureTypeRegistry.severityOf(context, s.type)
+                    != FeatureTypeRegistry.Severity.CRITICAL) continue;
+            kept.addSlot(s.type, s.x, s.y);
+        }
+        return kept.isEmpty() ? null : kept;
+    }
+
+    /**
+     * Builds the layout from the reference pass, from critical detections only.
+     *
+     * The cost is a smaller layout, and a layout under four slots cannot be registered at all
+     * — so a reference whose critical hardware is sparse will report localisation as
+     * unavailable rather than guess. That is the intended trade: an alignment resting on
+     * scratches is an alignment resting on things that move between shots.
      */
     private FeatureLayout buildLayout(List<HardwareFeatureExtractor.ExtractedFeature> refFeatures) {
         if (refFeatures == null || refFeatures.isEmpty()) return null;
         Set<String> registrationTypes = new LinkedHashSet<>();
         for (HardwareFeatureExtractor.ExtractedFeature f : refFeatures) {
-            if (f.type == null) continue;
-            if (FeatureTypeRegistry.severityOf(requireContext(), f.type)
-                    != FeatureTypeRegistry.Severity.IGNORED) {
+            if (f.type != null && FeatureTypeRegistry.isCritical(requireContext(), f.type)) {
                 registrationTypes.add(f.type);
             }
         }
@@ -1267,13 +1291,12 @@ public class ResultsFragment extends Fragment {
     }
 
     /**
-     * Runs the positional check. Registration uses every non-ignored detection; only critical
-     * slots are reported, which is the scope the localisation feature was asked for.
+     * Runs the positional check over critical hardware only — layout, candidates and report.
      *
-     * Unknown detections are passed through as candidates on purpose: {@code LayoutMatcher}
-     * allows them to occupy a slot, so a fastener that is physically present but which the
-     * classifier failed to recognise reads as "present" rather than as missing hardware — the
-     * less misleading of the two errors.
+     * Unknown detections remain eligible, and are the one exception. An unknown is not a type
+     * the operator graded as uninteresting, it is a crop the classifier could not name, and it
+     * may well be the critical fastener the slot is asking about. Excluding it would report
+     * physically-present hardware as missing, which is the more misleading of the two errors.
      */
     private FeatureLocalisation.Result runLocalisation() {
         if (referenceLayout == null) {
@@ -1288,7 +1311,7 @@ public class ResultsFragment extends Fragment {
                     FeatureTypeRegistry.severityOf(requireContext(), f.type);
             if (severity == FeatureTypeRegistry.Severity.CRITICAL) criticalTypes.add(f.type);
             boolean eligible = ReferenceLibrary.UNKNOWN.equals(f.type)
-                    || severity != FeatureTypeRegistry.Severity.IGNORED;
+                    || severity == FeatureTypeRegistry.Severity.CRITICAL;
             if (!eligible) continue;
             rects.add(f.rectFraction);
             types.add(f.type);
@@ -1632,6 +1655,7 @@ public class ResultsFragment extends Fragment {
                             f.foundType == null ? null
                                     : FeatureTypeRegistry.displayName(requireContext(), f.foundType),
                             f.status.name(), f.x, f.y, f.relX, f.relY,
+                            f.status == FeatureLocalisation.Status.DISPLACED ? f.offset : null,
                             FeatureLocalisation.zone(f.relX, f.relY)));
                 }
                 if (!slotRows.isEmpty()) {

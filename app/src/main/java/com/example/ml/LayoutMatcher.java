@@ -162,6 +162,24 @@ public final class LayoutMatcher {
             return apply(transform, new float[]{x, y});
         }
 
+        /**
+         * The reverse of {@link #project}: maps a point in this photo back into layout
+         * coordinates, or null when no alignment was found.
+         *
+         * Lets a caller measure how far a detection sits from the slot it probably belongs to
+         * in the layout's own frame, which is the only frame where "a fifth of the way across
+         * the part" means anything. Measuring in photo coordinates would fold the operator's
+         * distance from the part into the answer.
+         */
+        public float[] unproject(float x, float y) {
+            if (!aligned || transform == null) return null;
+            double a = transform[0], b = transform[1];
+            double det = a * a + b * b;
+            if (det < 1e-12) return null;
+            double dx = x - transform[2], dy = y - transform[3];
+            return new float[]{(float) ((a * dx + b * dy) / det), (float) ((a * dy - b * dx) / det)};
+        }
+
         public String describe() {
             if (!aligned) return "could not align to reference layout";
             return String.format(Locale.US, "%d matched, %d missing, %d unexpected",
@@ -230,9 +248,23 @@ public final class LayoutMatcher {
         Random rng = new Random(12345);
         double[] bestTransform = null;
         int bestInliers = 0;
+        double bestRotation = Double.MAX_VALUE;
+        boolean[] used = new boolean[features.size()];
 
-        // Typed pass runs first and ties are kept (strict >), so an alignment that also agrees
-        // on type wins over an equally-scoring one that only agrees on position.
+        // Both pools are scored on positional support alone. Ties are broken by the smaller
+        // rotation, never by type agreement.
+        //
+        // Preferring the type-consistent alignment on a tie looked harmless and is in fact the
+        // one rule guaranteed to hide the defect being looked for. A near-symmetric layout —
+        // four fasteners at the corners of a parallelogram — maps onto itself under a half
+        // turn, so "every fastener swapped" and "nothing wrong, photographed upside down" have
+        // identical positional support. Given the choice, the typed preference took the second
+        // reading every time and reported a fully swapped part as all present.
+        //
+        // Least rotation is the honest tiebreak here because the capture workflow already
+        // constrains it: the alignment gate makes the operator frame the part like the ghost
+        // overlay, so a half-turn interpretation is a priori implausible in a way a small
+        // freehand rotation is not.
         for (List<int[]> pool : java.util.Arrays.asList(typedCandidates, allCandidates)) {
             if (pool.size() < 2) continue;
             for (int iter = 0; iter < ITERATIONS; iter++) {
@@ -243,15 +275,12 @@ public final class LayoutMatcher {
                 double[] t = similarityFrom(slotPts[a[0]], slotPts[b[0]], featPts[a[1]], featPts[b[1]]);
                 if (t == null) continue;
 
-                int inliers = 0;
-                for (int s = 0; s < slots.size(); s++) {
-                    float[] projected = apply(t, slotPts[s]);
-                    for (int f = 0; f < features.size(); f++) {
-                        if (dist(projected, featPts[f]) <= tolerance) { inliers++; break; }
-                    }
-                }
-                if (inliers > bestInliers) {
+                int inliers = countInliers(t, slotPts, featPts, tolerance, used);
+                if (inliers < bestInliers) continue;
+                double rotation = Math.abs(Math.atan2(t[1], t[0]));
+                if (inliers > bestInliers || rotation < bestRotation) {
                     bestInliers = inliers;
+                    bestRotation = rotation;
                     bestTransform = t;
                 }
             }
@@ -259,8 +288,11 @@ public final class LayoutMatcher {
 
         int required = requiredInliers(slots.size());
         if (bestTransform == null || bestInliers < required) {
-            Log.d(TAG, "Alignment failed (best inliers " + bestInliers
-                    + ", needed " + required + " of " + slots.size() + " slots)");
+            Log.d(TAG, String.format(Locale.US,
+                    "Alignment failed (best inliers %d, needed %d of %d slots; %d candidate"
+                            + " detections, tolerance %.4f of a spread of %.4f)",
+                    bestInliers, required, slots.size(), features.size(), tolerance, spread));
+            logResiduals(bestTransform, slotPts, featPts);
             return new Result(false, null, slots.size(), bestInliers, required);
         }
 
@@ -297,6 +329,23 @@ public final class LayoutMatcher {
         }
 
         Log.d(TAG, "Layout match: " + result.describe());
+        for (Match m : result.matches) {
+            FeatureLayout.Slot slot = layout.slotById(m.slotId);
+            Log.d(TAG, String.format(Locale.US,
+                    "  slot %d (%s) <- detection %d (%s), residual %.4f%s",
+                    m.slotId, slot == null ? "?" : slot.type, m.featureIndex,
+                    types.get(m.featureIndex), m.residual, m.typeMismatch ? "   TYPE MISMATCH" : ""));
+        }
+        for (Integer slotId : result.missingSlotIds) {
+            FeatureLayout.Slot slot = layout.slotById(slotId);
+            Log.d(TAG, "  slot " + slotId + " (" + (slot == null ? "?" : slot.type)
+                    + ") matched nothing");
+        }
+        for (Integer f : result.unmatchedFeatureIndices) {
+            Log.d(TAG, String.format(Locale.US, "  detection %d (%s) at (%.3f, %.3f) unexpected",
+                    f, types.get(f), featPts[f][0], featPts[f][1]));
+        }
+        logResiduals(bestTransform, slotPts, featPts);
         return result;
     }
 
@@ -309,6 +358,68 @@ public final class LayoutMatcher {
         if (slotType == null || featureType == null) return false;
         if (ReferenceLibrary.UNKNOWN.equals(featureType)) return true;
         return slotType.equals(featureType);
+    }
+
+    /**
+     * Prints where the best transform put each slot and how far the nearest detection was.
+     *
+     * A bare inlier count says an alignment was refused but not why. These residuals separate
+     * the two causes that look identical from the outside: a part that genuinely does not
+     * match, versus a good correspondence sitting just outside a tolerance derived from a
+     * layout whose spread is small.
+     */
+    private static void logResiduals(double[] t, float[][] slotPts, float[][] featPts) {
+        if (t == null) {
+            Log.d(TAG, "  no transform survived — not enough distinct correspondences to sample");
+            return;
+        }
+        for (int s = 0; s < slotPts.length; s++) {
+            float[] projected = apply(t, slotPts[s]);
+            double best = Double.MAX_VALUE;
+            for (float[] featPt : featPts) best = Math.min(best, dist(projected, featPt));
+            Log.d(TAG, String.format(Locale.US,
+                    "  slot %d (%.3f, %.3f) -> (%.3f, %.3f), nearest detection %.4f away",
+                    s + 1, slotPts[s][0], slotPts[s][1], projected[0], projected[1], best));
+        }
+    }
+
+    /**
+     * How many slots a transform accounts for, counted <em>one-to-one</em>: each detection can
+     * satisfy at most one slot.
+     *
+     * This has to use the same rule as the assignment below, because the count is what decides
+     * whether the alignment is believed. Counting "does any detection land near this slot"
+     * let a single dense cluster satisfy many slots at once, so a transform that collapsed the
+     * layout onto a clump of scratches scored full marks and was accepted — and then the
+     * one-to-one assignment could only pair a couple of them, reporting the rest as missing on
+     * a part whose counts matched exactly.
+     *
+     * Greedy nearest-first per slot rather than a globally optimal matching: this runs inside
+     * the RANSAC loop, and the gate only needs a count that cannot exceed what assignment will
+     * actually achieve.
+     */
+    private static int countInliers(double[] t, float[][] slotPts, float[][] featPts,
+                                    double tolerance, boolean[] used) {
+        java.util.Arrays.fill(used, false);
+        int inliers = 0;
+        for (float[] slotPt : slotPts) {
+            float[] projected = apply(t, slotPt);
+            int best = -1;
+            double bestDist = tolerance;
+            for (int f = 0; f < featPts.length; f++) {
+                if (used[f]) continue;
+                double d = dist(projected, featPts[f]);
+                if (d <= bestDist) {
+                    bestDist = d;
+                    best = f;
+                }
+            }
+            if (best >= 0) {
+                used[best] = true;
+                inliers++;
+            }
+        }
+        return inliers;
     }
 
     /** RMS distance of a point set from its centroid — the layout's characteristic size. */

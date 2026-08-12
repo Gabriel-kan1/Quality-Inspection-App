@@ -39,6 +39,13 @@ public class SlotResult {
      */
     private float relX;
     private float relY;
+    /**
+     * For a DISPLACED finding, how far the detection sits from its position as a fraction of
+     * the part's extent. Null for every other status — boxed rather than a sentinel so the
+     * column can be added without rebuilding the table, and so "not applicable" is not
+     * confusable with "zero offset".
+     */
+    private Float offsetPct;
     /** Human-readable region, e.g. "upper right" — denormalised so the report needs no geometry. */
     private String zone;
 
@@ -46,7 +53,8 @@ public class SlotResult {
     }
 
     public SlotResult(long inspectionId, int slotId, String expectedType, String foundType,
-                      String status, float x, float y, float relX, float relY, String zone) {
+                      String status, float x, float y, float relX, float relY,
+                      Float offsetPct, String zone) {
         this.inspectionId = inspectionId;
         this.slotId = slotId;
         this.expectedType = expectedType;
@@ -56,6 +64,7 @@ public class SlotResult {
         this.y = y;
         this.relX = relX;
         this.relY = relY;
+        this.offsetPct = offsetPct;
         this.zone = zone;
     }
 
@@ -88,6 +97,9 @@ public class SlotResult {
 
     public float getRelY() { return relY; }
     public void setRelY(float relY) { this.relY = relY; }
+
+    public Float getOffsetPct() { return offsetPct; }
+    public void setOffsetPct(Float offsetPct) { this.offsetPct = offsetPct; }
 
     public String getZone() { return zone; }
     public void setZone(String zone) { this.zone = zone; }

@@ -18,7 +18,7 @@ import com.example.data.entity.ReferenceProfile;
 import com.example.data.entity.SlotResult;
 
 @Database(entities = {InspectionRecord.class, FeatureResult.class, ReferenceProfile.class,
-        ClassificationEvent.class, SlotResult.class}, version = 8, exportSchema = false)
+        ClassificationEvent.class, SlotResult.class}, version = 9, exportSchema = false)
 public abstract class AppDatabase extends RoomDatabase {
     private static volatile AppDatabase INSTANCE;
 
@@ -177,6 +177,22 @@ public abstract class AppDatabase extends RoomDatabase {
         }
     };
 
+    /**
+     * Adds SlotResult.offsetPct — how far a displaced feature sits from the position it
+     * belongs to, so the report can say "it is here, 12% off" instead of "missing".
+     *
+     * A plain ALTER this time rather than the rebuild the other column additions needed: the
+     * field is a boxed Float, so the column is nullable and SQLite does not demand a default
+     * for existing rows. Those rows predate the distinction and correctly read as null —
+     * nothing was ever measured for them.
+     */
+    static final Migration MIGRATION_8_9 = new Migration(8, 9) {
+        @Override
+        public void migrate(@NonNull SupportSQLiteDatabase db) {
+            db.execSQL("ALTER TABLE SlotResult ADD COLUMN offsetPct REAL");
+        }
+    };
+
     public static AppDatabase getInstance(final Context context) {
         if (INSTANCE == null) {
             synchronized (AppDatabase.class) {
@@ -184,7 +200,7 @@ public abstract class AppDatabase extends RoomDatabase {
                     INSTANCE = Room.databaseBuilder(context.getApplicationContext(),
                                     AppDatabase.class, "shop_quality_inspection_db")
                             .addMigrations(MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7,
-                                    MIGRATION_7_8)
+                                    MIGRATION_7_8, MIGRATION_8_9)
                             // Retained as a backstop for the older unversioned upgrade paths
                             // that shipped before MIGRATION_3_4 existed. Any NEW schema change
                             // should add its own Migration rather than rely on this.

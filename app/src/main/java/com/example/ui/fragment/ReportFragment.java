@@ -252,14 +252,16 @@ public class ReportFragment extends Fragment {
         }
         binding.cardReportLocalisation.setVisibility(View.VISIBLE);
 
-        int missing = 0, wrong = 0;
+        int missing = 0, wrong = 0, displaced = 0;
         for (SlotResult s : slotResults) {
             if ("MISSING".equals(s.getStatus())) missing++;
             else if ("WRONG_TYPE".equals(s.getStatus())) wrong++;
+            else if ("DISPLACED".equals(s.getStatus())) displaced++;
         }
         binding.tvReportLocalisationSummary.setText(String.format(Locale.getDefault(),
-                "%d of %d expected positions verified · %d missing · %d wrong type",
-                slotResults.size() - missing - wrong, slotResults.size(), missing, wrong));
+                "%d of %d expected positions verified · %d missing · %d wrong type · %d out of position",
+                slotResults.size() - missing - wrong - displaced, slotResults.size(),
+                missing, wrong, displaced));
 
         for (SlotResult s : slotResults) {
             LinearLayout row = new LinearLayout(getContext());
@@ -294,6 +296,10 @@ public class ReportFragment extends Fragment {
             if ("MISSING".equals(s.getStatus())) {
                 tvStatus.setText("MISSING");
                 tvStatus.setTextColor(ContextCompat.getColor(requireContext(), R.color.red_fail));
+            } else if ("DISPLACED".equals(s.getStatus())) {
+                tvStatus.setText(String.format(Locale.getDefault(), "%s%n%.0f%% off",
+                        s.getFoundType(), s.getOffsetPct() == null ? 0f : s.getOffsetPct() * 100));
+                tvStatus.setTextColor(ContextCompat.getColor(requireContext(), R.color.orange_warn));
             } else if ("WRONG_TYPE".equals(s.getStatus())) {
                 tvStatus.setText("WRONG:\n" + s.getFoundType());
                 tvStatus.setTextColor(ContextCompat.getColor(requireContext(), R.color.orange_warn));
@@ -479,16 +485,18 @@ public class ReportFragment extends Fragment {
                 locHeading.setSpacingAfter(4f);
                 document.add(locHeading);
 
-                int missing = 0, wrong = 0;
+                int missing = 0, wrong = 0, displaced = 0;
                 for (SlotResult s : slotResults) {
                     if ("MISSING".equals(s.getStatus())) missing++;
                     else if ("WRONG_TYPE".equals(s.getStatus())) wrong++;
+                    else if ("DISPLACED".equals(s.getStatus())) displaced++;
                 }
                 Paragraph locBlurb = new Paragraph(String.format(Locale.getDefault(),
-                        "%d of %d expected positions verified, %d missing, %d wrong type."
-                                + " Positions are given as a region of the part with fractional"
-                                + " coordinates from its top-left.",
-                        slotResults.size() - missing - wrong, slotResults.size(), missing, wrong),
+                        "%d of %d expected positions verified, %d missing, %d wrong type,"
+                                + " %d out of position. Positions are given as a region of the"
+                                + " part with coordinates relative to its own extent.",
+                        slotResults.size() - missing - wrong - displaced, slotResults.size(),
+                        missing, wrong, displaced),
                         bodyFont);
                 locBlurb.setSpacingAfter(10f);
                 document.add(locBlurb);
@@ -513,9 +521,18 @@ public class ReportFragment extends Fragment {
                     PdfPCell c3 = new PdfPCell(new Phrase(String.format(Locale.getDefault(),
                             "%s (%.0f%%, %.0f%%)", s.getZone(), s.getRelX() * 100, s.getRelY() * 100), bodyFont));
                     c3.setPadding(6f);
-                    String resultText = "MISSING".equals(s.getStatus()) ? "MISSING"
-                            : ("WRONG_TYPE".equals(s.getStatus())
-                                ? "WRONG TYPE: " + s.getFoundType() : "PRESENT");
+                    String resultText;
+                    if ("MISSING".equals(s.getStatus())) {
+                        resultText = "MISSING";
+                    } else if ("WRONG_TYPE".equals(s.getStatus())) {
+                        resultText = "WRONG TYPE: " + s.getFoundType();
+                    } else if ("DISPLACED".equals(s.getStatus())) {
+                        resultText = String.format(Locale.getDefault(), "%s, %.0f%% OUT OF POSITION",
+                                s.getFoundType(),
+                                s.getOffsetPct() == null ? 0f : s.getOffsetPct() * 100);
+                    } else {
+                        resultText = "PRESENT";
+                    }
                     PdfPCell c4 = new PdfPCell(new Phrase(resultText, defect ? boldBodyFont : bodyFont));
                     c4.setHorizontalAlignment(Element.ALIGN_CENTER);
                     c4.setPadding(6f);

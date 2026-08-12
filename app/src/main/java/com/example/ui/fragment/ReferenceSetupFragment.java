@@ -258,11 +258,11 @@ public class ReferenceSetupFragment extends Fragment {
             FeatureTypeRegistry.Severity severity =
                     unknown ? null : FeatureTypeRegistry.severityOf(requireContext(), type);
 
-            // Mirrors the layout builder: unclassified detections are never landmarks, and an
-            // IGNORED type is background by the operator's own grading.
-            if (!unknown && severity != FeatureTypeRegistry.Severity.IGNORED) {
+            // Mirrors the layout builder: localisation sees critical hardware and nothing
+            // else, so those are the only detections that become landmarks.
+            if (!unknown && severity == FeatureTypeRegistry.Severity.CRITICAL) {
                 landmarks += count;
-                if (severity == FeatureTypeRegistry.Severity.CRITICAL) criticalSlots += count;
+                criticalSlots += count;
             }
 
             binding.layoutReferenceTypeRows.addView(
@@ -321,19 +321,19 @@ public class ReferenceSetupFragment extends Fragment {
                     + " positional check and nothing to pass or fail on. Re-grade a type as"
                     + " critical, or choose a photo where the hardware is clearer.";
         }
-        if (LayoutMatcher.tooSmallToRegister(landmarks)) {
+        if (LayoutMatcher.tooSmallToRegister(criticalSlots)) {
             return String.format(Locale.getDefault(),
-                    "Only %d usable landmark%s — too few to register a position against, so"
-                            + " localisation will be unavailable. Choose a photo where more"
-                            + " hardware is clearly visible.",
-                    landmarks, landmarks == 1 ? "" : "s");
+                    "Only %d critical feature%s — too few to register a position against, so"
+                            + " localisation will be unavailable. Localisation uses critical"
+                            + " hardware only; choose a photo where more of it is clearly"
+                            + " visible, or grade another type as critical.",
+                    criticalSlots, criticalSlots == 1 ? "" : "s");
         }
         return String.format(Locale.getDefault(),
-                "%d landmark%s for alignment, %d critical position%s reported. Localisation"
-                        + " will be available, and tolerates up to %d missing.",
-                landmarks, landmarks == 1 ? "" : "s",
+                "%d critical position%s tracked. Localisation will be available, and tolerates"
+                        + " up to %d of them being missing.",
                 criticalSlots, criticalSlots == 1 ? "" : "s",
-                landmarks - LayoutMatcher.requiredInliers(landmarks));
+                criticalSlots - LayoutMatcher.requiredInliers(criticalSlots));
     }
 
     // ── Reference labelling: every detection gets an explicit type ───────
@@ -756,6 +756,15 @@ public class ReferenceSetupFragment extends Fragment {
             layout.setReferenceUri(uri);
             for (int i = 0; i < chosen.length; i++) {
                 if (chosen[i] == null) continue;
+                // Critical types only, matching what the inspection side puts forward as
+                // candidates. Localisation is a claim about hardware with a place it is
+                // supposed to be; an advisory scratch has none, and a background patch is not
+                // a feature at all. A slot either side of that line could never be paired with
+                // anything, so it would sit in the layout as a permanent non-match, dragging
+                // the inlier count down and raising the bar it is measured against at once.
+                // One reference ended up with 18 of its 24 slots being bare surface.
+                if (FeatureTypeRegistry.severityOf(context, chosen[i])
+                        != FeatureTypeRegistry.Severity.CRITICAL) continue;
                 android.graphics.RectF r = features.get(i).rectFraction;
                 if (r == null) continue;
                 layout.addSlot(chosen[i], (r.left + r.right) / 2f, (r.top + r.bottom) / 2f);

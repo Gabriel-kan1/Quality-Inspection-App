@@ -3,6 +3,7 @@ package com.example.ml;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 import android.graphics.RectF;
@@ -106,37 +107,49 @@ public class FeatureLocalisationTest {
     }
 
     /**
-     * Registration draws on every non-ignored landmark, but the report is filtered to critical
-     * types. Building the layout from critical types alone shrank it below the size an
-     * alignment can be believed at, which is how changing a reference photo could make the
-     * whole positional check disappear.
+     * Non-critical types are excluded from the geometry, not merely from the report.
+     *
+     * A scratch has no place it is supposed to be, so it cannot occupy a slot or be missing
+     * from one — offering it as the occupant of a bolt head's position yields findings like
+     * "WRONG: Scratch", which is noise wearing the vocabulary of a defect.
      */
     @Test
-    public void advisoryLandmarksRegisterButAreNotReported() {
-        // Three bolt heads and two scratches: too few criticals alone to register against.
+    public void onlyCriticalTypesBecomeSlots() {
+        List<RectF> rects = Arrays.asList(
+                at(0.15f, 0.15f), at(0.85f, 0.20f), at(0.30f, 0.85f),
+                at(0.60f, 0.45f), at(0.45f, 0.70f));
+        List<String> types = Arrays.asList(
+                "bolt_head", "bolt_head", "bolt_head", "scratches", "surface");
+
+        FeatureLayout layout = FeatureLocalisation.layoutFrom(rects, types, CRITICAL);
+        assertEquals("only the bolt heads become slots", 3, layout.slots().size());
+        for (FeatureLayout.Slot s : layout.slots()) {
+            assertEquals("bolt_head", s.type);
+        }
+    }
+
+    /**
+     * The cost of critical-only, pinned so it is a decision rather than a surprise: a
+     * reference carrying only a few critical features can no longer borrow scratches to reach
+     * a registerable size, and reports the check as unavailable instead of guessing.
+     */
+    @Test
+    public void aReferenceWithTooFewCriticalFeaturesRefusesRatherThanBorrowLandmarks() {
         List<RectF> rects = Arrays.asList(
                 at(0.15f, 0.15f), at(0.85f, 0.20f), at(0.30f, 0.85f),
                 at(0.60f, 0.45f), at(0.45f, 0.70f));
         List<String> types = Arrays.asList(
                 "bolt_head", "bolt_head", "bolt_head", "scratches", "scratches");
 
-        Set<String> registration = new LinkedHashSet<>(Arrays.asList("bolt_head", "scratches"));
-        FeatureLayout layout = FeatureLocalisation.layoutFrom(rects, types, registration);
-        assertEquals("scratches must be usable as landmarks", 5, layout.slots().size());
+        FeatureLayout layout = FeatureLocalisation.layoutFrom(rects, types, CRITICAL);
+        assertEquals(3, layout.slots().size());
 
-        // One bolt head absent; everything else in place.
-        Detections d = shotOf(layout, java.util.Collections.singleton(3), null);
-        Set<String> reportOnly = new LinkedHashSet<>(Arrays.asList("bolt_head"));
+        Detections d = shotOf(layout, null, null);
         FeatureLocalisation.Result result =
-                FeatureLocalisation.localise(layout, d.rects, d.types, reportOnly);
+                FeatureLocalisation.localise(layout, d.rects, d.types, null);
 
-        assertTrue(result.aligned);
-        assertEquals("only the three bolt heads are reported", 3, result.findings.size());
-        assertEquals(1, result.countWithStatus(FeatureLocalisation.Status.MISSING));
-        assertEquals(FeatureLocalisation.Status.MISSING, findingFor(result, 3).status);
-        for (FeatureLocalisation.SlotFinding f : result.findings) {
-            assertEquals("bolt_head", f.expectedType);
-        }
+        assertFalse(result.aligned);
+        assertTrue(result.unavailableReason.contains("Reference photo"));
     }
 
     /**
@@ -526,6 +539,132 @@ public class FeatureLocalisationTest {
         assertFalse(result.aligned);
         assertTrue(result.findings.isEmpty());
         assertFalse(result.hasPositionalDefect());
+    }
+
+    /**
+     * A fastener fitted off its position must be reported as off, not as absent.
+     *
+     * "The bolt is missing" sends the operator looking for a part that is sitting in front of
+     * them a few millimetres out. The nearest otherwise-unaccounted-for detection is offered
+     * instead, with the distance, so the two faults can be told apart.
+     */
+    @Test
+    public void anOffsetFastenerIsReportedWithHowFarOffItIs() {
+        FeatureLayout layout = referenceLayout();
+        // Slots 1, 2, 3, 5 in place; slot 4's fastener sits well outside matching tolerance.
+        Detections d = shotOf(layout, java.util.Collections.singleton(4), null);
+        FeatureLayout.Slot four = layout.slotById(4);
+        d.rects.add(at(four.x - 0.10f, four.y - 0.10f));
+        d.types.add("bolt_head");
+
+        FeatureLocalisation.Result result =
+                FeatureLocalisation.localise(layout, d.rects, d.types, null);
+
+        assertTrue(result.aligned);
+        assertEquals("it is present, just not where it belongs",
+                0, result.countWithStatus(FeatureLocalisation.Status.MISSING));
+        assertEquals(1, result.countWithStatus(FeatureLocalisation.Status.DISPLACED));
+
+        FeatureLocalisation.SlotFinding off = findingFor(result, 4);
+        assertEquals(FeatureLocalisation.Status.DISPLACED, off.status);
+        assertEquals("bolt_head", off.foundType);
+        assertTrue("an offset must be measured", off.offset > 0f);
+        assertTrue(off.offset <= FeatureLocalisation.DISPLACEMENT_LIMIT);
+        assertTrue("a displaced fastener is still a defect", result.hasPositionalDefect());
+    }
+
+    /** Beyond the limit there is nothing credible to point at, so it stays MISSING. */
+    @Test
+    public void aFarAwayDetectionIsNotOfferedAsTheMissingOne() {
+        FeatureLayout layout = referenceLayout();
+        Detections d = shotOf(layout, java.util.Collections.singleton(4), null);
+        // Nowhere near slot 4, and nowhere near anything else either.
+        d.rects.add(at(0.02f, 0.02f));
+        d.types.add("bolt_head");
+
+        FeatureLocalisation.Result result =
+                FeatureLocalisation.localise(layout, d.rects, d.types, null);
+
+        assertTrue(result.aligned);
+        assertEquals(1, result.countWithStatus(FeatureLocalisation.Status.MISSING));
+        assertEquals(0, result.countWithStatus(FeatureLocalisation.Status.DISPLACED));
+        assertNull(findingFor(result, 4).foundType);
+    }
+
+    /** Two empty positions must not both blame the same stray detection. */
+    @Test
+    public void oneStrayDetectionExplainsAtMostOnePosition() {
+        FeatureLayout layout = referenceLayout();
+        Detections d = shotOf(layout,
+                new LinkedHashSet<>(Arrays.asList(1, 4)), null);
+        FeatureLayout.Slot one = layout.slotById(1);
+        d.rects.add(at(one.x + 0.08f, one.y + 0.08f));
+        d.types.add("bolt_head");
+
+        FeatureLocalisation.Result result =
+                FeatureLocalisation.localise(layout, d.rects, d.types, null);
+
+        assertTrue(result.aligned);
+        assertEquals("only one position can claim the stray detection",
+                1, result.countWithStatus(FeatureLocalisation.Status.DISPLACED));
+        assertEquals(1, result.countWithStatus(FeatureLocalisation.Status.MISSING));
+    }
+
+    /**
+     * A fully swapped part on a symmetric layout must read as swapped, not as correct.
+     *
+     * Four fasteners at the corners of a rectangle map onto themselves under a half turn, so
+     * "every fastener swapped" and "nothing wrong, photographed upside down" have identical
+     * positional support — a genuine tie. Type agreement used to break it, which is the one
+     * rule guaranteed to pick the reading that hides the defect: rotating the layout 180°
+     * lands every stud slot on a stud and every screw slot on a screw, and the report came
+     * back all-present on a part where nothing was in the right place.
+     */
+    @Test
+    public void aSwappedPartOnASymmetricLayoutIsNotReportedAsCorrect() {
+        List<RectF> rects = Arrays.asList(
+                at(0.30f, 0.70f), at(0.50f, 0.70f), at(0.30f, 0.40f), at(0.50f, 0.40f));
+        List<String> layoutTypes = Arrays.asList("stud", "screw", "stud", "screw");
+        FeatureLayout layout = FeatureLocalisation.layoutFrom(rects, layoutTypes, CRITICAL);
+
+        // Same four positions, hardware swapped at every one of them.
+        List<String> foundTypes = Arrays.asList("screw", "stud", "screw", "stud");
+
+        FeatureLocalisation.Result result =
+                FeatureLocalisation.localise(layout, rects, foundTypes, null);
+
+        assertTrue(result.aligned);
+        assertEquals("every position holds the wrong hardware",
+                4, result.countWithStatus(FeatureLocalisation.Status.WRONG_TYPE));
+        assertEquals(0, result.countWithStatus(FeatureLocalisation.Status.PRESENT));
+        assertTrue(result.hasPositionalDefect());
+    }
+
+    /**
+     * A handful of detections must not be able to satisfy a whole layout.
+     *
+     * Inliers used to be counted as "does any detection land near this slot", so one dense
+     * clump could vouch for every slot at once: a transform that collapsed the layout onto a
+     * cluster of scratches scored full marks and was accepted, and the one-to-one assignment
+     * that follows could then only pair a couple of them — reporting the rest as missing on a
+     * part whose counts matched exactly. Counting one-to-one closes that gap.
+     */
+    @Test
+    public void aTinyClusterCannotVouchForEveryPosition() {
+        List<RectF> rects = Arrays.asList(
+                at(0.10f, 0.10f), at(0.90f, 0.10f), at(0.10f, 0.90f),
+                at(0.90f, 0.90f), at(0.50f, 0.30f), at(0.50f, 0.70f));
+        List<String> types = java.util.Collections.nCopies(6, "bolt_head");
+        FeatureLayout layout = FeatureLocalisation.layoutFrom(rects, types, CRITICAL);
+        assertEquals(6, layout.slots().size());
+
+        // Two detections, close together: nothing here can account for six positions.
+        List<RectF> found = Arrays.asList(at(0.50f, 0.50f), at(0.54f, 0.52f));
+        List<String> foundTypes = Arrays.asList("bolt_head", "bolt_head");
+
+        FeatureLocalisation.Result result =
+                FeatureLocalisation.localise(layout, found, foundTypes, null);
+        assertFalse("two detections cannot verify six positions", result.aligned);
     }
 
     /**

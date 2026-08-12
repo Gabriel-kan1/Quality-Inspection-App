@@ -17,23 +17,26 @@ import java.util.Locale;
  * the defects a positional check exists to catch, and they are invisible to everything else
  * in the pipeline.
  *
- * <h3>Register on everything, report on critical</h3>
- * Two different sets are in play, and conflating them was a real bug.
+ * <h3>Critical hardware only</h3>
+ * Slots, candidate detections and reported findings are all restricted to critical types.
  *
- * <b>Registration</b> — recovering the transform between the reference and this photo — is
- * pure geometry, and every stable landmark helps. It uses all classified detections the
- * operator considers real features, i.e. everything except {@code IGNORED} types. Those are
- * excluded because an operator declares a type ignored precisely when it is background
- * (bare surface, shadow, panel texture): such detections move between shots and would be
- * outliers, not landmarks.
+ * Localisation is a claim about hardware that has a place it is supposed to be. An advisory
+ * type does not: a scratch has no fixed location, so it cannot be missing from one, and
+ * offering it as the occupant of a bolt head's position produces findings like
+ * "WRONG: Scratch" — noise wearing the vocabulary of a defect. An ignored type is not a
+ * feature at all. Both are excluded from the geometry as well as from the report.
  *
- * <b>Reporting</b> is filtered to critical types, which is what the operator asked for. An
- * advisory finding like a scratch has no fixed location to expect it in, so calling one
- * "missing" from where it last appeared would be meaningless.
+ * The cost is a smaller layout. Registration genuinely is easier with more landmarks, and
+ * advisory detections are usable ones, so a reference whose critical hardware is sparse will
+ * now report localisation as unavailable where it previously scraped an alignment together
+ * from scratches. That is the intended trade: an alignment resting on scratches rests on
+ * things that move between shots, and a confident wrong answer is worse than an honest
+ * refusal. {@code tooSmallToRegister} is what turns the shortfall into that refusal.
  *
- * Building the layout from critical types alone conflated the two and made registration fail
- * on perfectly good photos: a reference whose five detections included two scratches yielded a
- * three-slot layout, too small to align against at all.
+ * The one exception is an unclassified detection, which stays eligible as a candidate — see
+ * {@code ResultsFragment.runLocalisation}. "unknown" is not a type the operator graded as
+ * uninteresting; it is a crop the classifier could not name, and it may well be the critical
+ * fastener a slot is asking about.
  *
  * <h3>Coordinates</h3>
  * Everything here is in the reference photo's fractional (0-1) space. Positions are reported
@@ -65,8 +68,16 @@ public final class FeatureLocalisation {
     public enum Status {
         /** A feature of the expected type was found at this slot. */
         PRESENT,
-        /** Nothing was found here. The specific defect count comparison cannot localise. */
+        /** Nothing was found here, and nothing nearby could plausibly be it. */
         MISSING,
+        /**
+         * Nothing landed close enough to count as occupying this position, but an otherwise
+         * unaccounted-for detection sits near it. Reported with how far off it is, because
+         * "the fastener is absent" and "the fastener is fitted a fifth of the way off" are
+         * different faults with different causes, and collapsing both into MISSING sends the
+         * operator looking for a part that is actually in front of them.
+         */
+        DISPLACED,
         /** Something is here, but it is not the type this position expects. */
         WRONG_TYPE
     }
@@ -120,6 +131,11 @@ public final class FeatureLocalisation {
         public final float projectedY;
         public final Status status;
         /**
+         * How far the {@link Status#DISPLACED} detection sits from where it belongs, as a
+         * fraction of the part's own extent. -1 for every other status.
+         */
+        public final float offset;
+        /**
          * Index into the inspection's feature list, or -1 when nothing matched. Lets the UI
          * tie a finding back to the box the operator can see and tap.
          */
@@ -127,7 +143,8 @@ public final class FeatureLocalisation {
 
         SlotFinding(int slotId, int displayNumber, String expectedType, String foundType,
                     float x, float y, float relX, float relY,
-                    float projectedX, float projectedY, Status status, int featureIndex) {
+                    float projectedX, float projectedY, Status status, float offset,
+                    int featureIndex) {
             this.slotId = slotId;
             this.displayNumber = displayNumber;
             this.expectedType = expectedType;
@@ -139,13 +156,14 @@ public final class FeatureLocalisation {
             this.projectedX = projectedX;
             this.projectedY = projectedY;
             this.status = status;
+            this.offset = offset;
             this.featureIndex = featureIndex;
         }
 
         /** Copy with a display number assigned, once the reported set is known and sorted. */
         SlotFinding numbered(int n) {
             return new SlotFinding(slotId, n, expectedType, foundType, x, y, relX, relY,
-                    projectedX, projectedY, status, featureIndex);
+                    projectedX, projectedY, status, offset, featureIndex);
         }
 
         /**
@@ -193,16 +211,23 @@ public final class FeatureLocalisation {
 
         /** True when any expected position is unaccounted for or holds the wrong hardware. */
         public boolean hasPositionalDefect() {
-            return countWithStatus(Status.MISSING) > 0 || countWithStatus(Status.WRONG_TYPE) > 0;
+            // Displaced counts: hardware fitted off its position is a defect, not a near-pass.
+            return countWithStatus(Status.MISSING) > 0
+                    || countWithStatus(Status.WRONG_TYPE) > 0
+                    || countWithStatus(Status.DISPLACED) > 0;
         }
 
         public String summary() {
             if (!aligned) {
                 return unavailableReason == null ? "Positional check unavailable." : unavailableReason;
             }
-            return String.format(Locale.US, "%d of %d expected positions verified, %d missing, %d wrong type.",
+            StringBuilder sb = new StringBuilder(String.format(Locale.US,
+                    "%d of %d expected positions verified, %d missing, %d wrong type",
                     countWithStatus(Status.PRESENT), findings.size(),
-                    countWithStatus(Status.MISSING), countWithStatus(Status.WRONG_TYPE));
+                    countWithStatus(Status.MISSING), countWithStatus(Status.WRONG_TYPE)));
+            int displaced = countWithStatus(Status.DISPLACED);
+            if (displaced > 0) sb.append(", ").append(displaced).append(" out of position");
+            return sb.append('.').toString();
         }
     }
 
@@ -214,11 +239,12 @@ public final class FeatureLocalisation {
 
     /** Builds one finding, with the display number left to be assigned after sorting. */
     private static SlotFinding finding(FeatureLayout.Slot slot, String foundType, float[] env,
-                                       LayoutMatcher.Result match, Status status, int featureIndex) {
+                                       LayoutMatcher.Result match, Status status, float offset,
+                                       int featureIndex) {
         float[] p = match.project(slot.x, slot.y);
         return new SlotFinding(slot.id, 0, slot.type, foundType, slot.x, slot.y,
                 relative(slot.x, env[0], env[2]), relative(slot.y, env[1], env[3]),
-                p == null ? -1f : p[0], p == null ? -1f : p[1], status, featureIndex);
+                p == null ? -1f : p[0], p == null ? -1f : p[1], status, offset, featureIndex);
     }
 
     /**
@@ -228,6 +254,35 @@ public final class FeatureLocalisation {
      * range.
      */
     private static final float MIN_ENVELOPE_EXTENT = 0.02f;
+
+    /**
+     * How far a stray detection may sit from an empty position and still be offered as the
+     * thing that belongs there, as a fraction of the part's extent.
+     *
+     * Half the part is deliberately generous — the point is to tell the operator "it is here,
+     * just off" rather than send them hunting for absent hardware. Past that the claim stops
+     * being useful: a detection more than half a part away is at least as close to some other
+     * position, so naming this one would be a guess dressed up as a measurement.
+     */
+    public static final float DISPLACEMENT_LIMIT = 0.5f;
+
+    /**
+     * Distance from a slot to a detection, in the layout's own frame, as a fraction of the
+     * part's extent. Negative when it cannot be computed.
+     *
+     * The detection is mapped back through the alignment rather than the slot mapped forward,
+     * so the answer is in the frame the part is described in. Measuring in photo coordinates
+     * would fold how close the operator stood into a number presented as a property of the part.
+     */
+    private static float offsetFrom(FeatureLayout.Slot slot, RectF rect, float[] env,
+                                    LayoutMatcher.Result match) {
+        if (rect == null) return -1f;
+        float[] back = match.unproject((rect.left + rect.right) / 2f, (rect.top + rect.bottom) / 2f);
+        if (back == null) return -1f;
+        double extent = Math.hypot(env[2], env[3]);
+        if (!(extent > 1e-6)) return -1f;
+        return (float) (Math.hypot(back[0] - slot.x, back[1] - slot.y) / extent);
+    }
 
     /**
      * Bounding box of every slot in the layout, as {@code [minX, minY, spanX, spanY]} — the
@@ -351,12 +406,33 @@ public final class FeatureLocalisation {
             if (slot == null || !reported(slot.type, reportTypes)) continue;
             String found = m.featureIndex < featureTypes.size() ? featureTypes.get(m.featureIndex) : null;
             result.findings.add(finding(slot, found, env, match,
-                    m.typeMismatch ? Status.WRONG_TYPE : Status.PRESENT, m.featureIndex));
+                    m.typeMismatch ? Status.WRONG_TYPE : Status.PRESENT, -1f, m.featureIndex));
         }
+        // Detections that matched no slot, still available to explain an empty position.
+        // Claimed at most once, so two empty slots cannot both blame the same stray feature.
+        List<Integer> spare = new ArrayList<>(match.unmatchedFeatureIndices);
         for (Integer slotId : match.missingSlotIds) {
             FeatureLayout.Slot slot = layout.slotById(slotId);
             if (slot == null || !reported(slot.type, reportTypes)) continue;
-            result.findings.add(finding(slot, null, env, match, Status.MISSING, -1));
+
+            int nearest = -1;
+            float nearestOffset = Float.MAX_VALUE;
+            for (Integer f : spare) {
+                if (f == null || f < 0 || f >= featureRects.size()) continue;
+                float o = offsetFrom(slot, featureRects.get(f), env, match);
+                if (o >= 0 && o < nearestOffset) {
+                    nearestOffset = o;
+                    nearest = f;
+                }
+            }
+            if (nearest >= 0 && nearestOffset <= DISPLACEMENT_LIMIT) {
+                spare.remove(Integer.valueOf(nearest));
+                String found = nearest < featureTypes.size() ? featureTypes.get(nearest) : null;
+                result.findings.add(finding(slot, found, env, match,
+                        Status.DISPLACED, nearestOffset, nearest));
+            } else {
+                result.findings.add(finding(slot, null, env, match, Status.MISSING, -1f, -1));
+            }
         }
 
         // Slot order, not match order: the operator reads this list against a numbered part,
