@@ -131,9 +131,14 @@ public class HistoryFragment extends Fragment {
                 holder.ivThumb.setImageResource(android.R.drawable.ic_menu_camera);
             }
 
+            // Three states, not two: an inspection run without a reference image compared
+            // nothing, and must not fall through to FAIL any more than to PASS.
             if ("PASS".equalsIgnoreCase(rec.getPassOrFail())) {
                 holder.tvStatus.setText("PASS");
                 holder.tvStatus.setBackgroundColor(ContextCompat.getColor(requireContext(), R.color.green_pass));
+            } else if ("UNVERIFIED".equalsIgnoreCase(rec.getPassOrFail())) {
+                holder.tvStatus.setText("UNVERIFIED");
+                holder.tvStatus.setBackgroundColor(ContextCompat.getColor(requireContext(), R.color.orange_warn));
             } else {
                 holder.tvStatus.setText("FAIL");
                 holder.tvStatus.setBackgroundColor(ContextCompat.getColor(requireContext(), R.color.red_fail));

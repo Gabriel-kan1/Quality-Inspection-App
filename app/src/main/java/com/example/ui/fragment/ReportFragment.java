@@ -108,9 +108,14 @@ public class ReportFragment extends Fragment {
                             : record.getNotes());
 
                     // Verdict handling
+                    // UNVERIFIED is its own verdict — see ResultsFragment.Verdict. Folding it
+                    // into the FAIL branch would report a discrepancy that was never measured.
                     if ("PASS".equalsIgnoreCase(record.getPassOrFail())) {
                         binding.tvReportVerdict.setText("PASS");
                         binding.tvReportVerdict.setBackgroundColor(ContextCompat.getColor(requireContext(), R.color.green_pass));
+                    } else if ("UNVERIFIED".equalsIgnoreCase(record.getPassOrFail())) {
+                        binding.tvReportVerdict.setText("UNVERIFIED");
+                        binding.tvReportVerdict.setBackgroundColor(ContextCompat.getColor(requireContext(), R.color.orange_warn));
                     } else {
                         binding.tvReportVerdict.setText("FAIL");
                         binding.tvReportVerdict.setBackgroundColor(ContextCompat.getColor(requireContext(), R.color.red_fail));

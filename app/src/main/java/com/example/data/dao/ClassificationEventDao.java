@@ -30,6 +30,37 @@ public interface ClassificationEventDao {
     @Query("SELECT * FROM ClassificationEvent WHERE partId = :partId AND reviewed = 1 ORDER BY timestamp ASC")
     List<ClassificationEvent> getReviewedForPart(String partId);
 
+    /**
+     * The most recent {@code limit} human-labelled events for a part.
+     *
+     * <p>What ThresholdTuner actually needs. The unbounded variant above replays the entire
+     * history over a ~2000-point grid on every inspection, so its cost grows without limit as
+     * a part accumulates reviews — and the oldest reviews are the least representative of how
+     * the part is being photographed now.
+     */
+    @Query("SELECT * FROM ClassificationEvent WHERE partId = :partId AND reviewed = 1 "
+            + "ORDER BY timestamp DESC LIMIT :limit")
+    List<ClassificationEvent> getRecentReviewedForPart(String partId, int limit);
+
+    /**
+     * Crop paths whose events have not been reviewed yet, so pruning can spare them — the
+     * crop is the only evidence a later review could look at.
+     */
+    @Query("SELECT cropPath FROM ClassificationEvent WHERE partId = :partId "
+            + "AND reviewed = 0 AND cropPath IS NOT NULL")
+    List<String> getUnreviewedCropPaths(String partId);
+
+    /**
+     * Drops a part's events older than {@code cutoff}, keeping unreviewed ones (still
+     * actionable) and any tied to a saved inspection (part of a filed report's audit trail).
+     *
+     * <p>{@code inspectionId} is a primitive defaulting to -1 rather than a nullable column,
+     * so "not attached to an inspection" is {@code = -1}, not {@code IS NULL}.
+     */
+    @Query("DELETE FROM ClassificationEvent WHERE partId = :partId AND timestamp < :cutoff "
+            + "AND reviewed = 1 AND inspectionId = -1")
+    int deleteStaleForPart(String partId, long cutoff);
+
     @Query("SELECT COUNT(*) FROM ClassificationEvent WHERE partId = :partId AND reviewed = 1")
     int countReviewedForPart(String partId);
 

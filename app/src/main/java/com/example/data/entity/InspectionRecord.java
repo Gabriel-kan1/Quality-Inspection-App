@@ -9,7 +9,9 @@ public class InspectionRecord {
     private long id;
     private String partId;
     private long timestamp;
-    private String passOrFail; // "PASS" or "FAIL"
+    // "PASS", "FAIL", or "UNVERIFIED" when the part had no reference image to compare
+    // against, so no expected configuration existed. See ResultsFragment.Verdict.
+    private String passOrFail;
     private String imageUri;
     private String notes;
 

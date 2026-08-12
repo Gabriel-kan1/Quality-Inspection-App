@@ -50,6 +50,23 @@
                     android:textColor="@color/white"
                     android:textSize="14sp" />
 
+                <!-- Shown only when the inspected image failed the alignment gate, so a
+                     verdict computed on a badly framed photo says so on its face. -->
+                <TextView
+                    android:id="@+id/tv_alignment_warning"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:background="@color/orange_warn"
+                    android:padding="10dp"
+                    android:gravity="center"
+                    android:textColor="@color/black"
+                    android:textSize="13sp"
+                    android:textStyle="bold"
+                    android:visibility="gone"
+                    tools:visibility="visible"
+                    tools:text="⚠ IMAGE NOT ALIGNED — TOO FAR" />
+
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 
