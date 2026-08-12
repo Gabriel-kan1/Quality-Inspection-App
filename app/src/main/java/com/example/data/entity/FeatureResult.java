@@ -12,19 +12,24 @@ public class FeatureResult {
     private int expectedCount;
     private int detectedCount;
     private String status; // "PASS", "MISSING", "EXTRA"
-    /** Whether this feature type should appear in the exported report; set per-type by the user via FeatureTypeRegistry. */
-    private boolean critical = true;
+    /**
+     * How this feature type is reported, as a {@code FeatureTypeRegistry.Severity} level
+     * (0 ignored, 1 advisory, 2 critical). Snapshotted at save time rather than looked up
+     * when the report is opened: the registry is global and editable, so a later change to
+     * a type must not silently rewrite what an already-filed inspection reported.
+     */
+    private int severity = 2;
 
     public FeatureResult() {
     }
 
-    public FeatureResult(long inspectionId, String featureType, int expectedCount, int detectedCount, String status, boolean critical) {
+    public FeatureResult(long inspectionId, String featureType, int expectedCount, int detectedCount, String status, int severity) {
         this.inspectionId = inspectionId;
         this.featureType = featureType;
         this.expectedCount = expectedCount;
         this.detectedCount = detectedCount;
         this.status = status;
-        this.critical = critical;
+        this.severity = severity;
     }
 
     public long getId() {
@@ -75,11 +80,11 @@ public class FeatureResult {
         this.status = status;
     }
 
-    public boolean isCritical() {
-        return critical;
+    public int getSeverity() {
+        return severity;
     }
 
-    public void setCritical(boolean critical) {
-        this.critical = critical;
+    public void setSeverity(int severity) {
+        this.severity = severity;
     }
 }

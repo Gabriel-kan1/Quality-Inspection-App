@@ -21,13 +21,20 @@ import java.util.Random;
  * <h3>Approach</h3>
  * RANSAC over a similarity transform (uniform scale, rotation, translation). Two matched
  * point pairs determine such a transform exactly, so the search samples two candidate
- * correspondences of matching type, derives the transform they imply, and counts how many
- * other features then land near a slot. The transform with the most agreement wins.
+ * correspondences, derives the transform they imply, and counts how many other features then
+ * land near a slot. The transform with the most agreement wins.
  *
  * This is deliberately robust rather than exact: missing, extra and misplaced features are
  * precisely what the inspection is looking for, so the alignment must tolerate them instead
  * of being derailed by them. A least-squares fit over all points would be dragged by the
  * very defects being detected.
+ *
+ * <h3>Registration is positional, never conditional on type</h3>
+ * Inlier counting and slot assignment compare position only. That is what lets a stud sitting
+ * in a screw's hole be identified as <em>that slot, wrong hardware</em> rather than as the
+ * screw being missing and the stud being unexpected — which is the finding the whole
+ * positional check exists to produce. Type agreement is used to <em>prioritise</em> which
+ * correspondences to try first, never to decide what matches what.
  *
  * <h3>Why not use the calibration marker</h3>
  * Aligning by marker would be simpler, but would require it to sit in a fixed position
@@ -49,6 +56,57 @@ public final class LayoutMatcher {
     private static final int ITERATIONS = 400;
     /** Below this many features on either side there is nothing meaningful to align. */
     private static final int MIN_FEATURES = 2;
+    /**
+     * Inliers required before an alignment is believed at all.
+     *
+     * Two is not a threshold, it is a tautology: a similarity transform has four degrees of
+     * freedom and two point pairs supply exactly four constraints, so <em>any</em> two
+     * correspondences fit perfectly and score two inliers. Accepting that meant a photo of a
+     * different part could be "aligned" on a coincidence and then used to declare specific
+     * slots missing — confident, precise, and wrong. Three is the smallest count with any
+     * redundancy, so the third point is the first one that constitutes evidence.
+     */
+    private static final int MIN_INLIERS = 3;
+    /**
+     * ...and at least this share of the expected positions must be accounted for. Redundancy
+     * alone is not enough on a large layout: three of twenty slots agreeing is still mostly
+     * coincidence. Registering the part means recognising most of it.
+     *
+     * The cost is that a part missing more than half its hardware gets no positional report.
+     * That is the right trade — a defect that gross is caught by the count comparison anyway,
+     * and a misleading localisation is worse than an honest "cannot tell".
+     */
+    private static final float MIN_INLIER_FRACTION = 0.5f;
+
+    /**
+     * Inliers needed to believe an alignment of a layout this size.
+     *
+     * Capped at {@code slots - 1} so the requirement is always satisfiable while still leaving
+     * at least one position free to be reported missing. Without the cap the absolute floor
+     * dominates a small layout and demands perfection: a 3-slot layout needed 3 of 3, so a
+     * single absent fastener made the check disappear entirely — exactly the case it exists
+     * to report. A 2-slot layout could never align at all.
+     *
+     * Below {@link #MIN_INLIERS} slots there is nothing to cap toward, and the tautology the
+     * floor guards against is unavoidable, so those layouts are refused outright by
+     * {@link #tooSmallToRegister}.
+     */
+    public static int requiredInliers(int slots) {
+        int wanted = Math.max(MIN_INLIERS, (int) Math.ceil(slots * MIN_INLIER_FRACTION));
+        return Math.min(wanted, slots - 1);
+    }
+
+    /**
+     * Whether a layout is too small for any alignment to constitute evidence.
+     *
+     * A similarity transform has four degrees of freedom and two point pairs supply exactly
+     * four constraints, so two correspondences always fit perfectly. Corroborating that needs
+     * a third point to exist in the first place, and one more beyond it to have anywhere to
+     * report as missing.
+     */
+    public static boolean tooSmallToRegister(int slots) {
+        return slots < MIN_INLIERS + 1;
+    }
 
     /** One detected feature paired with the slot it was identified as. */
     public static final class Match {
@@ -75,9 +133,33 @@ public final class LayoutMatcher {
         public final List<Integer> unmatchedFeatureIndices = new ArrayList<>();
         /** Whether a transform was found at all. False means no positional claim is possible. */
         public final boolean aligned;
+        /**
+         * The winning similarity transform as {@code [a, b, tx, ty]}, or null when not aligned.
+         * Retained so callers can ask where a slot lands in <em>this</em> photo — without it a
+         * missing fastener can only be described in reference coordinates, which cannot be
+         * drawn on the image the operator is actually looking at.
+         */
+        private final double[] transform;
+        /** Diagnostics, so a refusal can say what was wrong rather than only that it failed. */
+        public final int slotCount;
+        public final int inlierCount;
+        public final int requiredInliers;
 
-        Result(boolean aligned) {
+        Result(boolean aligned, double[] transform, int slotCount, int inlierCount, int requiredInliers) {
             this.aligned = aligned;
+            this.transform = transform;
+            this.slotCount = slotCount;
+            this.inlierCount = inlierCount;
+            this.requiredInliers = requiredInliers;
+        }
+
+        /**
+         * Maps a layout position into this inspection photo's fractional coordinates, or
+         * returns null when no alignment was found.
+         */
+        public float[] project(float x, float y) {
+            if (!aligned || transform == null) return null;
+            return apply(transform, new float[]{x, y});
         }
 
         public String describe() {
@@ -104,7 +186,8 @@ public final class LayoutMatcher {
     public static Result match(FeatureLayout layout, List<RectF> features, List<String> types) {
         if (layout == null || layout.isEmpty() || features == null
                 || features.size() < MIN_FEATURES || layout.slots().size() < MIN_FEATURES) {
-            return new Result(false);
+            int slots = layout == null ? 0 : layout.slots().size();
+            return new Result(false, null, slots, 0, requiredInliers(Math.max(slots, 2)));
         }
 
         List<FeatureLayout.Slot> slots = layout.slots();
@@ -116,52 +199,74 @@ public final class LayoutMatcher {
         for (int i = 0; i < features.size(); i++) featPts[i] = centre(features.get(i));
 
         double spread = spreadOf(slotPts);
-        if (!(spread > 1e-6)) return new Result(false);
+        if (!(spread > 1e-6)) {
+            return new Result(false, null, slots.size(), 0, requiredInliers(slots.size()));
+        }
         double tolerance = spread * INLIER_TOLERANCE;
 
-        // Candidate correspondences, restricted to same-type pairs: type is independent
-        // evidence and pruning by it makes the sampling far more likely to hit a valid pair.
-        List<int[]> candidates = new ArrayList<>();
+        // Two candidate pools for seeding the transform.
+        //
+        // Same-type pairs first: type is independent evidence and pruning by it makes a
+        // random draw far more likely to hit a valid correspondence.
+        //
+        // But type agreement cannot be a *requirement*, because wrong hardware in the right
+        // hole is one of the defects this check exists to find. Restricting the seed pool to
+        // same-type pairs made alignment progressively less likely as substitutions grew —
+        // the search starved exactly as the defect got worse — and a part with every fastener
+        // swapped produced fewer than two candidates and no report at all. The second pool
+        // drops the type constraint so position alone can carry the registration.
+        List<int[]> typedCandidates = new ArrayList<>();
+        List<int[]> allCandidates = new ArrayList<>();
         for (int s = 0; s < slots.size(); s++) {
             for (int f = 0; f < features.size(); f++) {
-                if (typesAgree(slots.get(s).type, types.get(f))) candidates.add(new int[]{s, f});
+                allCandidates.add(new int[]{s, f});
+                if (typesAgree(slots.get(s).type, types.get(f))) typedCandidates.add(new int[]{s, f});
             }
         }
-        if (candidates.size() < 2) return new Result(false);
+        if (allCandidates.size() < 2) {
+            return new Result(false, null, slots.size(), 0, requiredInliers(slots.size()));
+        }
 
         Random rng = new Random(12345);
         double[] bestTransform = null;
         int bestInliers = 0;
 
-        for (int iter = 0; iter < ITERATIONS; iter++) {
-            int[] a = candidates.get(rng.nextInt(candidates.size()));
-            int[] b = candidates.get(rng.nextInt(candidates.size()));
-            if (a[0] == b[0] || a[1] == b[1]) continue;
+        // Typed pass runs first and ties are kept (strict >), so an alignment that also agrees
+        // on type wins over an equally-scoring one that only agrees on position.
+        for (List<int[]> pool : java.util.Arrays.asList(typedCandidates, allCandidates)) {
+            if (pool.size() < 2) continue;
+            for (int iter = 0; iter < ITERATIONS; iter++) {
+                int[] a = pool.get(rng.nextInt(pool.size()));
+                int[] b = pool.get(rng.nextInt(pool.size()));
+                if (a[0] == b[0] || a[1] == b[1]) continue;
 
-            double[] t = similarityFrom(slotPts[a[0]], slotPts[b[0]], featPts[a[1]], featPts[b[1]]);
-            if (t == null) continue;
+                double[] t = similarityFrom(slotPts[a[0]], slotPts[b[0]], featPts[a[1]], featPts[b[1]]);
+                if (t == null) continue;
 
-            int inliers = 0;
-            for (int s = 0; s < slots.size(); s++) {
-                float[] projected = apply(t, slotPts[s]);
-                for (int f = 0; f < features.size(); f++) {
-                    if (dist(projected, featPts[f]) <= tolerance) { inliers++; break; }
+                int inliers = 0;
+                for (int s = 0; s < slots.size(); s++) {
+                    float[] projected = apply(t, slotPts[s]);
+                    for (int f = 0; f < features.size(); f++) {
+                        if (dist(projected, featPts[f]) <= tolerance) { inliers++; break; }
+                    }
                 }
-            }
-            if (inliers > bestInliers) {
-                bestInliers = inliers;
-                bestTransform = t;
+                if (inliers > bestInliers) {
+                    bestInliers = inliers;
+                    bestTransform = t;
+                }
             }
         }
 
-        if (bestTransform == null || bestInliers < MIN_FEATURES) {
-            Log.d(TAG, "Alignment failed (best inliers " + bestInliers + ")");
-            return new Result(false);
+        int required = requiredInliers(slots.size());
+        if (bestTransform == null || bestInliers < required) {
+            Log.d(TAG, "Alignment failed (best inliers " + bestInliers
+                    + ", needed " + required + " of " + slots.size() + " slots)");
+            return new Result(false, null, slots.size(), bestInliers, required);
         }
 
         // Assign greedily by ascending residual so the closest pairings claim their partners
         // first, and neither a slot nor a feature can be used twice.
-        Result result = new Result(true);
+        Result result = new Result(true, bestTransform, slots.size(), bestInliers, required);
         boolean[] slotUsed = new boolean[slots.size()];
         boolean[] featUsed = new boolean[features.size()];
 

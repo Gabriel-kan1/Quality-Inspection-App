@@ -38,6 +38,27 @@ public class ChassisOverlayView extends View {
         }
     }
 
+    /**
+     * A position the reference layout expects a critical feature at, projected into this
+     * photo's coordinates. Drawn only for slots that are empty or hold the wrong hardware —
+     * the ones the operator has to go and look at.
+     */
+    public static class ExpectedSlot {
+        public final int slotId;
+        /** Centre, fractional (0-1) relative to view size. */
+        public final float x;
+        public final float y;
+        /** True when nothing was found here; false when something wrong was. */
+        public final boolean missing;
+
+        public ExpectedSlot(int slotId, float x, float y, boolean missing) {
+            this.slotId = slotId;
+            this.x = x;
+            this.y = y;
+            this.missing = missing;
+        }
+    }
+
     /** Notified when the user taps a detection, so the host screen can offer a correction. */
     public interface OnFeatureClickListener {
         void onFeatureClick(int index, DetectedFeature feature);
@@ -53,10 +74,13 @@ public class ChassisOverlayView extends View {
     private int cachedW = 0, cachedH = 0;
 
     private final List<DetectedFeature> features = new ArrayList<>();
+    private final List<ExpectedSlot> expectedSlots = new ArrayList<>();
     private final Paint paintRect = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint paintText = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint paintBackgroundMesh = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint paintSelected = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint paintSlot = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint paintSlotLabel = new Paint(Paint.ANTI_ALIAS_FLAG);
 
     private OnFeatureClickListener featureClickListener;
     private int selectedIndex = -1;
@@ -94,8 +118,28 @@ public class ChassisOverlayView extends View {
         paintSelected.setStrokeWidth(9f);
         paintSelected.setColor(Color.WHITE);
 
+        // Dashed, so an expected-but-absent position never reads as a detection. The detection
+        // boxes are solid; anything dashed on this overlay is somewhere to look, not something
+        // found.
+        paintSlot.setStyle(Paint.Style.STROKE);
+        paintSlot.setStrokeWidth(5f);
+        paintSlot.setPathEffect(new android.graphics.DashPathEffect(new float[]{14f, 10f}, 0f));
+
+        paintSlotLabel.setTextSize(24f);
+        paintSlotLabel.setFakeBoldText(true);
+
         touchPadding = 12f * getResources().getDisplayMetrics().density;
         setClickable(true);
+    }
+
+    /**
+     * Sets the expected positions to mark up. Pass an empty list to clear them — a stale set
+     * drawn after a correction would point the operator at a slot that has since been filled.
+     */
+    public void setExpectedSlots(List<ExpectedSlot> slots) {
+        expectedSlots.clear();
+        if (slots != null) expectedSlots.addAll(slots);
+        invalidate();
     }
 
     public void setOnFeatureClickListener(OnFeatureClickListener listener) {
@@ -287,6 +331,24 @@ public class ChassisOverlayView extends View {
             canvas.drawRect(left, top - 36f, left + 140f, top, tabPaint);
 
             canvas.drawText(feature.label, left + 8f, top - 10f, paintText);
+        }
+
+        // Expected positions last, so a marker is never hidden under a detection box drawn
+        // over it — the whole point is that these stay visible.
+        float radius = Math.min(viewWidth, viewHeight) * 0.045f;
+        for (ExpectedSlot slot : expectedSlots) {
+            float cx = slot.x * viewWidth;
+            float cy = slot.y * viewHeight;
+            int color = slot.missing ? Color.rgb(248, 113, 113) : Color.rgb(251, 191, 36);
+            paintSlot.setColor(color);
+            canvas.drawCircle(cx, cy, radius, paintSlot);
+            // Cross-hair through the centre: on a busy part a lone ring is easy to lose.
+            canvas.drawLine(cx - radius, cy, cx + radius, cy, paintSlot);
+            canvas.drawLine(cx, cy - radius, cx, cy + radius, paintSlot);
+
+            String label = "#" + slot.slotId;
+            paintSlotLabel.setColor(color);
+            canvas.drawText(label, cx + radius + 6f, cy - radius, paintSlotLabel);
         }
     }
 }

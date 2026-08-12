@@ -261,6 +261,50 @@
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 
+        <!-- Critical Feature Localisation (populated at runtime) -->
+        <com.google.android.material.card.MaterialCardView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="24dp"
+            app:cardBackgroundColor="@color/surface_card"
+            app:cardCornerRadius="16dp"
+            app:strokeColor="@color/gray_text_secondary"
+            app:strokeWidth="1dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="16dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="CRITICAL FEATURE LOCALISATION"
+                    android:textColor="@color/blue_primary"
+                    android:textSize="12sp"
+                    android:textStyle="bold"
+                    android:layout_marginBottom="8dp" />
+
+                <TextView
+                    android:id="@+id/tv_localisation_status"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Registering against the reference layout..."
+                    android:textColor="@color/white"
+                    android:textSize="12sp"
+                    android:lineSpacingExtra="3dp" />
+
+                <LinearLayout
+                    android:id="@+id/layout_localisation_rows"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:layout_marginTop="10dp" />
+
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
         <!-- Dimensional Measurement (populated at runtime) -->
         <com.google.android.material.card.MaterialCardView
             android:layout_width="match_parent"

@@ -25,9 +25,13 @@ import com.example.data.entity.ClassificationEvent;
 import com.example.data.entity.FeatureResult;
 import com.example.data.entity.InspectionRecord;
 import com.example.data.entity.ReferenceProfile;
+import com.example.data.entity.SlotResult;
 import com.example.databinding.FragmentResultsBinding;
+import com.example.ui.view.ChassisOverlayView;
 import com.example.ml.ActiveLearningPolicy;
 import com.example.ml.FeatureEmbedder;
+import com.example.ml.FeatureLayout;
+import com.example.ml.FeatureLocalisation;
 import com.example.ml.FeatureTypeRegistry;
 import com.example.ml.LearningCropStore;
 import com.example.ml.ReferenceLibrary;
@@ -73,6 +77,16 @@ public class ResultsFragment extends Fragment {
     private int reviewsThisRun = 0;
     /** Kept so overlay taps can correct a detection after the results screen is built. */
     private HardwareFeatureExtractor.AnalysisResult analysisResult;
+
+    // ── Positional check state ──
+    /**
+     * Expected arrangement of critical features, derived from the reference pass. Null when
+     * this part has no reference photo, which is what makes localisation unavailable rather
+     * than merely empty.
+     */
+    private FeatureLayout referenceLayout;
+    /** Latest positional findings. Recomputed after every live label correction. */
+    private FeatureLocalisation.Result localisation;
 
     @Override
     public void onCreate(@Nullable Bundle savedInstanceState) {
@@ -157,12 +171,14 @@ public class ResultsFragment extends Fragment {
             hasRealReference = ref != null && ref.getImageUri() != null
                     && !"dummy_placeholder".equals(ref.getImageUri());
             if (hasRealReference) {
-                // Null sink: the reference pass only contributes counts, so its crops are never
-                // written or retained. This pass previously doubled peak crop memory for nothing.
+                // Null sink: the reference pass only contributes counts and slot positions, so its
+                // crops are never written or retained. This pass previously doubled peak crop
+                // memory for nothing.
                 HardwareFeatureExtractor.AnalysisResult refResult =
                         HardwareFeatureExtractor.extractFeatures(requireContext(), ref.getImageUri(),
                                 activeLibrary, null);
                 countByType(refResult.features, expectedCounts);
+                referenceLayout = buildLayout(refResult.features);
             }
 
             // Active learning: rather than prompting on every unknown, ask only about the
@@ -243,20 +259,16 @@ public class ResultsFragment extends Fragment {
         // Ordered union of types (canonical order first, "unknown" last).
         orderedTypes = orderedUnion(expectedCounts.keySet(), detectedCounts.keySet());
 
-        // Discrepancy over known types only (ignore "unknown" noise).
-        hasDiscrepancy = false;
-        for (String type : orderedTypes) {
-            if (ReferenceLibrary.UNKNOWN.equals(type)) continue;
-            if (count(expectedCounts, type) != count(detectedCounts, type)) {
-                hasDiscrepancy = true;
-                break;
-            }
-        }
+        // Positional check before the verdict: a misplaced fastener is a failure the count
+        // comparison above cannot see.
+        localisation = runLocalisation();
+        hasDiscrepancy = computeDiscrepancy();
 
         if (activeResult.processedBitmap != null) {
             binding.ivCannyEdges.setImageBitmap(activeResult.processedBitmap);
         }
         binding.chassisOverlayView.setResultData(imageUri, activeResult.features);
+        binding.chassisOverlayView.setExpectedSlots(missingSlotMarkers());
         // Any detection can be corrected by tapping it, not just the ones the app chose to
         // ask about — the operator can see a wrong label the classifier was confident about.
         binding.chassisOverlayView.setOnFeatureClickListener((index, f) -> correctFeatureAt(index));
@@ -273,8 +285,90 @@ public class ResultsFragment extends Fragment {
 
         buildFeatureRows();
         buildLegend();
+        buildLocalisation();
         buildMeasurements();
         buildLearningStatus();
+    }
+
+    /**
+     * Ghost markers for expected positions that are empty or hold the wrong hardware, in this
+     * photo's coordinates. Present slots are left off: the operator can already see those as
+     * detection boxes, and doubling every one with a marker would bury the few that matter.
+     */
+    private List<ChassisOverlayView.ExpectedSlot> missingSlotMarkers() {
+        List<ChassisOverlayView.ExpectedSlot> markers = new ArrayList<>();
+        if (localisation == null || !localisation.aligned) return markers;
+        for (FeatureLocalisation.SlotFinding f : localisation.findings) {
+            if (f.status == FeatureLocalisation.Status.PRESENT) continue;
+            if (!f.hasProjection()) continue;
+            markers.add(new ChassisOverlayView.ExpectedSlot(f.displayNumber, f.projectedX, f.projectedY,
+                    f.status == FeatureLocalisation.Status.MISSING));
+        }
+        return markers;
+    }
+
+    /**
+     * Reports where each expected critical feature is, and which specific one is missing.
+     *
+     * When the photo could not be registered onto the reference layout the section says so
+     * explicitly instead of rendering empty. An unalignable shot and a part with every
+     * position correct look identical in an empty list, and only one of them is good news.
+     */
+    private void buildLocalisation() {
+        LinearLayout container = binding.layoutLocalisationRows;
+        container.removeAllViews();
+
+        if (localisation == null || !localisation.aligned) {
+            binding.tvLocalisationStatus.setText(localisation == null
+                    ? "Positional check not run." : localisation.summary());
+            return;
+        }
+
+        binding.tvLocalisationStatus.setText(localisation.summary());
+
+        for (FeatureLocalisation.SlotFinding f : localisation.findings) {
+            LinearLayout row = new LinearLayout(requireContext());
+            row.setOrientation(LinearLayout.HORIZONTAL);
+            row.setPadding(0, dp(5), 0, dp(5));
+
+            TextView slot = new TextView(requireContext());
+            slot.setLayoutParams(new LinearLayout.LayoutParams(dp(38), LinearLayout.LayoutParams.WRAP_CONTENT));
+            slot.setText("#" + f.displayNumber);
+            slot.setTextColor(ContextCompat.getColor(requireContext(), R.color.gray_text_secondary));
+            slot.setTextSize(13f);
+
+            TextView desc = new TextView(requireContext());
+            desc.setLayoutParams(new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+            String expected = FeatureTypeRegistry.displayName(requireContext(), f.expectedType);
+            desc.setText(expected + " — " + f.position());
+            desc.setTextColor(ContextCompat.getColor(requireContext(), R.color.white));
+            desc.setTextSize(13f);
+
+            TextView status = new TextView(requireContext());
+            status.setLayoutParams(new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+            status.setTextSize(12f);
+            status.setTypeface(android.graphics.Typeface.defaultFromStyle(android.graphics.Typeface.BOLD));
+            switch (f.status) {
+                case MISSING:
+                    status.setText("MISSING");
+                    status.setTextColor(ContextCompat.getColor(requireContext(), R.color.red_fail));
+                    break;
+                case WRONG_TYPE:
+                    status.setText("WRONG: " + FeatureTypeRegistry.displayName(requireContext(), f.foundType));
+                    status.setTextColor(ContextCompat.getColor(requireContext(), R.color.orange_warn));
+                    break;
+                default:
+                    status.setText("PRESENT");
+                    status.setTextColor(ContextCompat.getColor(requireContext(), R.color.green_pass));
+                    break;
+            }
+
+            row.addView(slot);
+            row.addView(desc);
+            row.addView(status);
+            container.addView(row);
+        }
     }
 
     /**
@@ -411,14 +505,10 @@ public class ResultsFragment extends Fragment {
         }
         orderedTypes = orderedUnion(expectedCounts.keySet(), detectedCounts.keySet());
 
-        hasDiscrepancy = false;
-        for (String type : orderedTypes) {
-            if (ReferenceLibrary.UNKNOWN.equals(type)) continue;
-            if (count(expectedCounts, type) != count(detectedCounts, type)) {
-                hasDiscrepancy = true;
-                break;
-            }
-        }
+        // Re-run the positional check: relabelling a detection changes which slots it can
+        // occupy, so a correction can turn a "missing" slot into a matched one and back.
+        localisation = runLocalisation();
+        hasDiscrepancy = computeDiscrepancy();
 
         if (hasDiscrepancy) {
             binding.tvResultBadge.setText("INSPECTION FAILED");
@@ -430,8 +520,10 @@ public class ResultsFragment extends Fragment {
             binding.layoutResultHeader.setBackgroundColor(ContextCompat.getColor(requireContext(), R.color.green_pass_header));
         }
 
+        binding.chassisOverlayView.setExpectedSlots(missingSlotMarkers());
         buildFeatureRows();
         buildLegend();
+        buildLocalisation();
         buildLearningStatus();
     }
 
@@ -541,7 +633,9 @@ public class ResultsFragment extends Fragment {
         optionLabels.add(preselectCurrent ? "Skip (leave as is)" : "Skip (leave as unknown)");
         optionKeys.add(null);
         for (FeatureTypeRegistry.TypeInfo t : knownTypes) {
-            optionLabels.add(t.displayName + (t.critical ? "" : " (non-critical)"));
+            optionLabels.add(t.severity == FeatureTypeRegistry.Severity.CRITICAL
+                    ? t.displayName
+                    : t.displayName + " (" + t.severity.label.toLowerCase(java.util.Locale.US) + ")");
             optionKeys.add(t.key);
         }
         optionLabels.add("+ Create new type...");
@@ -596,7 +690,10 @@ public class ResultsFragment extends Fragment {
         }
         root.addView(spinner);
 
-        // ── "Create new type" panel: name + explicit critical/non-critical choice ──
+        // ── "Create new type" panel: just the name. Severity has its own panel below,
+        //    because an existing type needs to be re-gradeable too — otherwise a catch-all
+        //    like "surface" is stuck at whatever it was first saved as, with no screen
+        //    anywhere in the app to change it.
         android.widget.LinearLayout newTypePanel = new android.widget.LinearLayout(getContext());
         newTypePanel.setOrientation(android.widget.LinearLayout.VERTICAL);
         newTypePanel.setVisibility(View.GONE);
@@ -607,46 +704,84 @@ public class ResultsFragment extends Fragment {
         nameInput.setTextColor(Color.WHITE);
         nameInput.setHintTextColor(Color.rgb(180, 180, 188));
         newTypePanel.addView(nameInput);
-
-        TextView criticalLabel = new TextView(getContext());
-        criticalLabel.setText("Should this type be included in the report?");
-        criticalLabel.setTextColor(Color.WHITE);
-        criticalLabel.setTextSize(11f);
-        criticalLabel.setPadding(0, dp(12), 0, dp(6));
-        newTypePanel.addView(criticalLabel);
-
-        android.widget.LinearLayout criticalRow = new android.widget.LinearLayout(getContext());
-        criticalRow.setOrientation(android.widget.LinearLayout.HORIZONTAL);
-
-        android.widget.Button criticalBtn = new android.widget.Button(getContext());
-        criticalBtn.setText("CRITICAL");
-        android.widget.LinearLayout.LayoutParams critLp = new android.widget.LinearLayout.LayoutParams(
-                0, android.widget.LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
-        critLp.rightMargin = dp(6);
-        criticalBtn.setLayoutParams(critLp);
-
-        android.widget.Button nonCriticalBtn = new android.widget.Button(getContext());
-        nonCriticalBtn.setText("NON-CRITICAL");
-        android.widget.LinearLayout.LayoutParams nonCritLp = new android.widget.LinearLayout.LayoutParams(
-                0, android.widget.LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
-        nonCriticalBtn.setLayoutParams(nonCritLp);
-
-        criticalRow.addView(criticalBtn);
-        criticalRow.addView(nonCriticalBtn);
-        newTypePanel.addView(criticalRow);
         root.addView(newTypePanel);
 
-        // Explicit tri-state (null = not chosen yet) — never defaulted, per user requirement.
-        Boolean[] criticalChoice = {null};
-        Runnable refreshCriticalButtons = () -> {
-            boolean isCritical = Boolean.TRUE.equals(criticalChoice[0]);
-            boolean isNonCritical = Boolean.FALSE.equals(criticalChoice[0]);
-            criticalBtn.setBackgroundColor(isCritical ? Color.rgb(26, 100, 60) : Color.rgb(50, 50, 55));
-            nonCriticalBtn.setBackgroundColor(isNonCritical ? Color.rgb(100, 70, 26) : Color.rgb(50, 50, 55));
-            criticalBtn.setTextColor(Color.WHITE);
-            nonCriticalBtn.setTextColor(Color.WHITE);
+        // ── Severity scale ──
+        // Laid out critical-on-the-left so the slider reads as "how much does this matter",
+        // descending. That inverts the stored level, hence the maxLevel() - progress mapping
+        // on every read and write below.
+        android.widget.LinearLayout severityPanel = new android.widget.LinearLayout(getContext());
+        severityPanel.setOrientation(android.widget.LinearLayout.VERTICAL);
+        severityPanel.setVisibility(View.GONE);
+        severityPanel.setPadding(0, dp(14), 0, 0);
+
+        TextView severityHeading = new TextView(getContext());
+        severityHeading.setText("How should this type be reported?");
+        severityHeading.setTextColor(Color.WHITE);
+        severityHeading.setTextSize(11f);
+        severityPanel.addView(severityHeading);
+
+        android.widget.SeekBar severitySeek = new android.widget.SeekBar(getContext());
+        severitySeek.setMax(FeatureTypeRegistry.Severity.maxLevel());
+        android.widget.LinearLayout.LayoutParams seekLp = new android.widget.LinearLayout.LayoutParams(
+                android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+                android.widget.LinearLayout.LayoutParams.WRAP_CONTENT);
+        seekLp.setMargins(0, dp(6), 0, 0);
+        severitySeek.setLayoutParams(seekLp);
+        severityPanel.addView(severitySeek);
+
+        android.widget.LinearLayout endLabels = new android.widget.LinearLayout(getContext());
+        endLabels.setOrientation(android.widget.LinearLayout.HORIZONTAL);
+        TextView leftEnd = new TextView(getContext());
+        leftEnd.setText("CRITICAL");
+        leftEnd.setTextColor(Color.rgb(180, 180, 188));
+        leftEnd.setTextSize(9.5f);
+        leftEnd.setLayoutParams(new android.widget.LinearLayout.LayoutParams(
+                0, android.widget.LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        TextView rightEnd = new TextView(getContext());
+        rightEnd.setText("IGNORED");
+        rightEnd.setTextColor(Color.rgb(180, 180, 188));
+        rightEnd.setTextSize(9.5f);
+        rightEnd.setGravity(Gravity.END);
+        rightEnd.setLayoutParams(new android.widget.LinearLayout.LayoutParams(
+                0, android.widget.LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        endLabels.addView(leftEnd);
+        endLabels.addView(rightEnd);
+        severityPanel.addView(endLabels);
+
+        TextView severityValue = new TextView(getContext());
+        severityValue.setTextColor(Color.WHITE);
+        severityValue.setTextSize(11.5f);
+        severityValue.setPadding(dp(10), dp(8), dp(10), dp(8));
+        android.widget.LinearLayout.LayoutParams valueLp = new android.widget.LinearLayout.LayoutParams(
+                android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+                android.widget.LinearLayout.LayoutParams.WRAP_CONTENT);
+        valueLp.setMargins(0, dp(8), 0, 0);
+        severityValue.setLayoutParams(valueLp);
+        severityPanel.addView(severityValue);
+        root.addView(severityPanel);
+
+        // Null = the operator has not chosen yet. A SeekBar always has a position, so the
+        // unset state is tracked separately rather than read off the widget; a brand-new type
+        // must not inherit whatever stop the thumb happened to start on.
+        FeatureTypeRegistry.Severity[] severityChoice = {null};
+        Runnable refreshSeverity = () -> {
+            FeatureTypeRegistry.Severity s = severityChoice[0];
+            if (s == null) {
+                severityValue.setText("Not set — drag the slider to choose.");
+                severityValue.setBackgroundColor(Color.rgb(50, 50, 55));
+                return;
+            }
+            int bg;
+            switch (s) {
+                case CRITICAL: bg = Color.rgb(120, 40, 44); break;
+                case ADVISORY: bg = Color.rgb(112, 82, 26); break;
+                default:       bg = Color.rgb(58, 58, 66); break;
+            }
+            severityValue.setText(s.label.toUpperCase(java.util.Locale.US) + " — " + s.blurb);
+            severityValue.setBackgroundColor(bg);
         };
-        refreshCriticalButtons.run();
+        refreshSeverity.run();
 
         android.widget.Button save = new android.widget.Button(getContext());
         save.setText("CONFIRM");
@@ -661,12 +796,20 @@ public class ResultsFragment extends Fragment {
             int selected = spinner.getSelectedItemPosition();
             boolean isNew = selected >= 0 && "__new__".equals(optionKeys.get(selected));
             boolean valid = !isNew
-                    || (nameInput.getText().toString().trim().length() > 0 && criticalChoice[0] != null);
+                    || (nameInput.getText().toString().trim().length() > 0 && severityChoice[0] != null);
             save.setEnabled(valid);
         };
 
-        criticalBtn.setOnClickListener(v -> { criticalChoice[0] = Boolean.TRUE; refreshCriticalButtons.run(); refreshSaveEnabled.run(); });
-        nonCriticalBtn.setOnClickListener(v -> { criticalChoice[0] = Boolean.FALSE; refreshCriticalButtons.run(); refreshSaveEnabled.run(); });
+        severitySeek.setOnSeekBarChangeListener(new android.widget.SeekBar.OnSeekBarChangeListener() {
+            @Override public void onProgressChanged(android.widget.SeekBar bar, int progress, boolean fromUser) {
+                severityChoice[0] = FeatureTypeRegistry.Severity.fromLevel(
+                        FeatureTypeRegistry.Severity.maxLevel() - progress);
+                refreshSeverity.run();
+                refreshSaveEnabled.run();
+            }
+            @Override public void onStartTrackingTouch(android.widget.SeekBar bar) {}
+            @Override public void onStopTrackingTouch(android.widget.SeekBar bar) {}
+        });
         nameInput.addTextChangedListener(new android.text.TextWatcher() {
             @Override public void beforeTextChanged(CharSequence s, int a, int b, int c) {}
             @Override public void onTextChanged(CharSequence s, int a, int b, int c) {}
@@ -675,8 +818,25 @@ public class ResultsFragment extends Fragment {
 
         spinner.setOnItemSelectedListener(new android.widget.AdapterView.OnItemSelectedListener() {
             @Override public void onItemSelected(android.widget.AdapterView<?> parent, View v, int pos, long id) {
-                boolean isNew = "__new__".equals(optionKeys.get(pos));
+                String key = optionKeys.get(pos);
+                boolean isNew = "__new__".equals(key);
+                boolean isSkip = key == null;
                 newTypePanel.setVisibility(isNew ? View.VISIBLE : View.GONE);
+                severityPanel.setVisibility(isSkip ? View.GONE : View.VISIBLE);
+
+                if (isNew) {
+                    // Deliberately left unset so the operator has to state it, which is what
+                    // keeps the scale meaningful. setProgress fires the listener, so the null
+                    // is restored afterwards rather than before.
+                    severitySeek.setProgress(0);
+                    severityChoice[0] = null;
+                } else if (!isSkip) {
+                    FeatureTypeRegistry.Severity current =
+                            FeatureTypeRegistry.severityOf(requireContext(), key);
+                    severityChoice[0] = current;
+                    severitySeek.setProgress(FeatureTypeRegistry.Severity.maxLevel() - current.level);
+                }
+                refreshSeverity.run();
                 refreshSaveEnabled.run();
             }
             @Override public void onNothingSelected(android.widget.AdapterView<?> parent) {}
@@ -709,14 +869,21 @@ public class ResultsFragment extends Fragment {
             if ("__new__".equals(key)) {
                 String displayName = nameInput.getText().toString().trim();
                 typeKey = FeatureTypeRegistry.keyFor(displayName);
-                boolean critical = Boolean.TRUE.equals(criticalChoice[0]);
-                if (typeKey.isEmpty()) {
+                if (typeKey.isEmpty() || severityChoice[0] == null) {
                     save.setEnabled(true);
                     return;
                 }
-                FeatureTypeRegistry.upsert(requireContext(), typeKey, displayName, critical);
+                FeatureTypeRegistry.upsert(requireContext(), typeKey, displayName, severityChoice[0]);
             } else {
                 typeKey = key;
+                // Confirming a label is also the moment the operator can re-grade the type,
+                // so persist a moved slider. Only on an actual change: upsert rewrites the
+                // whole catalog file, and this dialog runs once per reviewed crop.
+                FeatureTypeRegistry.Severity chosen = severityChoice[0];
+                if (chosen != null && chosen != FeatureTypeRegistry.severityOf(requireContext(), typeKey)) {
+                    FeatureTypeRegistry.upsert(requireContext(), typeKey,
+                            FeatureTypeRegistry.displayName(requireContext(), typeKey), chosen);
+                }
             }
 
             final String confirmedType = typeKey;
@@ -880,6 +1047,98 @@ public class ResultsFragment extends Fragment {
                 if (isAdded()) onDone.run();
             });
         }).start();
+    }
+
+    /**
+     * Builds the registration layout from the reference pass: every detection whose type the
+     * operator treats as a real feature, i.e. anything not graded
+     * {@link FeatureTypeRegistry.Severity#IGNORED}.
+     *
+     * Deliberately wider than what gets reported. Recovering the transform is pure geometry
+     * and every stable landmark helps, so restricting the layout to critical types only threw
+     * away evidence and shrank the layout below the size an alignment can be believed at —
+     * a reference with two scratches among five detections stopped working entirely. Ignored
+     * types stay out because they are background by the operator's own declaration, and
+     * background moves between shots.
+     */
+    private FeatureLayout buildLayout(List<HardwareFeatureExtractor.ExtractedFeature> refFeatures) {
+        if (refFeatures == null || refFeatures.isEmpty()) return null;
+        Set<String> registrationTypes = new LinkedHashSet<>();
+        for (HardwareFeatureExtractor.ExtractedFeature f : refFeatures) {
+            if (f.type == null) continue;
+            if (FeatureTypeRegistry.severityOf(requireContext(), f.type)
+                    != FeatureTypeRegistry.Severity.IGNORED) {
+                registrationTypes.add(f.type);
+            }
+        }
+        List<android.graphics.RectF> rects = new ArrayList<>();
+        List<String> types = new ArrayList<>();
+        for (HardwareFeatureExtractor.ExtractedFeature f : refFeatures) {
+            rects.add(f.rectFraction);
+            types.add(f.type);
+        }
+        FeatureLayout layout = FeatureLocalisation.layoutFrom(rects, types, registrationTypes);
+        return layout.isEmpty() ? null : layout;
+    }
+
+    /**
+     * Runs the positional check. Registration uses every non-ignored detection; only critical
+     * slots are reported, which is the scope the localisation feature was asked for.
+     *
+     * Unknown detections are passed through as candidates on purpose: {@code LayoutMatcher}
+     * allows them to occupy a slot, so a fastener that is physically present but which the
+     * classifier failed to recognise reads as "present" rather than as missing hardware — the
+     * less misleading of the two errors.
+     */
+    private FeatureLocalisation.Result runLocalisation() {
+        if (referenceLayout == null) {
+            return FeatureLocalisation.localise(null, null, null, null);
+        }
+        List<android.graphics.RectF> rects = new ArrayList<>();
+        List<String> types = new ArrayList<>();
+        Set<String> criticalTypes = new LinkedHashSet<>();
+        for (HardwareFeatureExtractor.ExtractedFeature f : analysisResult.features) {
+            if (f.type == null) continue;
+            FeatureTypeRegistry.Severity severity =
+                    FeatureTypeRegistry.severityOf(requireContext(), f.type);
+            if (severity == FeatureTypeRegistry.Severity.CRITICAL) criticalTypes.add(f.type);
+            boolean eligible = ReferenceLibrary.UNKNOWN.equals(f.type)
+                    || severity != FeatureTypeRegistry.Severity.IGNORED;
+            if (!eligible) continue;
+            rects.add(f.rectFraction);
+            types.add(f.type);
+        }
+        // Critical types the reference expects, even if none was detected this run — otherwise
+        // a slot whose feature is entirely absent would be filtered out of its own report.
+        for (FeatureLayout.Slot s : referenceLayout.slots()) {
+            if (FeatureTypeRegistry.isCritical(requireContext(), s.type)) criticalTypes.add(s.type);
+        }
+        return FeatureLocalisation.localise(referenceLayout, rects, types, criticalTypes);
+    }
+
+    /**
+     * Whether this run counts as a failure: any count mismatch on a
+     * {@link FeatureTypeRegistry.Severity#CRITICAL} type, or — when the photo could be
+     * registered onto the reference layout — any expected position that is empty or holds the
+     * wrong hardware.
+     *
+     * The positional half is what catches a defect counting cannot see: two screws expected
+     * and two found, but one of them in the wrong hole. It only contributes when alignment
+     * succeeded; an unalignable photo yields no positional claim at all rather than a fail.
+     *
+     * "unknown" is skipped as before — it is unclassified noise, not a finding. Advisory and
+     * ignored types are skipped for the same reason they stay out of the quantitative table:
+     * a scratch more than last time is a trend note, and a differently-shaped patch of bare
+     * surface is nothing at all. Before the scale existed both of those failed the part,
+     * which is how a catch-all type like "surface" could turn a good part red.
+     */
+    private boolean computeDiscrepancy() {
+        for (String type : orderedTypes) {
+            if (ReferenceLibrary.UNKNOWN.equals(type)) continue;
+            if (!FeatureTypeRegistry.isCritical(requireContext(), type)) continue;
+            if (count(expectedCounts, type) != count(detectedCounts, type)) return true;
+        }
+        return localisation != null && localisation.aligned && localisation.hasPositionalDefect();
     }
 
     private static void countByType(List<HardwareFeatureExtractor.ExtractedFeature> features, Map<String, Integer> out) {
@@ -1046,12 +1305,33 @@ public class ResultsFragment extends Fragment {
                 int expected = count(expectedCounts, type);
                 int detected = count(detectedCounts, type);
                 String status = expected == detected ? "MATCH" : (detected < expected ? "MISSING" : "EXTRA");
-                boolean critical = FeatureTypeRegistry.isCritical(requireContext(), type);
+                int severity = FeatureTypeRegistry.severityOf(requireContext(), type).level;
                 results.add(new FeatureResult(inspectionId, FeatureTypeRegistry.displayName(requireContext(), type),
-                        expected, detected, status, critical));
+                        expected, detected, status, severity));
             }
             if (!results.isEmpty()) {
                 db.inspectionDao().insertFeatureResults(results);
+            }
+
+            // Positional findings, when the photo could be registered. Nothing is written for an
+            // unaligned run: absent rows mean "no positional claim", which the report renders as
+            // such, whereas rows saying PRESENT would assert a check that never happened.
+            if (localisation != null && localisation.aligned) {
+                List<SlotResult> slotRows = new ArrayList<>();
+                for (FeatureLocalisation.SlotFinding f : localisation.findings) {
+                    // displayNumber, not slotId: the raw layout id has gaps where advisory
+                    // landmarks were filtered out, and the layout itself is never persisted, so
+                    // the number the operator saw is the only one that stays meaningful.
+                    slotRows.add(new SlotResult(inspectionId, f.displayNumber,
+                            FeatureTypeRegistry.displayName(requireContext(), f.expectedType),
+                            f.foundType == null ? null
+                                    : FeatureTypeRegistry.displayName(requireContext(), f.foundType),
+                            f.status.name(), f.x, f.y, f.relX, f.relY,
+                            FeatureLocalisation.zone(f.relX, f.relY)));
+                }
+                if (!slotRows.isEmpty()) {
+                    db.inspectionDao().insertSlotResults(slotRows);
+                }
             }
 
             // Attach this run's classification events to the saved inspection so the
