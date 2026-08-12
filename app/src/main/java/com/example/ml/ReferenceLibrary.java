@@ -261,7 +261,9 @@ public final class ReferenceLibrary {
     }
 
     // ── Persistence ──────────────────────────────────────────────────────────
-    // Stored as { "_encoder": "<id>", "type": [floats...] } of averaged prototypes.
+    // Stored as { "_encoder": "<id>", "_counts": {"type": n}, "type": [floats...] },
+    // where each type's array is its averaged prototype and _counts records how many
+    // examples that average was taken over.
 
     /**
      * Which embedding space this library's prototypes live in. Prototypes are only
@@ -275,6 +277,21 @@ public final class ReferenceLibrary {
     /** Key holding {@link #encoderId}; underscore-prefixed so it can't collide with a type name. */
     private static final String ENCODER_KEY = "_encoder";
 
+    /**
+     * Key holding the example count behind each prototype, same underscore convention.
+     *
+     * Without it a loaded prototype comes back as a single example, so the next
+     * {@link #addExample} averages the entire accumulated history against one new crop
+     * fifty-fifty — and the one after that leaves the original contributing a quarter. A
+     * library built from thirty labelled crops could be dragged onto a different feature
+     * by three corrections, including three mistaken ones. Persisting the count keeps the
+     * running mean weighted the way it was when the examples were actually added.
+     *
+     * Absent in files written before this existed; those load as one example each, which is
+     * exactly the behaviour they were saved under.
+     */
+    private static final String COUNTS_KEY = "_counts";
+
     public String encoderId() {
         return encoderId;
     }
@@ -285,12 +302,17 @@ public final class ReferenceLibrary {
             if (parent != null && !parent.exists()) parent.mkdirs();
             JSONObject root = new JSONObject();
             root.put(ENCODER_KEY, encoderId);
+            // Prototypes are stored as the mean, not the running sum, so the file stays
+            // readable on its own; the counts alongside are what make the mean resumable.
+            JSONObject countsJson = new JSONObject();
             for (String type : counts.keySet()) {
                 float[] proto = prototype(type);
                 JSONArray arr = new JSONArray();
                 for (float v : proto) arr.put((double) v);
                 root.put(type, arr);
+                countsJson.put(type, counts.get(type));
             }
+            root.put(COUNTS_KEY, countsJson);
             try (FileOutputStream fos = new FileOutputStream(file)) {
                 fos.write(root.toString().getBytes(StandardCharsets.UTF_8));
             }
@@ -302,7 +324,7 @@ public final class ReferenceLibrary {
     public static ReferenceLibrary load(File file) {
         if (file == null || !file.exists()) return null;
         try (InputStream is = new java.io.FileInputStream(file)) {
-            ReferenceLibrary lib = fromJson(readAll(is));
+            ReferenceLibrary lib = fromJson(PartFiles.readAllText(is));
             if (lib == null) {
                 // fromJson already logged why. Named here so the stale file is identifiable.
                 Log.w(TAG, "Ignoring unusable library at " + file
@@ -339,30 +361,29 @@ public final class ReferenceLibrary {
 
             ReferenceLibrary lib = new ReferenceLibrary();
             lib.encoderId = storedEncoder;
+            JSONObject storedCounts = root.optJSONObject(COUNTS_KEY);
             java.util.Iterator<String> keys = root.keys();
             while (keys.hasNext()) {
                 String type = keys.next();
-                if (ENCODER_KEY.equals(type)) continue;
+                if (ENCODER_KEY.equals(type) || COUNTS_KEY.equals(type)) continue;
                 JSONArray arr = root.getJSONArray(type);
                 float[] proto = new float[arr.length()];
                 for (int i = 0; i < arr.length(); i++) proto[i] = (float) arr.getDouble(i);
-                // Load prototype as a single example (count = 1).
+
+                // The file stores the mean; restore the running sum it came from so further
+                // examples are averaged in at their true weight rather than at one half.
+                // Files predating COUNTS_KEY have no entry and load as one example, which is
+                // the weighting they were written under.
+                int count = storedCounts != null ? Math.max(1, storedCounts.optInt(type, 1)) : 1;
+                for (int i = 0; i < proto.length; i++) proto[i] *= count;
                 lib.sums.put(type, proto);
-                lib.counts.put(type, 1);
+                lib.counts.put(type, count);
             }
             return lib.isEmpty() ? null : lib;
         } catch (Exception e) {
             Log.e(TAG, "fromJson() failed", e);
             return null;
         }
-    }
-
-    private static String readAll(InputStream is) throws Exception {
-        java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream();
-        byte[] buf = new byte[8192];
-        int n;
-        while ((n = is.read(buf)) != -1) bos.write(buf, 0, n);
-        return new String(bos.toByteArray(), StandardCharsets.UTF_8);
     }
 
     // ── Display helpers (used by the overlay + results screens) ───────────────
