@@ -49,8 +49,11 @@ CLIP_ONNX = REPO / "app/src/main/assets/models/clip_image_encoder.onnx"
 FEATURE_TYPES = ["bolt_head", "hole", "rivet_head", "screw", "stud"]
 
 # ReferenceLibrary.DEFAULT_* -- the thresholds currently shipping.
-SIMILARITY_THRESHOLD = 0.85
-MARGIN_THRESHOLD = 0.03
+# These were 0.85/0.03, the CLIP-era values, and were left behind when the encoder swap
+# moved the shipping defaults to 0.74/0.02. A sweep run against thresholds the app does
+# not use reports accuracies it will never achieve.
+SIMILARITY_THRESHOLD = 0.74
+MARGIN_THRESHOLD = 0.02
 
 INPUT_SIZE = 224
 CLIP_MEAN = (0.48145466, 0.4578275, 0.40821073)
