@@ -14,6 +14,7 @@ import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.ImageView;
 import android.widget.Toast;
 
 import androidx.activity.result.ActivityResultLauncher;
@@ -34,6 +35,7 @@ import androidx.navigation.Navigation;
 import com.example.R;
 import com.example.data.AppDatabase;
 import com.example.data.entity.ReferenceProfile;
+import com.example.ml.HardwareFeatureExtractor;
 import com.example.ml.AlignmentGate;
 import com.example.ml.HoldTimer;
 import com.example.ui.util.AssetBitmaps;
@@ -81,6 +83,12 @@ public class InspectionFragment extends Fragment {
     private volatile Mode mode = Mode.LIVE;
     private boolean referenceMissing = false;
     private boolean debugReadoutVisible = false;
+    /**
+     * Why the chosen still failed the alignment gate, or null when it passed or when no
+     * still has been scored. Main thread only, and carried to the results screen so a
+     * verdict computed on a badly framed image is labelled as such.
+     */
+    @Nullable private String stillGateWarning = null;
 
     private Handler mainHandler;
     private ExecutorService analysisExecutor;
@@ -202,13 +210,14 @@ public class InspectionFragment extends Fragment {
             ReferenceProfile profile = db.referenceProfileDao().getProfileByPartType(partId);
 
             String uri = profile != null ? profile.getImageUri() : null;
-            boolean usable = uri != null && !"dummy_placeholder".equals(uri);
+            boolean usable = profile != null && profile.hasRealImage();
 
             // Build the gate on this background thread — encoding the reference is an ONNX
             // inference, far too slow to run on the main thread.
             AlignmentGate gate = null;
             if (usable) {
-                Bitmap reference = HardwareFeatureExtractor.loadBitmap(context, uri, 1280);
+                Bitmap reference = HardwareFeatureExtractor.loadBitmap(
+                        context, uri, HardwareFeatureExtractor.WORKING_MAX_DIM);
                 if (reference != null) {
                     gate = AlignmentGate.fromReference(context, reference);
                     reference.recycle();
@@ -273,13 +282,45 @@ public class InspectionFragment extends Fragment {
             if (ghost != null) {
                 binding.ivGhostOverlay.setImageBitmap(ghost);
             } else {
-                binding.ivGhostOverlay.setImageURI(Uri.parse(imageUri));
+                loadIntoAsync(binding.ivGhostOverlay, imageUri, 1080);
             }
         } else {
-            binding.ivGhostOverlay.setImageURI(Uri.parse(imageUri));
+            loadIntoAsync(binding.ivGhostOverlay, imageUri, 1080);
         }
         binding.ivGhostOverlay.setVisibility(isGhostEnabled ? View.VISIBLE : View.GONE);
         binding.tvGhostStatusIndicator.setText("GHOST OVERLAY ON (35%)");
+    }
+
+    /**
+     * Decodes {@code uriString} on the analysis thread and shows it in {@code target}.
+     *
+     * <p>Replaces {@code ImageView.setImageURI}, which decodes synchronously on whatever
+     * thread calls it — for a gallery pick that is a 4032x3024 JPEG, roughly 46MB of native
+     * memory and a visible stall on the UI thread. {@link HardwareFeatureExtractor#loadBitmap}
+     * samples it down on the way in, and applies the EXIF rotation that {@code setImageURI}
+     * ignores, so the preview now matches the orientation the gate actually scores.
+     *
+     * <p>Shares {@link #analysisExecutor} rather than spawning a thread: this is a one-off per
+     * pick or toggle, and camera frames are dropped rather than queued, so it interleaves
+     * without backing anything up.
+     */
+    private void loadIntoAsync(ImageView target, String uriString, int maxDim) {
+        ExecutorService executor = analysisExecutor;
+        if (executor == null || executor.isShutdown()) return;
+        // Resolved before the worker starts: requireContext() throws once the fragment
+        // detaches, and a decode easily outlives a back press.
+        final android.content.Context context = requireContext().getApplicationContext();
+        executor.execute(() -> {
+            Bitmap bitmap = HardwareFeatureExtractor.loadBitmap(context, uriString, maxDim);
+            if (bitmap == null) return;
+            mainHandler.post(() -> {
+                if (!isAdded() || binding == null) {
+                    bitmap.recycle();
+                    return;
+                }
+                target.setImageBitmap(bitmap);
+            });
+        });
     }
 
     // ── Live camera ─────────────────────────────────────────────────────
@@ -318,6 +359,12 @@ public class InspectionFragment extends Fragment {
         Preview preview = new Preview.Builder().build();
         preview.setSurfaceProvider(binding.previewCamera.getSurfaceProvider());
 
+        // Both use cases are pinned to the display's current rotation so the frame the gate
+        // approves and the still that gets analysed are oriented the same way.
+        int targetRotation = binding.previewCamera.getDisplay() != null
+                ? binding.previewCamera.getDisplay().getRotation()
+                : android.view.Surface.ROTATION_0;
+
         ImageAnalysis analysis = new ImageAnalysis.Builder()
                 // Alignment is about where the phone is right now, so a backlog of stale
                 // frames is worse than useless — always score the newest one.
@@ -325,11 +372,16 @@ public class InspectionFragment extends Fragment {
                 // The encoder wants colour, and RGBA lets toBitmap() hand one over without
                 // a YUV conversion of our own.
                 .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_RGBA_8888)
+                .setTargetRotation(targetRotation)
                 .build();
         analysis.setAnalyzer(analysisExecutor, this::analyzeFrame);
 
         imageCapture = new ImageCapture.Builder()
                 .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
+                // Without this the saved JPEG records orientation in EXIF and leaves the
+                // pixels in sensor orientation, so the analysis pass downstream sees a
+                // sideways image of the part the gate just approved.
+                .setTargetRotation(targetRotation)
                 .build();
 
         try {
@@ -521,6 +573,9 @@ public class InspectionFragment extends Fragment {
         if (gate == null) return;
 
         setLight(TrafficLightView.State.OFF, 0f, "SCORING IMAGE...", null);
+        // Stale until this image has actually been scored; a failure to score must not
+        // inherit the previous image's verdict.
+        stillGateWarning = null;
         // Runs on the analysis executor rather than a fresh thread: AlignmentGate reuses
         // scratch Mats across calls, so every use of it has to stay on one thread.
         ExecutorService executor = analysisExecutor;
@@ -529,7 +584,8 @@ public class InspectionFragment extends Fragment {
         // fragment detaches, and decoding plus scoring easily outlives a back press.
         final android.content.Context context = requireContext().getApplicationContext();
         executor.execute(() -> {
-            Bitmap bitmap = HardwareFeatureExtractor.loadBitmap(context, uriString, 1280);
+            Bitmap bitmap = HardwareFeatureExtractor.loadBitmap(
+                    context, uriString, HardwareFeatureExtractor.WORKING_MAX_DIM);
             if (bitmap == null) return;
             AlignmentGate.Reading reading;
             try {
@@ -561,6 +617,9 @@ public class InspectionFragment extends Fragment {
                     binding.tvOperatorTip.setText(
                             "Saved image isn't framed like the reference (" + strength
                                     + "). You can still analyze it, but detections may be unreliable.");
+                    // Carried to the results screen: analysis is still allowed here, so the
+                    // warning has to travel with the image rather than stopping at this screen.
+                    stillGateWarning = result.hint + " (" + strength + ")";
                 }
             });
         });
@@ -958,7 +1017,8 @@ public class InspectionFragment extends Fragment {
             }
             selectedImageExternalUri = Uri.fromFile(photoFile);
 
-            binding.ivChassisPreview.setImageURI(selectedImageExternalUri);
+            loadIntoAsync(binding.ivChassisPreview, selectedImageExternalUri.toString(),
+                    HardwareFeatureExtractor.WORKING_MAX_DIM);
             binding.ivChassisPreview.setVisibility(View.VISIBLE);
             binding.layoutUploadPlaceholder.setVisibility(View.GONE);
 
@@ -973,9 +1033,7 @@ public class InspectionFragment extends Fragment {
 
     private void toggleGhostOverlay() {
         isGhostEnabled = !isGhostEnabled;
-        boolean hasGhost = referenceProfile != null
-                && referenceProfile.getImageUri() != null
-                && !"dummy_placeholder".equals(referenceProfile.getImageUri());
+        boolean hasGhost = referenceProfile != null && referenceProfile.hasRealImage();
         if (isGhostEnabled && hasGhost) {
             binding.ivGhostOverlay.setVisibility(View.VISIBLE);
             binding.btnToggleGhost.setText("GHOST OFF");
@@ -1000,6 +1058,9 @@ public class InspectionFragment extends Fragment {
             Bundle args = new Bundle();
             args.putString("partId", partId);
             args.putString("imageUri", imageUri);
+            // Only ever set on the still path: a live capture cannot reach here without
+            // holding the gate green for three seconds, so there is nothing to warn about.
+            args.putString("alignmentWarning", stillGateWarning);
             Navigation.findNavController(getView()).navigate(R.id.action_inspection_to_results, args);
         }
     }
