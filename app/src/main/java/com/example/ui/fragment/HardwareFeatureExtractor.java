@@ -8,7 +8,9 @@ import android.net.Uri;
 import android.util.Log;
 
 import com.example.ml.FeatureEmbedder;
+import com.example.ml.FeatureMeasurement;
 import com.example.ml.ReferenceLibrary;
+import com.example.ml.ScaleCalibration;
 
 import org.opencv.android.OpenCVLoader;
 import org.opencv.android.Utils;
@@ -120,6 +122,8 @@ public class HardwareFeatureExtractor {
         public String cropPath;
         /** Full classification detail (scores, runner-up, reason) — drives active-learning selection and event logging. */
         public ReferenceLibrary.Classification classification;
+        /** Physical size, or null when no calibration marker was found in the photo. */
+        public FeatureMeasurement measurement;
 
         public ExtractedFeature(String type, RectF rectFraction, int color, String label, float confidence,
                                 String cropPath, ReferenceLibrary.Classification classification) {
@@ -136,10 +140,22 @@ public class HardwareFeatureExtractor {
     public static class AnalysisResult {
         public List<ExtractedFeature> features;
         public Bitmap processedBitmap;
+        /**
+         * Scale derived from the calibration marker, or null when none was found. Null means
+         * every {@link ExtractedFeature#measurement} is also null — measurement is skipped
+         * entirely rather than falling back to an assumed scale.
+         */
+        public ScaleCalibration calibration;
 
         public AnalysisResult(List<ExtractedFeature> features, Bitmap processedBitmap) {
+            this(features, processedBitmap, null);
+        }
+
+        public AnalysisResult(List<ExtractedFeature> features, Bitmap processedBitmap,
+                              ScaleCalibration calibration) {
             this.features = features;
             this.processedBitmap = processedBitmap;
+            this.calibration = calibration;
         }
     }
 
@@ -210,17 +226,29 @@ public class HardwareFeatureExtractor {
     /** Bundles the intermediate edge Mats produced by {@link #computeEdges(Mat)}. */
     private static final class Edges {
         final Mat gray;
+        /**
+         * Raw Canny output, before any morphology.
+         *
+         * Localisation deliberately uses the dilated/closed map, because bridging gaps is what
+         * makes a fragmented fastener outline into one detectable contour. Measurement must
+         * not: dilation grows every boundary outward by roughly the kernel radius, which adds
+         * about twice that to any diameter and reads as a systematic over-size. Sizing is
+         * therefore taken from this untouched edge map.
+         */
+        final Mat edgesRaw;
         final Mat edgesDilated;
         final Mat edgesClosed;
 
-        Edges(Mat gray, Mat edgesDilated, Mat edgesClosed) {
+        Edges(Mat gray, Mat edgesRaw, Mat edgesDilated, Mat edgesClosed) {
             this.gray = gray;
+            this.edgesRaw = edgesRaw;
             this.edgesDilated = edgesDilated;
             this.edgesClosed = edgesClosed;
         }
 
         void release() {
             gray.release();
+            edgesRaw.release();
             edgesDilated.release();
             edgesClosed.release();
         }
@@ -301,9 +329,15 @@ public class HardwareFeatureExtractor {
             return new AnalysisResult(features, null);
         }
 
+        ScaleCalibration calibration = null;
         try {
             Mat src = new Mat();
             Utils.bitmapToMat(bitmap, src);
+
+            // STEP 1 — pixel-to-millimetre scale from the calibration marker, if one is in
+            // frame. Runs on the unprocessed source: the marker is high-contrast by design and
+            // the glare/CLAHE stage below is tuned for fastener detail, not for finding it.
+            calibration = ScaleCalibration.detect(src);
 
             // STEP 2 — preprocessing + edge detection (shared with extractCrops()).
             Edges e = computeEdges(src);
@@ -316,8 +350,9 @@ public class HardwareFeatureExtractor {
             diagnosticBitmap = Bitmap.createBitmap(rgbaVisual.cols(), rgbaVisual.rows(), Bitmap.Config.ARGB_8888);
             Utils.matToBitmap(rgbaVisual, diagnosticBitmap);
 
-            // STEP 3-6 — OpenCV crop extraction + embedding classification
-            performDynamicDetection(src, e.edgesClosed, embedder, library, sink, features);
+            // STEP 3-6 — OpenCV crop extraction + embedding classification + measurement
+            performDynamicDetection(src, e.edgesClosed, e.edgesRaw, embedder, library, sink,
+                    features, calibration);
 
             src.release();
             e.release();
@@ -327,12 +362,14 @@ public class HardwareFeatureExtractor {
             Log.e(TAG, "OpenCV Pipeline failure", e);
         }
 
-        return new AnalysisResult(features, diagnosticBitmap);
+        return new AnalysisResult(features, diagnosticBitmap, calibration);
     }
 
-    private static void performDynamicDetection(Mat src, Mat edges, FeatureEmbedder embedder,
+    private static void performDynamicDetection(Mat src, Mat edges, Mat edgesRaw,
+                                                FeatureEmbedder embedder,
                                                 ReferenceLibrary library, CropSink sink,
-                                                List<ExtractedFeature> outFeatures) {
+                                                List<ExtractedFeature> outFeatures,
+                                                ScaleCalibration calibration) {
         float imgWidth = (float) src.width();
         float imgHeight = (float) src.height();
 
@@ -340,7 +377,15 @@ public class HardwareFeatureExtractor {
         boolean canClassify = embedder != null && library != null && !library.isEmpty();
 
         int boxId = 0;
+        int markerBoxes = 0;
         for (Rect r : merged) {
+            // The calibration marker is a deliberate part of the scene, not hardware under
+            // inspection. Dropping it here keeps it out of the counts, the classification
+            // event log and the operator's review queue.
+            if (calibration != null && calibration.overlapsMarker(r)) {
+                markerBoxes++;
+                continue;
+            }
             boxId++;
 
             // One crop is alive at a time: created, embedded, persisted, then freed before the
@@ -374,7 +419,14 @@ public class HardwareFeatureExtractor {
                 if (crop != null) crop.recycle();
             }
 
-            outFeatures.add(new ExtractedFeature(
+            // Measured after classification, because the type decides whether the feature is
+            // measured as a circle or a rectangle — the classifier's only role in sizing.
+            FeatureMeasurement measurement = FeatureMeasurement.measure(edgesRaw, r, calibration);
+            if (measurement != null) {
+                label = label + "  " + measurement.shortLabel(type);
+            }
+
+            ExtractedFeature feature = new ExtractedFeature(
                 type,
                 new RectF((float)r.x/imgWidth, (float)r.y/imgHeight, (float)(r.x+r.width)/imgWidth, (float)(r.y+r.height)/imgHeight),
                 ReferenceLibrary.colorFor(type),
@@ -382,7 +434,12 @@ public class HardwareFeatureExtractor {
                 confidence,
                 cropPath,
                 classification
-            ));
+            );
+            feature.measurement = measurement;
+            outFeatures.add(feature);
+        }
+        if (markerBoxes > 0) {
+            Log.d(TAG, "Excluded " + markerBoxes + " detection(s) overlapping the calibration marker.");
         }
     }
 
@@ -619,11 +676,10 @@ public class HardwareFeatureExtractor {
         imgClahe.release();
         imgFiltered.release();
         imgSmoothed.release();
-        edges.release();
         dilateKernel.release();
         closeKernel.release();
 
-        return new Edges(gray, edgesDilated, edgesClosed);
+        return new Edges(gray, edges, edgesDilated, edgesClosed);
     }
 
     private static List<Rect> removeNestedBoxes(List<Rect> boxes) {

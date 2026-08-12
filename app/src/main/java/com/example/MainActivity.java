@@ -30,6 +30,10 @@ public class MainActivity extends AppCompatActivity {
             navController = navHostFragment.getNavController();
             NavigationUI.setupWithNavController(binding.bottomNavigation, navController);
             
+            // Routes the global back button through the same dispatcher as the system
+            // back gesture, so both behave identically on every screen.
+            binding.btnGlobalBack.setOnClickListener(v -> getOnBackPressedDispatcher().onBackPressed());
+
             // Show bottom navigation only on Top-Level screens (Home & History)
             navController.addOnDestinationChangedListener((controller, destination, arguments) -> {
                 int id = destination.getId();
@@ -38,6 +42,10 @@ public class MainActivity extends AppCompatActivity {
                 } else {
                     binding.bottomNavigation.setVisibility(View.GONE);
                 }
+
+                // Home is the start destination: going back from there would exit the app.
+                binding.layoutBackBar.setVisibility(
+                        id == R.id.navigation_home ? View.GONE : View.VISIBLE);
             });
         }
     }

@@ -17,6 +17,8 @@
     <color name="green_pass_header">#2E7D32</color>
     <color name="red_fail">#F87171</color>
     <color name="orange_warn">#FBBF24</color>
+    <!-- Advisory-severity findings: visible, but distinct from the red that means "failed". -->
+    <color name="amber_advisory">#FBBF24</color>
     <color name="gray_text_secondary">#938F99</color>
     <color name="color_border">#49454F</color>
 </resources>

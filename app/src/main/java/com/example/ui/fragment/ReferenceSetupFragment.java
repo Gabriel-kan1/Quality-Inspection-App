@@ -630,6 +630,13 @@ public class ReferenceSetupFragment extends Fragment {
         }).start();
     }
 
+    /**
+     * Records that this part was deliberately left without a reference, then returns home.
+     *
+     * <p>It used to continue to the inspection screen, which no longer goes anywhere: the
+     * alignment gate has nothing to compare frames against without a reference photo and
+     * blocks capture outright, so sending the operator there would be a guaranteed dead end.
+     */
     private void skipSetupReference() {
         new Thread(() -> {
             AppDatabase db = AppDatabase.getInstance(requireContext());
@@ -638,7 +645,13 @@ public class ReferenceSetupFragment extends Fragment {
                 ReferenceProfile profile = new ReferenceProfile(partId, "dummy_placeholder", System.currentTimeMillis());
                 db.referenceProfileDao().insertProfile(profile);
             }
-            requireActivity().runOnUiThread(this::proceedToInspection);
+            requireActivity().runOnUiThread(() -> {
+                if (!isAdded() || getView() == null) return;
+                Toast.makeText(getContext(),
+                        "Skipped. This part can't be inspected until a reference photo is captured.",
+                        Toast.LENGTH_LONG).show();
+                Navigation.findNavController(getView()).navigate(R.id.action_reference_setup_to_home);
+            });
         }).start();
     }
 

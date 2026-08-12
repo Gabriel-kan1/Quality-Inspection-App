@@ -22,7 +22,10 @@ import com.example.R;
 import com.example.data.AppDatabase;
 import com.example.data.entity.FeatureResult;
 import com.example.data.entity.InspectionRecord;
+import com.example.data.entity.SlotResult;
 import com.example.databinding.FragmentReportBinding;
+import com.example.ml.FeatureTypeRegistry;
+import com.example.report.AdvisoryNotes;
 
 import com.itextpdf.text.BaseColor;
 import com.itextpdf.text.Document;
@@ -46,7 +49,12 @@ public class ReportFragment extends Fragment {
     private FragmentReportBinding binding;
     private long inspectionId = -1;
     private InspectionRecord record = null;
+    /** Critical-severity results only — the quantitative table. */
     private List<FeatureResult> features = null;
+    /** Advisory-severity results, rendered as trend notes instead of counted rows. */
+    private List<AdvisoryNotes.Note> warningNotes = null;
+    /** Per-position findings for critical features. Empty when no positional check was possible. */
+    private List<SlotResult> slotResults = null;
     private File generatedPdfFile = null;
 
     @Override
@@ -86,12 +94,28 @@ public class ReportFragment extends Fragment {
             AppDatabase db = AppDatabase.getInstance(requireContext());
             record = db.inspectionDao().getInspectionById(inspectionId);
 
-            // Non-critical feature types (e.g. cosmetic scratch/rust, per user's FeatureTypeRegistry
-            // choice at labelling time) are tracked in the DB but intentionally left out of the report.
+            // Each result is routed by the severity it was filed with (FeatureTypeRegistry.Severity,
+            // chosen by the operator when the type was labelled):
+            //   CRITICAL -> the quantitative table below
+            //   ADVISORY -> warning notes, as a trend against this part's own history
+            //   IGNORED  -> nothing; tracked in the DB for learning, absent from the report
+            slotResults = db.inspectionDao().getSlotResultsForInspection(inspectionId);
+
             List<FeatureResult> all = db.inspectionDao().getFeatureResultsForInspection(inspectionId);
             features = new java.util.ArrayList<>();
+            warningNotes = new java.util.ArrayList<>();
             for (FeatureResult f : all) {
-                if (f.isCritical()) features.add(f);
+                FeatureTypeRegistry.Severity severity =
+                        FeatureTypeRegistry.Severity.fromLevel(f.getSeverity());
+                if (severity == FeatureTypeRegistry.Severity.CRITICAL) {
+                    features.add(f);
+                } else if (severity == FeatureTypeRegistry.Severity.ADVISORY) {
+                    List<Integer> history = db.inspectionDao().getHistoricalDetectedCounts(
+                            record == null ? "" : record.getPartId(), f.getFeatureType(),
+                            inspectionId, AdvisoryNotes.HISTORY_WINDOW);
+                    warningNotes.add(AdvisoryNotes.forType(
+                            f.getFeatureType(), f.getDetectedCount(), history));
+                }
             }
 
             requireActivity().runOnUiThread(() -> {
@@ -118,6 +142,8 @@ public class ReportFragment extends Fragment {
 
                     // Dynamically build features table
                     buildFeatureRows();
+                    buildLocalisationRows();
+                    buildWarningNotes();
                 }
             });
         }).start();
@@ -197,6 +223,136 @@ public class ReportFragment extends Fragment {
 
             binding.layoutReportFeaturesContainer.addView(row);
             binding.layoutReportFeaturesContainer.addView(divider);
+        }
+    }
+
+    /**
+     * Renders one row per expected critical position: which slot, what belongs there, where it
+     * is on the part, and what was actually found.
+     *
+     * The card is hidden entirely when the inspection has no slot rows. Absent rows mean no
+     * positional claim was possible — no reference layout, or a photo that could not be
+     * registered onto it — and an empty table under this heading would read as "every position
+     * checked out", which is the opposite of what it means.
+     */
+    private void buildLocalisationRows() {
+        binding.layoutReportLocalisationContainer.removeAllViews();
+        if (slotResults == null || slotResults.isEmpty()) {
+            binding.cardReportLocalisation.setVisibility(View.GONE);
+            return;
+        }
+        binding.cardReportLocalisation.setVisibility(View.VISIBLE);
+
+        int missing = 0, wrong = 0;
+        for (SlotResult s : slotResults) {
+            if ("MISSING".equals(s.getStatus())) missing++;
+            else if ("WRONG_TYPE".equals(s.getStatus())) wrong++;
+        }
+        binding.tvReportLocalisationSummary.setText(String.format(Locale.getDefault(),
+                "%d of %d expected positions verified · %d missing · %d wrong type",
+                slotResults.size() - missing - wrong, slotResults.size(), missing, wrong));
+
+        for (SlotResult s : slotResults) {
+            LinearLayout row = new LinearLayout(getContext());
+            row.setOrientation(LinearLayout.HORIZONTAL);
+            row.setPadding(0, 14, 0, 14);
+
+            TextView tvSlot = new TextView(getContext());
+            tvSlot.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 0.5f));
+            tvSlot.setText("#" + s.getSlotId());
+            tvSlot.setTextColor(ContextCompat.getColor(requireContext(), R.color.gray_text_secondary));
+            tvSlot.setTextSize(14f);
+
+            TextView tvType = new TextView(getContext());
+            tvType.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.6f));
+            tvType.setText(s.getExpectedType());
+            tvType.setTextColor(ContextCompat.getColor(requireContext(), R.color.white));
+            tvType.setTextSize(14f);
+            tvType.setTypeface(android.graphics.Typeface.defaultFromStyle(android.graphics.Typeface.BOLD));
+
+            TextView tvWhere = new TextView(getContext());
+            tvWhere.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.6f));
+            tvWhere.setText(String.format(Locale.getDefault(), "%s\n(%.0f%%, %.0f%%)",
+                    s.getZone(), s.getRelX() * 100, s.getRelY() * 100));
+            tvWhere.setTextColor(ContextCompat.getColor(requireContext(), R.color.gray_text_secondary));
+            tvWhere.setTextSize(12f);
+
+            TextView tvStatus = new TextView(getContext());
+            tvStatus.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.4f));
+            tvStatus.setTextSize(12f);
+            tvStatus.setGravity(Gravity.END);
+            tvStatus.setTypeface(android.graphics.Typeface.defaultFromStyle(android.graphics.Typeface.BOLD));
+            if ("MISSING".equals(s.getStatus())) {
+                tvStatus.setText("MISSING");
+                tvStatus.setTextColor(ContextCompat.getColor(requireContext(), R.color.red_fail));
+            } else if ("WRONG_TYPE".equals(s.getStatus())) {
+                tvStatus.setText("WRONG:\n" + s.getFoundType());
+                tvStatus.setTextColor(ContextCompat.getColor(requireContext(), R.color.orange_warn));
+            } else {
+                tvStatus.setText("PRESENT");
+                tvStatus.setTextColor(ContextCompat.getColor(requireContext(), R.color.green_pass));
+            }
+
+            row.addView(tvSlot);
+            row.addView(tvType);
+            row.addView(tvWhere);
+            row.addView(tvStatus);
+
+            View divider = new View(getContext());
+            divider.setLayoutParams(new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 1));
+            divider.setBackgroundColor(ContextCompat.getColor(requireContext(), R.color.gray_text_secondary));
+            divider.setAlpha(0.2f);
+
+            binding.layoutReportLocalisationContainer.addView(row);
+            binding.layoutReportLocalisationContainer.addView(divider);
+        }
+    }
+
+    /**
+     * Renders the advisory findings as one line each, elevated ones first so the note this
+     * section exists for is the first thing read. The whole card stays hidden when the
+     * inspection produced no advisory types — an empty "warnings" heading reads as a
+     * clean bill of health, which is not the same thing as having nothing to trend.
+     */
+    private void buildWarningNotes() {
+        binding.layoutReportWarningsContainer.removeAllViews();
+        if (warningNotes == null || warningNotes.isEmpty()) {
+            binding.cardReportWarnings.setVisibility(View.GONE);
+            return;
+        }
+        binding.cardReportWarnings.setVisibility(View.VISIBLE);
+
+        List<AdvisoryNotes.Note> ordered = new java.util.ArrayList<>(warningNotes);
+        java.util.Collections.sort(ordered, (a, b) -> a.level.ordinal() - b.level.ordinal());
+
+        for (AdvisoryNotes.Note note : ordered) {
+            LinearLayout row = new LinearLayout(getContext());
+            row.setOrientation(LinearLayout.HORIZONTAL);
+            row.setPadding(0, 12, 0, 12);
+
+            // A coloured rule rather than a bullet glyph: it survives the operator's font-size
+            // settings, which a fixed-size dot in a TextView does not.
+            View bar = new View(getContext());
+            LinearLayout.LayoutParams barLp = new LinearLayout.LayoutParams(6,
+                    ViewGroup.LayoutParams.MATCH_PARENT);
+            barLp.rightMargin = 14;
+            bar.setLayoutParams(barLp);
+            bar.setBackgroundColor(ContextCompat.getColor(requireContext(),
+                    note.level == AdvisoryNotes.Level.ELEVATED
+                            ? R.color.amber_advisory : R.color.gray_text_secondary));
+
+            TextView tvNote = new TextView(getContext());
+            tvNote.setLayoutParams(new LinearLayout.LayoutParams(0,
+                    ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+            tvNote.setText(note.text);
+            tvNote.setTextSize(13f);
+            tvNote.setTextColor(ContextCompat.getColor(requireContext(),
+                    note.level == AdvisoryNotes.Level.ELEVATED
+                            ? R.color.white : R.color.gray_text_secondary));
+
+            row.addView(bar);
+            row.addView(tvNote);
+            binding.layoutReportWarningsContainer.addView(row);
         }
     }
 
@@ -303,6 +459,92 @@ public class ReportFragment extends Fragment {
             }
 
             document.add(table);
+
+            // Localisation: which specific expected feature is where, and which one is missing.
+            // A separate table from the counts above because the grain differs — that one is per
+            // type, this one per physical position.
+            if (slotResults != null && !slotResults.isEmpty()) {
+                Font locHeaderFont = new Font(Font.FontFamily.HELVETICA, 12, Font.BOLD, BaseColor.DARK_GRAY);
+                Paragraph locHeading = new Paragraph("CRITICAL FEATURE LOCALISATION", locHeaderFont);
+                locHeading.setSpacingBefore(24f);
+                locHeading.setSpacingAfter(4f);
+                document.add(locHeading);
+
+                int missing = 0, wrong = 0;
+                for (SlotResult s : slotResults) {
+                    if ("MISSING".equals(s.getStatus())) missing++;
+                    else if ("WRONG_TYPE".equals(s.getStatus())) wrong++;
+                }
+                Paragraph locBlurb = new Paragraph(String.format(Locale.getDefault(),
+                        "%d of %d expected positions verified, %d missing, %d wrong type."
+                                + " Positions are given as a region of the part with fractional"
+                                + " coordinates from its top-left.",
+                        slotResults.size() - missing - wrong, slotResults.size(), missing, wrong),
+                        bodyFont);
+                locBlurb.setSpacingAfter(10f);
+                document.add(locBlurb);
+
+                PdfPTable locTable = new PdfPTable(4);
+                locTable.setWidthPercentage(100);
+                locTable.setWidths(new float[]{0.6f, 1.8f, 1.8f, 1.4f});
+                for (String header : new String[]{"Slot", "Expected Feature", "Position", "Result"}) {
+                    PdfPCell hc = new PdfPCell(new Phrase(header, headerFont));
+                    hc.setBackgroundColor(BaseColor.GRAY);
+                    hc.setHorizontalAlignment(Element.ALIGN_CENTER);
+                    hc.setPadding(8f);
+                    locTable.addCell(hc);
+                }
+                for (SlotResult s : slotResults) {
+                    boolean defect = !"PRESENT".equals(s.getStatus());
+                    PdfPCell c1 = new PdfPCell(new Phrase("#" + s.getSlotId(), bodyFont));
+                    c1.setHorizontalAlignment(Element.ALIGN_CENTER);
+                    c1.setPadding(6f);
+                    PdfPCell c2 = new PdfPCell(new Phrase(s.getExpectedType(), boldBodyFont));
+                    c2.setPadding(6f);
+                    PdfPCell c3 = new PdfPCell(new Phrase(String.format(Locale.getDefault(),
+                            "%s (%.0f%%, %.0f%%)", s.getZone(), s.getRelX() * 100, s.getRelY() * 100), bodyFont));
+                    c3.setPadding(6f);
+                    String resultText = "MISSING".equals(s.getStatus()) ? "MISSING"
+                            : ("WRONG_TYPE".equals(s.getStatus())
+                                ? "WRONG TYPE: " + s.getFoundType() : "PRESENT");
+                    PdfPCell c4 = new PdfPCell(new Phrase(resultText, defect ? boldBodyFont : bodyFont));
+                    c4.setHorizontalAlignment(Element.ALIGN_CENTER);
+                    c4.setPadding(6f);
+
+                    locTable.addCell(c1);
+                    locTable.addCell(c2);
+                    locTable.addCell(c3);
+                    locTable.addCell(c4);
+                }
+                document.add(locTable);
+            }
+
+            // Warning notes: advisory findings, as prose rather than table rows. They are
+            // deliberately not columns in the table above — putting a scratch count beside an
+            // expected/detected bolt count invites reading it as a defect tally, which is the
+            // confusion the severity scale exists to remove.
+            if (warningNotes != null && !warningNotes.isEmpty()) {
+                Font warnHeaderFont = new Font(Font.FontFamily.HELVETICA, 12, Font.BOLD, BaseColor.DARK_GRAY);
+                Paragraph warnHeading = new Paragraph("WARNING NOTES (NON-CRITICAL)", warnHeaderFont);
+                warnHeading.setSpacingBefore(24f);
+                warnHeading.setSpacingAfter(4f);
+                document.add(warnHeading);
+
+                Paragraph warnBlurb = new Paragraph(
+                        "Tracked as trends against this part's inspection history. These findings do"
+                                + " not affect the pass/fail verdict above.", bodyFont);
+                warnBlurb.setSpacingAfter(10f);
+                document.add(warnBlurb);
+
+                List<AdvisoryNotes.Note> ordered = new java.util.ArrayList<>(warningNotes);
+                java.util.Collections.sort(ordered, (a, b) -> a.level.ordinal() - b.level.ordinal());
+                for (AdvisoryNotes.Note note : ordered) {
+                    Font f = note.level == AdvisoryNotes.Level.ELEVATED ? boldBodyFont : bodyFont;
+                    Paragraph p = new Paragraph("- " + note.text, f);
+                    p.setSpacingAfter(4f);
+                    document.add(p);
+                }
+            }
 
             // Seal signature section
             Paragraph seal = new Paragraph("\n\n\n\nOFFLINE AUTOMATION SYSTEM LOG GENERATOR SEAL\nFactory QC Manager digital signature valid.", bodyFont);
