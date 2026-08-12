@@ -32,7 +32,7 @@ import ai.onnxruntime.OrtSession;
  * sides come from one model. {@link #ENCODER_ID} is what enforces that — see
  * {@link ReferenceLibrary#encoderId()}.
  */
-public final class FeatureEmbedder {
+public final class FeatureEmbedder implements Encoder {
 
     private static final String TAG = "FeatureEmbedder";
     public static final String MODEL_ASSET = "models/feature_encoder.onnx";
@@ -128,6 +128,7 @@ public final class FeatureEmbedder {
      * be called from the classification loop on a background thread. Returns null on
      * failure.
      */
+    @Override
     public synchronized float[] embed(Bitmap crop) {
         if (crop == null) return null;
         OnnxTensor input = null;

@@ -235,7 +235,7 @@ public final class AlignmentGate {
         }
     }
 
-    private final FeatureEmbedder embedder;
+    private final Encoder embedder;
     private final float[] referenceEmbedding;
     /** The reference's centre crop, encoded once so the too-close test is free per frame.
      *  Null when it could not be encoded, which disables that test rather than the gate. */
@@ -247,7 +247,7 @@ public final class AlignmentGate {
     // Package-visible so tests can build a gate around a null embedder and exercise the
     // parts that do not need one — the motion estimate in particular, which is plain bitmap
     // arithmetic gating every capture but was previously unreachable without an ONNX session.
-    AlignmentGate(FeatureEmbedder embedder, float[] referenceEmbedding,
+    AlignmentGate(Encoder embedder, float[] referenceEmbedding,
                           float[] referenceZoomEmbedding) {
         this.embedder = embedder;
         this.referenceEmbedding = referenceEmbedding;

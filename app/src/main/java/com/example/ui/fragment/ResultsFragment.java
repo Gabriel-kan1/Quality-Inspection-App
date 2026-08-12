@@ -359,7 +359,8 @@ public class ResultsFragment extends Fragment {
             binding.ivCannyEdges.setImageBitmap(activeResult.processedBitmap);
         }
         binding.chassisOverlayView.setResultData(imageUri, activeResult.features);
-        binding.chassisOverlayView.setExpectedSlots(missingSlotMarkers());
+        // Slot markers are set inside recomputeAndRender, which is where localisation is
+        // actually computed; calling it here as well only ever produced an empty list.
         // Any detection can be corrected by tapping it, not just the ones the app chose to
         // ask about — the operator can see a wrong label the classifier was confident about.
         binding.chassisOverlayView.setOnFeatureClickListener((index, f) -> correctFeatureAt(index));

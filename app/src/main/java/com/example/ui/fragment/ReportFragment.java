@@ -211,6 +211,10 @@ public class ReportFragment extends Fragment {
 
             if ("MATCH".equalsIgnoreCase(f.getStatus()) || "PASS".equalsIgnoreCase(f.getStatus())) {
                 tvStatus.setTextColor(ContextCompat.getColor(requireContext(), R.color.green_pass));
+            } else if ("UNVERIFIED".equalsIgnoreCase(f.getStatus())) {
+                // Nothing was compared for this row, so it is neither a match nor a defect.
+                // Red here would report a discrepancy the inspection never measured.
+                tvStatus.setTextColor(ContextCompat.getColor(requireContext(), R.color.gray_text_secondary));
             } else {
                 tvStatus.setTextColor(ContextCompat.getColor(requireContext(), R.color.red_fail));
             }

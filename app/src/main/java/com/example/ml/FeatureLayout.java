@@ -176,9 +176,9 @@ public final class FeatureLayout {
     public static File fileFor(Context context, String partId) {
         File dir = new File(context.getFilesDir(), DIR);
         if (!dir.exists()) dir.mkdirs();
-        String safe = partId == null || partId.isEmpty()
-                ? "unknown_part" : partId.replaceAll("[^A-Za-z0-9_.-]", "_");
-        return new File(dir, safe + ".json");
+        // Shared with the library, threshold and crop stores: these all derive a path for the
+        // same part, so a divergent sanitiser would silently point one at a different file.
+        return new File(dir, PartFiles.safeName(partId) + ".json");
     }
 
     public void save(Context context, String partId) {
