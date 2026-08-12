@@ -62,7 +62,7 @@ public final class ReferenceLibraryProvider {
 
     /** File path where the in-app builder saves a part's library. */
     public static File fileForPart(Context context, String partId) {
-        return new File(libDir(context), safe(partId) + ".json");
+        return new File(libDir(context), PartFiles.safeName(partId) + ".json");
     }
 
     /** Effective library for a part: per-part if present, else the default. */
@@ -182,18 +182,14 @@ public final class ReferenceLibraryProvider {
 
     private static byte[] readAsset(Context context, String path) throws Exception {
         try (InputStream is = context.getAssets().open(path)) {
-            ByteArrayOutputStream bos = new ByteArrayOutputStream(Math.max(1024, is.available()));
-            byte[] buf = new byte[8192];
-            int n;
-            while ((n = is.read(buf)) != -1) bos.write(buf, 0, n);
-            return bos.toByteArray();
+            return PartFiles.readAllBytes(is);
         }
     }
 
     private static String readSignature(File file) {
         if (!file.exists()) return null;
         try (InputStream is = new java.io.FileInputStream(file)) {
-            return new String(readAllBytes(is), StandardCharsets.UTF_8).trim();
+            return PartFiles.readAllText(is).trim();
         } catch (Exception e) {
             return null;
         }
@@ -205,14 +201,6 @@ public final class ReferenceLibraryProvider {
         } catch (Exception e) {
             Log.e(TAG, "Failed to write signature to " + file, e);
         }
-    }
-
-    private static byte[] readAllBytes(InputStream is) throws Exception {
-        ByteArrayOutputStream bos = new ByteArrayOutputStream();
-        byte[] buf = new byte[4096];
-        int n;
-        while ((n = is.read(buf)) != -1) bos.write(buf, 0, n);
-        return bos.toByteArray();
     }
 
     /**
@@ -229,8 +217,4 @@ public final class ReferenceLibraryProvider {
         if (sig.exists()) sig.delete();
     }
 
-    private static String safe(String partId) {
-        if (partId == null || partId.isEmpty()) return "unknown_part";
-        return partId.replaceAll("[^A-Za-z0-9_.-]", "_");
-    }
 }

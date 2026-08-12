@@ -148,8 +148,14 @@ public final class FeatureEmbedder {
         }
     }
 
-    /** Resize (shorter side -> 224), centre-crop 224x224, normalise, pack as NCHW. */
-    private FloatBuffer preprocess(Bitmap src) {
+    /**
+     * Resize (shorter side -> 224), centre-crop 224x224, normalise, pack as NCHW.
+     *
+     * <p>Static and package-visible so it can be tested directly: this is the step that has
+     * to stay byte-for-byte in step with the Python studies in {@code python/}, which
+     * re-implement it, and nothing about it needs a live ONNX session.
+     */
+    static FloatBuffer preprocess(Bitmap src) {
         int w = src.getWidth();
         int h = src.getHeight();
         float scale = (float) INPUT_SIZE / Math.min(w, h);
@@ -206,11 +212,7 @@ public final class FeatureEmbedder {
 
     private static byte[] readAsset(Context context, String path) throws Exception {
         try (InputStream is = context.getAssets().open(path)) {
-            ByteArrayOutputStream bos = new ByteArrayOutputStream(Math.max(1024, is.available()));
-            byte[] buf = new byte[16 * 1024];
-            int n;
-            while ((n = is.read(buf)) != -1) bos.write(buf, 0, n);
-            return bos.toByteArray();
+            return PartFiles.readAllBytes(is);
         }
     }
 }

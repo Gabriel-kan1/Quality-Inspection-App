@@ -1,14 +1,16 @@
-package com.example.ui.fragment;
+package com.example.ml;
 
 import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.graphics.Matrix;
 import android.graphics.RectF;
 import android.net.Uri;
 import android.util.Log;
 
-import com.example.ml.FeatureEmbedder;
-import com.example.ml.ReferenceLibrary;
+import androidx.exifinterface.media.ExifInterface;
+
+import com.example.ui.util.AssetBitmaps;
 
 import org.opencv.android.OpenCVLoader;
 import org.opencv.android.Utils;
@@ -33,73 +35,106 @@ public class HardwareFeatureExtractor {
 
     // ─────────────────────────────────────────────────────────────
     // CONFIG — tune detection here. Grouped to mirror the Python script's
-    // CONFIG block. All values are non-final so they can be adjusted at
-    // runtime (e.g. from a debug settings screen) without recompiling logic.
+    // CONFIG block. These were left non-final for a debug settings screen that was never
+    // built, so they were constants without the keyword; restored to final. Add the screen
+    // first if runtime tuning is wanted.
     // ─────────────────────────────────────────────────────────────
 
+    /**
+     * Longest edge, in pixels, that every image is resized to before analysis.
+     *
+     * Every other constant in this block is denominated in pixels — kernel sizes, the
+     * proximity threshold, the crop padding, the absolute area floor — so they only mean
+     * anything against a fixed working resolution. This value is enforced exactly by
+     * {@link #loadBitmap}, which resizes after decoding rather than relying on
+     * {@code inSampleSize} alone: BitmapFactory rounds that down to a power of two, so
+     * asking for 1280 used to yield 2016px from a 4032px source and 1500px from a 3000px
+     * one. Two photos of the same part were being measured with different rulers, and the
+     * verdict is a detection-count comparison between exactly two such photos.
+     */
+    public static final int WORKING_MAX_DIM = 1280;
+
     // --- Edge detection (computeEdges) ---
+    /** Fraction of near-white pixels above which the black-hat glare correction runs. */
+    private static final double GLARE_RATIO_THRESHOLD = 0.05;
+    /** Structuring element for the black-hat lighting correction, in WORKING_MAX_DIM pixels. */
+    private static final int GLARE_KERNEL_SIZE = 75;
     /** CLAHE local-contrast boost. Higher = crisper edges but more texture noise. */
-    private static double CLAHE_CLIP_LIMIT = 1.0;
+    private static final double CLAHE_CLIP_LIMIT = 1.0;
     /** Bilateral filter diameter/sigmas — denoise while preserving edges. */
-    private static double BILATERAL_SIGMA_COLOR = 60;
-    private static double BILATERAL_SIGMA_SPACE = 20;
+    private static final double BILATERAL_SIGMA_COLOR = 60;
+    private static final double BILATERAL_SIGMA_SPACE = 20;
     /**
      * Canny thresholds are computed adaptively per-image via Otsu's method rather
      * than fixed, so lighting/exposure differences between photos don't require
      * re-tuning. These multipliers scale the Otsu threshold (low = ratio * high).
      */
-    private static double CANNY_LOW_RATIO = 0.5;
-    private static double CANNY_HIGH_CAP = 255.0;
+    private static final double CANNY_LOW_RATIO = 0.5;
+    private static final double CANNY_HIGH_CAP = 255.0;
     /** Morphology: dilate (rect) to bridge gaps, then close (ellipse) to seal contours. */
-    private static int DILATE_KERNEL_SIZE = 5;
-    private static int CLOSE_KERNEL_SIZE = 7;
+    private static final int DILATE_KERNEL_SIZE = 5;
+    private static final int CLOSE_KERNEL_SIZE = 7;
 
     // --- Geometry filtering (findFeatureBoxes) ---
-    private static float MAX_DIMENSION_RATIO = 0.4f;
     /**
      * Aspect band a contour must fall inside to be considered hardware. Measured on real
      * chassis shots: bolt heads land at 0.85-1.30, while structural seams and panel edges
      * run 2.4-4.3. The band is set to separate those two populations. Widen MAX if genuinely
      * elongated features (side-on screw shafts) start being missed.
      */
-    private static float MAX_ASPECT_RATIO = 2.5f;
-    private static float MIN_ASPECT_RATIO = 0.4f;
-    private static int EDGE_MARGIN = 10;
-    private static double DYNAMIC_AREA_MULTIPLIER = 0.15;
+    private static final float MAX_ASPECT_RATIO = 2.5f;
+    private static final float MIN_ASPECT_RATIO = 0.4f;
+    private static final double DYNAMIC_AREA_MULTIPLIER = 0.15;
     /**
      * Contours more than this many times the median area are treated as structural
      * (chassis outline, panel edges, shadows) rather than hardware, and are excluded when
      * sizing the dynamic area threshold — see the note in findFeatureBoxes.
      */
-    private static double OUTLIER_AREA_FACTOR = 10.0;
-    private static int PROXIMITY_THRESHOLD = 10;
-    private static double FILL_RATIO_THRESHOLD = 0.7;
-    /**
-     * Minimum circularity (4*pi*area / perimeter^2, 1.0 = perfect circle) required for
-     * contours that are roughly as wide as they are tall (aspect ratio within
-     * CIRCULARITY_ASPECT_BAND of 1.0). Rejects scratches/seams among the round
-     * fastener types (bolt_head, hole, rivet_head, stud) without touching elongated
-     * contours, because "screw" in this pipeline is a cylindrical shaft viewed from
-     * the side (long and thin, not round) — see TEXT_PROMPTS in the Python script.
-     * Applying circularity indiscriminately would filter out real screws. Set to 0
-     * to disable entirely.
-     */
-    private static double MIN_CIRCULARITY = 0.55;
-    /** How close to a 1:1 aspect ratio a contour must be before the circularity check applies. */
-    private static double CIRCULARITY_ASPECT_BAND = 0.35;
+    private static final double OUTLIER_AREA_FACTOR = 10.0;
+    private static final int PROXIMITY_THRESHOLD = 10;
+    private static final double FILL_RATIO_THRESHOLD = 0.7;
 
     private static final int CROP_PADDING = 40;   // matches CROP_PADDING in the Python script
     /** Upper bound on boxes carried forward from one image; see the safety valve in findFeatureBoxes. */
-    private static int MAX_DETECTIONS = 300;
-    /** Logs every box before and after merging. Verbose — for tuning detection, not normal use. */
-    private static boolean DEBUG_GEOMETRY = true;
+    private static final int MAX_DETECTIONS = 300;
+    /**
+     * Logs every box before and after merging. Verbose — for tuning detection, not normal use.
+     *
+     * Off by default: at the counts the bundled assets produce this is up to ~110 log lines
+     * per image and two per box, charged on every inspection including the reference pass.
+     */
+    private static final boolean DEBUG_GEOMETRY = false;
+
+    /**
+     * Whether the native OpenCV libraries actually loaded.
+     *
+     * Checked before every pipeline entry point. Without this the class still loads when
+     * init fails and each OpenCV call throws {@link UnsatisfiedLinkError} — an {@code Error},
+     * not an {@code Exception}, so the catch blocks below miss it, the worker thread dies
+     * silently and the results screen waits forever on a callback that never comes.
+     */
+    private static final boolean OPENCV_READY;
 
     static {
-        if (!OpenCVLoader.initDebug()) {
-            Log.e(TAG, "OpenCV initialization failed.");
-        } else {
-            Log.d(TAG, "OpenCV initialization succeeded.");
+        boolean ready;
+        try {
+            ready = OpenCVLoader.initDebug();
+        } catch (Throwable t) {
+            // A missing or ABI-mismatched .so surfaces here as UnsatisfiedLinkError.
+            Log.e(TAG, "OpenCV native libraries could not be loaded.", t);
+            ready = false;
         }
+        OPENCV_READY = ready;
+        if (ready) {
+            Log.d(TAG, "OpenCV initialization succeeded.");
+        } else {
+            Log.e(TAG, "OpenCV initialization failed — detection is disabled for this session.");
+        }
+    }
+
+    /** True when the detection pipeline can run at all; false means the native libs are missing. */
+    public static boolean isAvailable() {
+        return OPENCV_READY;
     }
 
     public static class ExtractedFeature {
@@ -136,10 +171,27 @@ public class HardwareFeatureExtractor {
     public static class AnalysisResult {
         public List<ExtractedFeature> features;
         public Bitmap processedBitmap;
+        /**
+         * Whether the glare (black-hat) branch ran for this image.
+         *
+         * Exposed so a second pass over a different image can be forced down the same branch.
+         * The two branches produce structurally different edge maps, and this pipeline's
+         * verdict is a count comparison between two independently processed images — a
+         * reference at 4.9% glare and an inspection at 5.1% would otherwise disagree on
+         * nothing but lighting. See {@link #extractFeatures(Context, String, ReferenceLibrary,
+         * CropSink, Boolean)}.
+         */
+        public boolean glareCorrectionApplied;
 
         public AnalysisResult(List<ExtractedFeature> features, Bitmap processedBitmap) {
+            this(features, processedBitmap, false);
+        }
+
+        public AnalysisResult(List<ExtractedFeature> features, Bitmap processedBitmap,
+                              boolean glareCorrectionApplied) {
             this.features = features;
             this.processedBitmap = processedBitmap;
+            this.glareCorrectionApplied = glareCorrectionApplied;
         }
     }
 
@@ -207,22 +259,32 @@ public class HardwareFeatureExtractor {
         }
     }
 
-    /** Bundles the intermediate edge Mats produced by {@link #computeEdges(Mat)}. */
+    /** Bundles the intermediate edge Mats produced by {@link #computeEdges}. */
     private static final class Edges {
         final Mat gray;
         final Mat edgesDilated;
         final Mat edgesClosed;
+        /** Whether the black-hat glare branch ran; see {@link AnalysisResult#glareCorrectionApplied}. */
+        final boolean glareCorrectionApplied;
 
-        Edges(Mat gray, Mat edgesDilated, Mat edgesClosed) {
+        Edges(Mat gray, Mat edgesDilated, Mat edgesClosed, boolean glareCorrectionApplied) {
             this.gray = gray;
             this.edgesDilated = edgesDilated;
             this.edgesClosed = edgesClosed;
+            this.glareCorrectionApplied = glareCorrectionApplied;
         }
 
         void release() {
             gray.release();
             edgesDilated.release();
             edgesClosed.release();
+        }
+    }
+
+    /** Frees a Mat if it was allocated, tolerating nulls so it can be used from a finally block. */
+    private static void releaseQuietly(Mat... mats) {
+        for (Mat m : mats) {
+            if (m != null) m.release();
         }
     }
 
@@ -238,14 +300,20 @@ public class HardwareFeatureExtractor {
     public static List<CropRegion> extractCrops(Context context, String uriString) {
         List<CropRegion> crops = new ArrayList<>();
         if (uriString == null || uriString.isEmpty()) return crops;
+        if (!OPENCV_READY) {
+            Log.e(TAG, "extractCrops skipped — OpenCV is unavailable.");
+            return crops;
+        }
 
-        Bitmap bitmap = loadBitmap(context, uriString, 1280);
+        Bitmap bitmap = loadBitmap(context, uriString, WORKING_MAX_DIM);
         if (bitmap == null) return crops;
 
+        Mat src = null;
+        Edges e = null;
         try {
-            Mat src = new Mat();
+            src = new Mat();
             Utils.bitmapToMat(bitmap, src);
-            Edges e = computeEdges(src);
+            e = computeEdges(src, null);
 
             float w = src.width();
             float h = src.height();
@@ -256,11 +324,15 @@ public class HardwareFeatureExtractor {
                         r.x / w, r.y / h, (r.x + r.width) / w, (r.y + r.height) / h);
                 crops.add(new CropRegion(crop, frac));
             }
-
-            src.release();
-            e.release();
-        } catch (Exception ex) {
+        } catch (Throwable ex) {
+            // Throwable, not Exception: an OpenCV ABI problem arrives as UnsatisfiedLinkError.
             Log.e(TAG, "extractCrops failure", ex);
+        } finally {
+            // Native Mats are invisible to the GC and leaking them grows anon RSS with no
+            // OutOfMemoryError to show for it, so release on the failure path too.
+            releaseQuietly(src);
+            if (e != null) e.release();
+            bitmap.recycle();
         }
         return crops;
     }
@@ -281,10 +353,31 @@ public class HardwareFeatureExtractor {
      */
     public static AnalysisResult extractFeatures(Context context, String uriString,
                                                  ReferenceLibrary library, CropSink sink) {
+        return extractFeatures(context, uriString, library, sink, null);
+    }
+
+    /**
+     * As above, but lets the caller pin the glare branch instead of letting it be decided
+     * per-image.
+     *
+     * @param forceGlareCorrection {@code null} to decide from this image's own glare ratio;
+     *        {@code TRUE}/{@code FALSE} to force the black-hat branch on or off. Pass the
+     *        first pass's {@link AnalysisResult#glareCorrectionApplied} when running a second
+     *        image that has to be counted against the first — the branches produce different
+     *        edge maps, and a count comparison across a branch boundary is a lighting
+     *        artefact rather than a defect.
+     */
+    public static AnalysisResult extractFeatures(Context context, String uriString,
+                                                 ReferenceLibrary library, CropSink sink,
+                                                 Boolean forceGlareCorrection) {
         List<ExtractedFeature> features = new ArrayList<>();
         Bitmap diagnosticBitmap = null;
 
         if (uriString == null || uriString.isEmpty()) {
+            return new AnalysisResult(features, null);
+        }
+        if (!OPENCV_READY) {
+            Log.e(TAG, "extractFeatures skipped — OpenCV is unavailable.");
             return new AnalysisResult(features, null);
         }
 
@@ -294,22 +387,27 @@ public class HardwareFeatureExtractor {
         String filename = getFilename(uriString);
         Log.d(TAG, "Running OpenCV Pipeline for: " + filename);
 
-        // Load image with balanced scaling for analysis
-        Bitmap bitmap = loadBitmap(context, uriString, 1280); 
+        // Load image at the fixed working resolution every pixel-denominated constant assumes.
+        Bitmap bitmap = loadBitmap(context, uriString, WORKING_MAX_DIM);
         if (bitmap == null) {
             Log.e(TAG, "Failed to load bitmap for URI: " + uriString);
             return new AnalysisResult(features, null);
         }
 
+        Mat src = null;
+        Edges e = null;
+        Mat rgbaVisual = null;
+        boolean glareApplied = false;
         try {
-            Mat src = new Mat();
+            src = new Mat();
             Utils.bitmapToMat(bitmap, src);
 
             // STEP 2 — preprocessing + edge detection (shared with extractCrops()).
-            Edges e = computeEdges(src);
+            e = computeEdges(src, forceGlareCorrection);
+            glareApplied = e.glareCorrectionApplied;
 
             // --- GENERATE DIAGNOSTIC BITMAP (Green Edges on Gray Background) ---
-            Mat rgbaVisual = new Mat();
+            rgbaVisual = new Mat();
             Imgproc.cvtColor(e.gray, rgbaVisual, Imgproc.COLOR_GRAY2RGBA);
             // Highlight detected edges in bright green so they are visible on mobile displays.
             rgbaVisual.setTo(new Scalar(0, 255, 0, 255), e.edgesDilated);
@@ -319,15 +417,18 @@ public class HardwareFeatureExtractor {
             // STEP 3-6 — OpenCV crop extraction + embedding classification
             performDynamicDetection(src, e.edgesClosed, embedder, library, sink, features);
 
-            src.release();
-            e.release();
-            rgbaVisual.release();
-
-        } catch (Exception e) {
-            Log.e(TAG, "OpenCV Pipeline failure", e);
+        } catch (Throwable t) {
+            // Throwable, not Exception: an OpenCV ABI problem arrives as UnsatisfiedLinkError.
+            Log.e(TAG, "OpenCV Pipeline failure", t);
+        } finally {
+            // Native Mats are invisible to the GC and leaking them grows anon RSS with no
+            // OutOfMemoryError to show for it, so release on the failure path too.
+            releaseQuietly(src, rgbaVisual);
+            if (e != null) e.release();
+            bitmap.recycle();
         }
 
-        return new AnalysisResult(features, diagnosticBitmap);
+        return new AnalysisResult(features, diagnosticBitmap, glareApplied);
     }
 
     private static void performDynamicDetection(Mat src, Mat edges, FeatureEmbedder embedder,
@@ -401,44 +502,34 @@ public class HardwareFeatureExtractor {
         List<Double> validAreas = new ArrayList<>();
         int rejectedAspect = 0;
 
+        // Three further geometry filters (max-dimension, edge-margin and circularity) used to
+        // sit in this loop, commented out but with their constants and documentation still
+        // reading as live configuration. python/detector_ab_study.py confirms they are inert
+        // over the bundled assets; they have been removed rather than left as decoration. Git
+        // has them if the tuning is ever revisited.
         for (MatOfPoint c : contours) {
             Rect r = Imgproc.boundingRect(c);
 
-            // 1. Max Dimension Check (MAX_DIMENSION_RATIO)
-            //if (r.width > imgWidth * MAX_DIMENSION_RATIO || r.height > imgHeight * MAX_DIMENSION_RATIO) continue;
-
-            // 2. Aspect Ratio Check
+            // Aspect Ratio Check
             //
             // Re-enabled: structural seams and panel edges are long, flat contours. Left in,
             // they don't just add noise — a line's bounding box can enclose a nearby bolt head,
             // which then gets deleted by removeNestedBoxes or absorbed by the proximity merge,
             // so real fasteners disappear. The band is wide enough to keep screws, which in this
-            // pipeline are shafts viewed side-on and so legitimately elongated (see MIN_CIRCULARITY).
+            // pipeline are shafts viewed side-on and so legitimately elongated.
             float aspect = (float) r.width / r.height;
             if (aspect > MAX_ASPECT_RATIO || aspect < MIN_ASPECT_RATIO) {
                 rejectedAspect++;
                 continue;
             }
 
-            // 3. Edge Margin Check
-            //if (r.x < EDGE_MARGIN || r.y < EDGE_MARGIN || (r.x + r.width) > (imgWidth - EDGE_MARGIN) || (r.y + r.height) > (imgHeight - EDGE_MARGIN)) continue;
-
-            double area = Imgproc.contourArea(c);
-
-            // 4. Circularity Check — only for roughly square/round boxes (near 1:1 aspect),
-            // so elongated screw-shaft contours are never subject to it (see MIN_CIRCULARITY doc).
-            if (MIN_CIRCULARITY > 0 && Math.abs(aspect - 1.0f) <= CIRCULARITY_ASPECT_BAND) {
-                double circularity = circularityOf(c, area);
-                //if (circularity < MIN_CIRCULARITY) continue;
-            }
-
             validBoxes.add(r);
-            validAreas.add(area);
+            validAreas.add(Imgproc.contourArea(c));
         }
 
         if (validBoxes.isEmpty()) return new ArrayList<>();
 
-        // 5. Dynamic Area Filtering
+        // Dynamic Area Filtering
         //
         // The threshold is sized from the largest contours, on the assumption that those are
         // real hardware. That holds for a tight shot, but not for a wider one: there the
@@ -481,6 +572,28 @@ public class HardwareFeatureExtractor {
             }
         }
 
+        // Safety valve, applied here rather than after the merge.
+        //
+        // removeNestedBoxes is O(n^2) and mergeNearbyBoxes is O(n^2) per pass repeated
+        // until it stabilises, so both are superlinear in a count that nothing upstream
+        // bounds — three of the geometry filters above are commented out. Capping the
+        // output of those stages, which is what this used to do, leaves their input
+        // unbounded and so caps nothing that costs anything.
+        //
+        // Measured with python/detector_ab_study.py: identical output on all 29 bundled
+        // chassis assets (none of which comes close to the cap), and on a dense-noise
+        // frame that reaches 1233 boxes it produces the same result in 105ms instead of
+        // 384ms. The cap is still applied after the merge as well, since merging can only
+        // reduce the count but the post-merge list is what callers pay per-box for.
+        if (sizedBoxes.size() > MAX_DETECTIONS) {
+            Log.w(TAG, "Box count " + sizedBoxes.size() + " exceeds MAX_DETECTIONS ("
+                    + MAX_DETECTIONS + ") before merging; keeping the largest. "
+                    + "Consider re-enabling a geometry filter.");
+            Collections.sort(sizedBoxes, (a, b) -> Long.compare(
+                    (long) b.width * b.height, (long) a.width * a.height));
+            sizedBoxes = new ArrayList<>(sizedBoxes.subList(0, MAX_DETECTIONS));
+        }
+
         // 6. Nested Box Removal & Proximity Merge
         List<Rect> deNested = removeNestedBoxes(sizedBoxes);
         List<Rect> boxes = mergeNearbyBoxes(deNested, PROXIMITY_THRESHOLD);
@@ -505,10 +618,10 @@ public class HardwareFeatureExtractor {
                 + validBoxes.size() + " passed geometry (" + rejectedAspect + " rejected as lines) -> "
                 + sizedBoxes.size() + " passed area -> " + boxes.size() + " after merge");
 
-        // Safety valve. Several geometry filters above are commented out, so a noisy or
-        // low-contrast photo can yield an effectively unbounded number of boxes; each one
-        // costs an encoder inference and a PNG write. Keep the largest, which are the ones most
-        // likely to be real hardware rather than texture noise.
+        // Second half of the safety valve: every surviving box costs an encoder inference
+        // and a PNG write, so bound what the caller pays for as well as what the merge
+        // stages above cost. Keep the largest, which are the ones most likely to be real
+        // hardware rather than texture noise.
         if (boxes.size() > MAX_DETECTIONS) {
             Log.w(TAG, "Detection count " + boxes.size() + " exceeds MAX_DETECTIONS ("
                     + MAX_DETECTIONS + "); keeping the largest. Consider re-enabling a geometry filter.");
@@ -517,15 +630,6 @@ public class HardwareFeatureExtractor {
             boxes = new ArrayList<>(boxes.subList(0, MAX_DETECTIONS));
         }
         return boxes;
-    }
-
-    /** 4*pi*area / perimeter^2 — 1.0 for a perfect circle, lower for irregular/elongated shapes. */
-    private static double circularityOf(MatOfPoint contour, double area) {
-        MatOfPoint2f c2f = new MatOfPoint2f(contour.toArray());
-        double perimeter = Imgproc.arcLength(c2f, true);
-        c2f.release();
-        if (perimeter <= 0) return 0;
-        return (4 * Math.PI * area) / (perimeter * perimeter);
     }
 
     /** Crops the colour source Mat around a box (with CROP_PADDING) and returns an ARGB Bitmap. */
@@ -555,75 +659,103 @@ public class HardwareFeatureExtractor {
      * edges (for the diagnostic overlay) and the closed edges (for contour detection).
      * Intermediate Mats are released internally; the caller must release the returned Edges.
      */
-    private static Edges computeEdges(Mat src) {
+    private static Edges computeEdges(Mat src, Boolean forceGlareCorrection) {
         Mat gray = new Mat();
-        Imgproc.cvtColor(src, gray, Imgproc.COLOR_RGBA2GRAY);
+        Mat preprocessed = null;
+        Mat imgClahe = null;
+        Mat imgFiltered = null;
+        Mat imgSmoothed = null;
+        Mat edges = null;
+        Mat dilateKernel = null;
+        Mat closeKernel = null;
+        Mat edgesDilated = null;
+        Mat edgesClosed = null;
+        boolean ok = false;
 
-        // 1. Smart Glare Detection
-        double totalPixels = gray.rows() * gray.cols();
-        Mat thresh = new Mat();
-        Imgproc.threshold(gray, thresh, 240, 255, Imgproc.THRESH_BINARY);
-        double glareRatio = (double) Core.countNonZero(thresh) / totalPixels;
-        thresh.release();
+        try {
+            Imgproc.cvtColor(src, gray, Imgproc.COLOR_RGBA2GRAY);
 
-        Mat preprocessed = new Mat();
-        if (glareRatio > 0.05) {
-            Log.d(TAG, "Glare detected: " + glareRatio + ". Applying Black-Hat transform.");
-            Mat lightingKernel = Imgproc.getStructuringElement(Imgproc.MORPH_ELLIPSE, new Size(75, 75));
-            Imgproc.morphologyEx(gray, preprocessed, Imgproc.MORPH_BLACKHAT, lightingKernel);
-            lightingKernel.release();
-        } else {
-            gray.copyTo(preprocessed);
+            // 1. Smart Glare Detection
+            //
+            // The caller may pin this rather than let it be decided per-image: the two
+            // branches produce structurally different edge maps, so two images compared by
+            // detection count have to agree on which one ran. See the forceGlareCorrection
+            // parameter on extractFeatures().
+            boolean applyGlareCorrection;
+            if (forceGlareCorrection != null) {
+                applyGlareCorrection = forceGlareCorrection;
+                Log.d(TAG, "Glare branch pinned by caller: " + applyGlareCorrection);
+            } else {
+                double totalPixels = gray.rows() * gray.cols();
+                Mat thresh = new Mat();
+                Imgproc.threshold(gray, thresh, 240, 255, Imgproc.THRESH_BINARY);
+                double glareRatio = (double) Core.countNonZero(thresh) / totalPixels;
+                thresh.release();
+                applyGlareCorrection = glareRatio > GLARE_RATIO_THRESHOLD;
+                Log.d(TAG, String.format(Locale.US, "Glare ratio %.4f (threshold %.2f) — %s",
+                        glareRatio, GLARE_RATIO_THRESHOLD,
+                        applyGlareCorrection ? "applying Black-Hat" : "no correction"));
+            }
+
+            preprocessed = new Mat();
+            if (applyGlareCorrection) {
+                Mat lightingKernel = Imgproc.getStructuringElement(
+                        Imgproc.MORPH_ELLIPSE, new Size(GLARE_KERNEL_SIZE, GLARE_KERNEL_SIZE));
+                Imgproc.morphologyEx(gray, preprocessed, Imgproc.MORPH_BLACKHAT, lightingKernel);
+                lightingKernel.release();
+            } else {
+                gray.copyTo(preprocessed);
+            }
+
+            // 2. CLAHE
+            imgClahe = new Mat();
+            CLAHE clahe = Imgproc.createCLAHE(CLAHE_CLIP_LIMIT, new Size(16, 16));
+            clahe.apply(preprocessed, imgClahe);
+
+            // 3. Bilateral Filter
+            imgFiltered = new Mat();
+            int adaptiveBilateralD = computeAdaptiveBilateralD(preprocessed);
+            Log.d(TAG, "Using adaptive bilateral D = " + adaptiveBilateralD);
+            Imgproc.bilateralFilter(imgClahe, imgFiltered, adaptiveBilateralD, BILATERAL_SIGMA_COLOR, BILATERAL_SIGMA_SPACE);
+
+            // 4. Noise Reduction Blurs (median(5) then Gaussian(5x5))
+            imgSmoothed = new Mat();
+            Imgproc.medianBlur(imgFiltered, imgSmoothed, 5);
+            Imgproc.GaussianBlur(imgSmoothed, imgSmoothed, new Size(5, 5), 0);
+
+            // 5. Canny Edge Detection — thresholds derived per-image via Otsu instead of fixed
+            // values, so exposure/lighting differences between photos don't need re-tuning.
+            Mat otsuMask = new Mat();
+            double otsuHigh = Imgproc.threshold(imgSmoothed, otsuMask, 0, CANNY_HIGH_CAP,
+                    Imgproc.THRESH_BINARY | Imgproc.THRESH_OTSU);
+            otsuMask.release();
+            double cannyLow = otsuHigh * CANNY_LOW_RATIO;
+
+            edges = new Mat();
+            Imgproc.Canny(imgSmoothed, edges, cannyLow, otsuHigh);
+
+            // 6. Morphology: dilate (rect) then close (ellipse)
+            dilateKernel = Imgproc.getStructuringElement(Imgproc.MORPH_RECT,
+                    new Size(DILATE_KERNEL_SIZE, DILATE_KERNEL_SIZE));
+            edgesDilated = new Mat();
+            Imgproc.dilate(edges, edgesDilated, dilateKernel);
+
+            closeKernel = Imgproc.getStructuringElement(Imgproc.MORPH_ELLIPSE,
+                    new Size(CLOSE_KERNEL_SIZE, CLOSE_KERNEL_SIZE));
+            edgesClosed = new Mat();
+            Imgproc.morphologyEx(edgesDilated, edgesClosed, Imgproc.MORPH_CLOSE, closeKernel);
+
+            ok = true;
+            return new Edges(gray, edgesDilated, edgesClosed, applyGlareCorrection);
+        } finally {
+            // Intermediates go either way; the three Mats the caller owns are only freed here
+            // when we are unwinding on an exception and nobody will ever receive them.
+            releaseQuietly(preprocessed, imgClahe, imgFiltered, imgSmoothed,
+                    edges, dilateKernel, closeKernel);
+            if (!ok) {
+                releaseQuietly(gray, edgesDilated, edgesClosed);
+            }
         }
-
-        // 2. CLAHE
-        Mat imgClahe = new Mat();
-        CLAHE clahe = Imgproc.createCLAHE(CLAHE_CLIP_LIMIT, new Size(16, 16));
-        clahe.apply(preprocessed, imgClahe);
-
-        // 3. Bilateral Filter
-        Mat imgFiltered = new Mat();
-        int adaptiveBilateralD = computeAdaptiveBilateralD(preprocessed);
-        Log.d(TAG, "Using adaptive bilateral D = " + adaptiveBilateralD);
-        Imgproc.bilateralFilter(imgClahe, imgFiltered, adaptiveBilateralD, BILATERAL_SIGMA_COLOR, BILATERAL_SIGMA_SPACE);
-
-        // 4. Noise Reduction Blurs (median(5) then Gaussian(5x5))
-        Mat imgSmoothed = new Mat();
-        Imgproc.medianBlur(imgFiltered, imgSmoothed, 5);
-        Imgproc.GaussianBlur(imgSmoothed, imgSmoothed, new Size(5, 5), 0);
-
-        // 5. Canny Edge Detection — thresholds derived per-image via Otsu instead of fixed
-        // values, so exposure/lighting differences between photos don't need re-tuning.
-        Mat otsuMask = new Mat();
-        double otsuHigh = Imgproc.threshold(imgSmoothed, otsuMask, 0, CANNY_HIGH_CAP,
-                Imgproc.THRESH_BINARY | Imgproc.THRESH_OTSU);
-        otsuMask.release();
-        double cannyLow = otsuHigh * CANNY_LOW_RATIO;
-
-        Mat edges = new Mat();
-        Imgproc.Canny(imgSmoothed, edges, cannyLow, otsuHigh);
-
-        // 6. Morphology: dilate (rect) then close (ellipse)
-        Mat dilateKernel = Imgproc.getStructuringElement(Imgproc.MORPH_RECT,
-                new Size(DILATE_KERNEL_SIZE, DILATE_KERNEL_SIZE));
-        Mat edgesDilated = new Mat();
-        Imgproc.dilate(edges, edgesDilated, dilateKernel);
-
-        Mat closeKernel = Imgproc.getStructuringElement(Imgproc.MORPH_ELLIPSE,
-                new Size(CLOSE_KERNEL_SIZE, CLOSE_KERNEL_SIZE));
-        Mat edgesClosed = new Mat();
-        Imgproc.morphologyEx(edgesDilated, edgesClosed, Imgproc.MORPH_CLOSE, closeKernel);
-
-        // Release everything the caller does not need.
-        preprocessed.release();
-        imgClahe.release();
-        imgFiltered.release();
-        imgSmoothed.release();
-        edges.release();
-        dilateKernel.release();
-        closeKernel.release();
-
-        return new Edges(gray, edgesDilated, edgesClosed);
     }
 
     private static List<Rect> removeNestedBoxes(List<Rect> boxes) {
@@ -634,11 +766,16 @@ public class HardwareFeatureExtractor {
             for (int j = 0; j < boxes.size(); j++) {
                 if (i == j) continue;
                 Rect r2 = boxes.get(j);
-                // A box that is merely long and thin shouldn't be allowed to delete a compact
-                // one that happens to fall within its bounding box: a bolt head sitting on a
-                // panel seam is contained by the seam's box, but it is a separate feature.
-                // Only treat containment as nesting when the container is itself plausibly a
-                // feature rather than a line.
+                // Intended to stop a long thin box deleting a compact one inside it: a bolt
+                // head sitting on a panel seam is contained by the seam's box but is a
+                // separate feature.
+                //
+                // Currently unreachable. Every box that gets here already passed the same
+                // aspect band at the top of findFeatureBoxes, so no container can fail this
+                // test — confirmed by python/detector_ab_study.py, which produces byte-identical
+                // output on all 29 bundled assets with the guard removed. Kept rather than
+                // deleted because it becomes live again the moment the aspect filter is
+                // loosened or moved after de-nesting; do not read it as active protection.
                 float containerAspect = (float) r2.width / r2.height;
                 if (containerAspect > MAX_ASPECT_RATIO || containerAspect < MIN_ASPECT_RATIO) continue;
 
@@ -709,44 +846,106 @@ public class HardwareFeatureExtractor {
         return working;
     }
 
-    /** Loads an asset or content URI downsampled so its longest edge is near {@code maxDim}. */
+    /**
+     * Loads an asset or content URI as an upright bitmap whose longest edge is exactly
+     * {@code maxDim} (or smaller, if the source already was).
+     *
+     * Two things here are load-bearing rather than incidental:
+     *
+     * <p><b>EXIF orientation is applied.</b> Camera JPEGs and gallery picks record rotation
+     * as metadata and leave the pixels in sensor orientation, and {@link BitmapFactory} does
+     * not read it. The encoder is not rotation invariant — {@code AlignmentGate.evaluate}
+     * requires upright input, and live camera frames are explicitly rotated to match — so a
+     * reference photo decoded straight through was being compared 90 degrees out against
+     * every frame it was supposed to match.
+     *
+     * <p><b>The result is scaled to exactly {@code maxDim}.</b> {@code inSampleSize} alone
+     * cannot do this: BitmapFactory silently rounds it down to a power of two. Sampling gets
+     * within a factor of two cheaply, then one scale step lands it exactly, so the pixel
+     * constants downstream mean the same thing for every source resolution.
+     */
     public static Bitmap loadBitmap(Context context, String uriString, int maxDim) {
+        Bitmap decoded = null;
+        Bitmap upright = null;
         try {
-            InputStream is;
-            if (uriString.startsWith("file:///android_asset/")) {
-                String path = uriString.replace("file:///android_asset/", "");
-                is = context.getAssets().open(path);
-            } else {
-                is = context.getContentResolver().openInputStream(Uri.parse(uriString));
+            BitmapFactory.Options bounds = new BitmapFactory.Options();
+            bounds.inJustDecodeBounds = true;
+            try (InputStream is = openStream(context, uriString)) {
+                if (is == null) return null;
+                BitmapFactory.decodeStream(is, null, bounds);
             }
-            if (is == null) return null;
-            
-            BitmapFactory.Options opts = new BitmapFactory.Options();
-            opts.inJustDecodeBounds = true;
-            BitmapFactory.decodeStream(is, null, opts);
-            is.close();
+            if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
+                Log.e(TAG, "Could not read image bounds for " + uriString);
+                return null;
+            }
 
-            int scale = 1;
-            if (opts.outWidth > maxDim || opts.outHeight > maxDim) {
-                scale = Math.max(opts.outWidth / maxDim, opts.outHeight / maxDim);
+            int rotation = exifRotationDegrees(context, uriString);
+
+            BitmapFactory.Options opts = new BitmapFactory.Options();
+            opts.inSampleSize = AssetBitmaps.sampleSizeFor(bounds.outWidth, bounds.outHeight, maxDim);
+            try (InputStream is = openStream(context, uriString)) {
+                if (is == null) return null;
+                decoded = BitmapFactory.decodeStream(is, null, opts);
             }
-            opts.inJustDecodeBounds = false;
-            opts.inSampleSize = scale;
-            
-            // Re-open stream for final decode
-            if (uriString.startsWith("file:///android_asset/")) {
-                String path = uriString.replace("file:///android_asset/", "");
-                is = context.getAssets().open(path);
-            } else {
-                is = context.getContentResolver().openInputStream(Uri.parse(uriString));
-            }
-            Bitmap result = BitmapFactory.decodeStream(is, null, opts);
-            is.close();
-            return result;
-        } catch (Exception e) {
-            Log.e(TAG, "Bitmap load error: " + e.getMessage());
+            if (decoded == null) return null;
+
+            upright = rotate(decoded, rotation);
+            return scaleToLongestEdge(upright, maxDim);
+        } catch (Throwable t) {
+            Log.e(TAG, "Bitmap load error for " + uriString, t);
             return null;
+        } finally {
+            // rotate()/scaleToLongestEdge() return the input unchanged when there is nothing
+            // to do, so only free intermediates that were genuinely superseded.
+            if (upright != null && upright != decoded) {
+                if (decoded != null) decoded.recycle();
+            }
         }
+    }
+
+    private static InputStream openStream(Context context, String uriString) throws Exception {
+        if (uriString.startsWith("file:///android_asset/")) {
+            return context.getAssets().open(uriString.substring("file:///android_asset/".length()));
+        }
+        return context.getContentResolver().openInputStream(Uri.parse(uriString));
+    }
+
+    /** EXIF rotation in degrees (0/90/180/270), or 0 when there is none or it can't be read. */
+    private static int exifRotationDegrees(Context context, String uriString) {
+        try (InputStream is = openStream(context, uriString)) {
+            if (is == null) return 0;
+            return new ExifInterface(is).getRotationDegrees();
+        } catch (Throwable t) {
+            // A file with no EXIF segment at all is normal, not an error worth shouting about.
+            Log.d(TAG, "No usable EXIF orientation for " + uriString);
+            return 0;
+        }
+    }
+
+    /** Rotates a bitmap, returning the original when there is nothing to do. */
+    private static Bitmap rotate(Bitmap src, int degrees) {
+        if (src == null || degrees == 0) return src;
+        Matrix matrix = new Matrix();
+        matrix.postRotate(degrees);
+        try {
+            return Bitmap.createBitmap(src, 0, 0, src.getWidth(), src.getHeight(), matrix, true);
+        } catch (Throwable t) {
+            Log.e(TAG, "Failed to apply EXIF rotation of " + degrees + " degrees", t);
+            return src;
+        }
+    }
+
+    /** Scales so the longest edge is exactly {@code maxDim}; returns the original if already smaller. */
+    private static Bitmap scaleToLongestEdge(Bitmap src, int maxDim) {
+        if (src == null) return null;
+        int longest = Math.max(src.getWidth(), src.getHeight());
+        if (longest <= maxDim) return src;
+        float factor = (float) maxDim / longest;
+        int w = Math.max(1, Math.round(src.getWidth() * factor));
+        int h = Math.max(1, Math.round(src.getHeight() * factor));
+        Bitmap scaled = Bitmap.createScaledBitmap(src, w, h, true);
+        if (scaled != src) src.recycle();
+        return scaled;
     }
 
     private static String getFilename(String uri) {

@@ -14,7 +14,7 @@ import android.view.View;
 
 import androidx.annotation.Nullable;
 
-import com.example.ui.fragment.HardwareFeatureExtractor;
+import com.example.ml.HardwareFeatureExtractor;
 
 import java.io.InputStream;
 import java.util.ArrayList;
@@ -169,7 +169,12 @@ public class ChassisOverlayView extends View {
         }
         // Downsampled: the chassis photos are camera-resolution and decoding one at full
         // size costs ~46MB, for a view only a few hundred pixels tall.
-        sourceBitmap = HardwareFeatureExtractor.loadBitmap(getContext(), uriString, 1280);
+        //
+        // Must be the extractor's working size, not a copy of the number: the feature boxes
+        // this view draws are in that coordinate space, so the two drifting apart would
+        // offset every box.
+        sourceBitmap = HardwareFeatureExtractor.loadBitmap(getContext(), uriString,
+                HardwareFeatureExtractor.WORKING_MAX_DIM);
         if (sourceBitmap == null) {
             Log.e(TAG, "Error decoding image file uri: " + uriString);
         }

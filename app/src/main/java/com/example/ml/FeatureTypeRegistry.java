@@ -86,7 +86,7 @@ public final class FeatureTypeRegistry {
         Map<String, TypeInfo> map = new LinkedHashMap<>();
         if (f.exists()) {
             try (InputStream is = new java.io.FileInputStream(f)) {
-                String json = readAll(is);
+                String json = PartFiles.readAllText(is);
                 JSONObject root = new JSONObject(json);
                 java.util.Iterator<String> keys = root.keys();
                 while (keys.hasNext()) {
@@ -128,11 +128,4 @@ public final class FeatureTypeRegistry {
         return new File(context.getFilesDir(), FILE);
     }
 
-    private static String readAll(InputStream is) throws Exception {
-        java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream();
-        byte[] buf = new byte[4096];
-        int n;
-        while ((n = is.read(buf)) != -1) bos.write(buf, 0, n);
-        return new String(bos.toByteArray(), StandardCharsets.UTF_8);
-    }
 }

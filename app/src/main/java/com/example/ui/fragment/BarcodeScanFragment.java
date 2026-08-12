@@ -71,9 +71,7 @@ public class BarcodeScanFragment extends Fragment {
                 // A placeholder profile means setup was skipped, so there's no image for the
                 // alignment gate to work against and inspection would open already blocked.
                 // Treat it the same as having no profile at all and ask for a reference.
-                boolean hasReference = profile != null
-                        && profile.getImageUri() != null
-                        && !"dummy_placeholder".equals(profile.getImageUri());
+                boolean hasReference = profile != null && profile.hasRealImage();
 
                 if (hasReference) {
                     Navigation.findNavController(requireView()).navigate(R.id.action_barcode_to_inspection, args);

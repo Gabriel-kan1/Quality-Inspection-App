@@ -5,6 +5,17 @@ import androidx.room.PrimaryKey;
 
 @Entity(tableName = "ReferenceProfile")
 public class ReferenceProfile {
+
+    /**
+     * Stand-in {@code imageUri} for a part registered without a reference photo yet.
+     *
+     * <p>Public because the check "is this a real reference?" was written out by hand at five
+     * call sites, each repeating both the sentinel string and the null guard around it. A
+     * sixth that forgot either half would silently treat the placeholder as a photo and try
+     * to decode it. Prefer {@link #hasRealImage()} over comparing against this directly.
+     */
+    public static final String PLACEHOLDER_URI = "dummy_placeholder";
+
     @PrimaryKey(autoGenerate = true)
     private long id;
     private String partType; // e.g., "PART_A", "PART_B" or barcode/ID family
@@ -42,6 +53,14 @@ public class ReferenceProfile {
 
     public void setImageUri(String imageUri) {
         this.imageUri = imageUri;
+    }
+
+    /**
+     * True when this profile points at an actual reference photo, rather than being absent
+     * or still holding {@link #PLACEHOLDER_URI}.
+     */
+    public boolean hasRealImage() {
+        return imageUri != null && !imageUri.isEmpty() && !PLACEHOLDER_URI.equals(imageUri);
     }
 
     public long getCreatedAt() {

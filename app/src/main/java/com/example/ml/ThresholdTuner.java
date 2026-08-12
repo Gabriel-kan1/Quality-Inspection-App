@@ -276,9 +276,7 @@ public final class ThresholdTuner {
     }
 
     private static File fileFor(Context context, String partId) {
-        String safe = partId == null || partId.isEmpty()
-                ? "unknown_part" : partId.replaceAll("[^A-Za-z0-9_.-]", "_");
-        return new File(new File(context.getFilesDir(), DIR), safe + ".json");
+        return new File(new File(context.getFilesDir(), DIR), PartFiles.safeName(partId) + ".json");
     }
 
     private static float round(float v) {

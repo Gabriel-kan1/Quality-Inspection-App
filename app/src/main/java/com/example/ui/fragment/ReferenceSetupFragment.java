@@ -25,6 +25,7 @@ import com.example.data.AppDatabase;
 import com.example.data.entity.ReferenceProfile;
 import com.example.ui.util.AssetBitmaps;
 import com.example.databinding.FragmentReferenceSetupBinding;
+import com.example.ml.HardwareFeatureExtractor;
 import com.example.ml.FeatureEmbedder;
 import com.example.ml.ReferenceLibrary;
 import com.example.ml.ReferenceLibraryProvider;
@@ -642,7 +643,7 @@ public class ReferenceSetupFragment extends Fragment {
             AppDatabase db = AppDatabase.getInstance(requireContext());
             ReferenceProfile existing = db.referenceProfileDao().getProfileByPartType(partId);
             if (existing == null) {
-                ReferenceProfile profile = new ReferenceProfile(partId, "dummy_placeholder", System.currentTimeMillis());
+                ReferenceProfile profile = new ReferenceProfile(partId, ReferenceProfile.PLACEHOLDER_URI, System.currentTimeMillis());
                 db.referenceProfileDao().insertProfile(profile);
             }
             requireActivity().runOnUiThread(() -> {
