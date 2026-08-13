@@ -45,8 +45,15 @@ public final class FeatureEmbedder implements Encoder {
      * different architecture, different weights, different preprocessing, different
      * output tensor. Quantisation alone does not require a bump (int8 and fp32 DINOv2
      * agree to cosine 0.986, well inside the noise the prototypes already average over).
+     *
+     * The {@code -tightcrop} suffix marks the change from fixed 40 px crop padding to
+     * padding proportional to each detection — see {@code HardwareFeatureExtractor}'s
+     * CROP_PADDING_RATIO. How a crop is framed is preprocessing: the weights are untouched,
+     * but every embedding moved, so prototypes averaged from loosely-framed crops cannot be
+     * compared against tightly-framed queries. Discarding them costs the operator their
+     * labelling; keeping them would have cost correctness silently, which is worse.
      */
-    public static final String ENCODER_ID = "dinov2-s14-cls-384";
+    public static final String ENCODER_ID = "dinov2-s14-cls-384-tightcrop";
 
     private static final int INPUT_SIZE = 224;
     /**

@@ -97,7 +97,29 @@ public class HardwareFeatureExtractor {
     private static final int PROXIMITY_THRESHOLD = 10;
     private static final double FILL_RATIO_THRESHOLD = 0.7;
 
-    private static final int CROP_PADDING = 40;   // matches CROP_PADDING in the Python script
+    /**
+     * Context kept around a detection when cropping it, as a fraction of the box's longer
+     * side. Replaces the Python script's fixed 40 px.
+     *
+     * Fixed padding made the framing depend on how big the feature happened to be in pixels,
+     * which is a property of how far away the operator stood rather than of the hardware. A
+     * 30x22 box became a 110x102 crop — the fastener 6% of it and background the rest, which
+     * is what the encoder then described — while a 201x125 box came out at 44%. The same bolt
+     * photographed from two distances produced two differently-framed crops and therefore two
+     * different embeddings, so a prototype averaged over them was averaging over framing as
+     * much as over hardware.
+     *
+     * Proportional padding makes the fastener occupy roughly the same share of every crop
+     * whatever its pixel size, which is the invariance a scale-sensitive encoder needs. Kept
+     * non-zero because a fastener is partly defined by how it sits in its seating, and a crop
+     * shaved exactly to the contour throws that away along with any detection jitter.
+     */
+    private static final double CROP_PADDING_RATIO = 0.15;
+    /**
+     * Floor on that padding, in pixels. Below a few pixels the ratio rounds to nothing and the
+     * crop lands exactly on a contour whose edge is already a pixel or two uncertain.
+     */
+    private static final int MIN_CROP_PADDING = 2;
     /** Upper bound on boxes carried forward from one image; see the safety valve in findFeatureBoxes. */
     private static final int MAX_DETECTIONS = 300;
     /**
@@ -429,6 +451,12 @@ public class HardwareFeatureExtractor {
         Mat rgbaVisual = null;
         boolean glareApplied = false;
         ScaleCalibration calibration = null;
+        // Opened once per image, not per crop: constructing a region decoder re-reads the
+        // file header, and there can be dozens of detections. Null is a normal result — the
+        // source may be smaller than the working image, or not region-decodable at all — and
+        // means crops come from the working copy as before.
+        SourceCropper sourceCropper = SourceCropper.open(
+                context, uriString, bitmap.getWidth(), bitmap.getHeight());
         try {
             src = new Mat();
             Utils.bitmapToMat(bitmap, src);
@@ -452,16 +480,18 @@ public class HardwareFeatureExtractor {
 
             // STEP 3-6 — OpenCV crop extraction + embedding classification + measurement
             performDynamicDetection(src, e.edgesClosed, e.edgesRaw, embedder, library, sink,
-                    features, calibration);
+                    features, calibration, sourceCropper);
 
         } catch (Throwable t) {
             // Throwable, not Exception: an OpenCV ABI problem arrives as UnsatisfiedLinkError.
             Log.e(TAG, "OpenCV Pipeline failure", t);
         } finally {
             // Native Mats are invisible to the GC and leaking them grows anon RSS with no
-            // OutOfMemoryError to show for it, so release on the failure path too.
+            // OutOfMemoryError to show for it, so release on the failure path too. The region
+            // decoder holds a native handle and an open source for the same reason.
             releaseQuietly(src, rgbaVisual);
             if (e != null) e.release();
+            if (sourceCropper != null) sourceCropper.close();
             bitmap.recycle();
         }
 
@@ -472,7 +502,8 @@ public class HardwareFeatureExtractor {
                                                 FeatureEmbedder embedder,
                                                 ReferenceLibrary library, CropSink sink,
                                                 List<ExtractedFeature> outFeatures,
-                                                ScaleCalibration calibration) {
+                                                ScaleCalibration calibration,
+                                                SourceCropper sourceCropper) {
         float imgWidth = (float) src.width();
         float imgHeight = (float) src.height();
 
@@ -493,7 +524,7 @@ public class HardwareFeatureExtractor {
 
             // One crop is alive at a time: created, embedded, persisted, then freed before the
             // next iteration. Keeping them all would make peak memory scale with contour count.
-            Bitmap crop = cropToBitmap(src, r);
+            Bitmap crop = cropFeature(sourceCropper, src, r);
 
             String type = ReferenceLibrary.UNKNOWN;
             float confidence = 0f;
@@ -692,11 +723,40 @@ public class HardwareFeatureExtractor {
     }
 
     /** Crops the colour source Mat around a box (with CROP_PADDING) and returns an ARGB Bitmap. */
+    /**
+     * Padding for one detection, scaled to its own size so every crop frames its feature the
+     * same way. Square-ish on both axes deliberately: padding each side by its own dimension
+     * would stretch an elongated feature's context in the direction it is already long.
+     */
+    static int cropPaddingFor(Rect r) {
+        int longest = Math.max(r.width, r.height);
+        return Math.max(MIN_CROP_PADDING, (int) Math.round(longest * CROP_PADDING_RATIO));
+    }
+
+    /**
+     * One feature crop, taken from the source photo when that carries more detail than the
+     * working copy, and from the working copy otherwise.
+     *
+     * The fallback is not a rare edge case: several bundled assets are already smaller than
+     * {@link #WORKING_MAX_DIM}, and a region decode can fail on a stream the platform will
+     * not seek. Either way the pipeline continues with the crop it can get.
+     */
+    private static Bitmap cropFeature(SourceCropper cropper, Mat src, Rect r) {
+        int padding = cropPaddingFor(r);
+        if (cropper != null) {
+            Bitmap fromSource = cropper.crop(
+                    new android.graphics.Rect(r.x, r.y, r.x + r.width, r.y + r.height), padding);
+            if (fromSource != null) return fromSource;
+        }
+        return cropToBitmap(src, r);
+    }
+
     private static Bitmap cropToBitmap(Mat src, Rect r) {
-        int x1 = Math.max(0, r.x - CROP_PADDING);
-        int y1 = Math.max(0, r.y - CROP_PADDING);
-        int x2 = Math.min(src.cols(), r.x + r.width + CROP_PADDING);
-        int y2 = Math.min(src.rows(), r.y + r.height + CROP_PADDING);
+        int padding = cropPaddingFor(r);
+        int x1 = Math.max(0, r.x - padding);
+        int y1 = Math.max(0, r.y - padding);
+        int x2 = Math.min(src.cols(), r.x + r.width + padding);
+        int y2 = Math.min(src.rows(), r.y + r.height + padding);
         if ((x2 - x1) < 10 || (y2 - y1) < 10) return null;
 
         Mat sub = new Mat(src, new Rect(x1, y1, x2 - x1, y2 - y1));
@@ -963,6 +1023,16 @@ public class HardwareFeatureExtractor {
                 if (decoded != null) decoded.recycle();
             }
         }
+    }
+
+    /** Package-visible alias so {@link SourceCropper} opens sources exactly the same way. */
+    static InputStream open(Context context, String uriString) throws Exception {
+        return openStream(context, uriString);
+    }
+
+    /** Package-visible alias so {@link SourceCropper} reads the same EXIF rotation. */
+    static int exifRotation(Context context, String uriString) {
+        return exifRotationDegrees(context, uriString);
     }
 
     private static InputStream openStream(Context context, String uriString) throws Exception {
