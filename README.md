@@ -1,21 +1,411 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://ai.google.dev/static/site-assets/images/share-ais-513315318.png" />
-</div>
+# AI-Powered Mobile Quality Inspection for Manufacturing
 
-# Run and deploy your AI Studio app
+Final-year project #93. An Android tablet app that inspects manufactured parts for correct
+hardware — bolts, screws, studs, rivets and the holes they sit in — aimed at SMEs who
+currently do this by eye and record it on paper.
 
-This contains everything you need to run your app locally.
+It answers three questions about a photographed part:
 
-View your app in AI Studio: https://ai.studio/apps/5a0573d0-4d1a-47c8-8d18-efc13ff22bb7
+1. **What hardware is on it?** — every fastener is detected and classified.
+2. **Is anything missing, extra, or in the wrong place?** — detections are matched against a
+   reference layout the operator defined, so a report names *which* fastener is wrong and
+   where it sits on the part.
+3. **Can this be filed?** — a pass/fail verdict and a shareable PDF report.
 
-## Run Locally
+**Fully offline.** There is no network code anywhere in the app and no `INTERNET`
+permission; `CAMERA` is the only permission requested. All inference runs on-device.
 
-**Prerequisites:**  [Android Studio](https://developer.android.com/studio)
+---
 
+## How it works
 
-1. Open Android Studio
-2. Select **Open** and choose the directory containing this project
-3. Allow Android Studio to fix any incompatibilities as it imports the project.
-4. Create a file named `.env` in the project directory and set `GEMINI_API_KEY` in that file to your Gemini API key (see `.env.example` for an example)
-5. Remove this line from the app's `build.gradle.kts` file: `signingConfig = signingConfigs.getByName("debugConfig")`
-6. Run the app on an emulator or physical device
+Two decoupled stages. Stage 1 finds *where* things are, stage 2 decides *what* they are.
+
+```
+photo ──> [1] classical CV detection ──> crops ──> [2] few-shot classifier ──> types
+                (OpenCV, no ML)                        (DINOv2-S, ONNX)
+                                                                │
+   reference layout ────> [3] positional check <────────────────┘
+   (operator-labelled)      (RANSAC alignment)
+                                    │
+                                    v
+                        verdict + PDF report
+```
+
+**Stage 1 — detection (`ml`/`HardwareFeatureExtractor`).** Pure OpenCV, no ML. Grayscale →
+glare detection (black-hat if >5% blown out) → CLAHE → bilateral filter whose diameter is
+chosen from a Laplacian-variance noise estimate → Otsu-adaptive Canny → dilate/close →
+contours → geometry filters → nested-box removal → proximity merge. Every step adapts to the
+photo rather than using one fixed setting, because a setting tuned for a dim noisy photo
+destroys detail in a bright clean one.
+
+**Stage 2 — classification (`ml/FeatureEmbedder`, `ml/ReferenceLibrary`).** A **DINOv2-S**
+ONNX encoder (int8, 24 MB) turns each crop into a 384-d embedding, compared by cosine
+similarity against one prototype per type. A prototype is the mean of that type's
+L2-normalised examples, so a new type needs a handful of labelled crops, not a retraining
+run. Classification is by *comparison*, not by a fixed label set — which is what lets the
+same pipeline handle a fastener the model was never trained on.
+
+> Was CLIP ViT-B/32 until commit `c3c3a76`. CLIP squeezed all five types into a 0.06-wide
+> similarity band. Benchmark: `python/compare_encoders.py`.
+
+**Stage 3 — localisation (`ml/FeatureLocalisation`, `ml/LayoutMatcher`).** Counting answers
+"how many bolt heads"; localisation answers "which one is missing, and where". Detections are
+registered against the operator's labelled reference layout via RANSAC over a similarity
+transform, then each expected slot is reported as `PRESENT`, `MISSING`, `DISPLACED` or
+`WRONG_TYPE`. This is what catches a *swap* — two screws expected, two found, one in the
+wrong hole — which count comparison cannot see at all.
+
+**Capture gating (`ml/AlignmentGate`).** The camera will not fire until the frame actually
+shows the reference area, at the right distance, held steady for three seconds. Each frame is
+scored against the reference photo by the same encoder; a "scale probe" (re-scoring the
+frame's centre crop) separates *right area, wrong distance* from correct framing and tells the
+operator to move closer or back off. Without this, a badly framed photo produces a confident
+and wrong verdict.
+
+**Supervised learning loop.** Nothing enters the library without a human — there is no
+pseudo-labelling, deliberately. Every detection is logged; `ActiveLearningPolicy` picks ≤8
+crops to ask about (unknowns nearest the decision boundary, plus one random *spot check* of an
+accepted prediction); the inspector labels them; the crop joins that type's prototype
+immediately; and `ThresholdTuner` re-fits the similarity/margin thresholds once a part has
+20+ confirmations. The spot check is load-bearing: without it every label would come from
+crops the classifier already flagged, so the tuner would be fitting on its own failures.
+
+---
+
+## Current status
+
+Legend: ✅ done · 🟡 partial · ❌ not started
+
+### Against the project brief
+
+| Brief goal | State | Notes |
+|---|---|---|
+| Inspect bolts, rivets, screws, studs, holes | ✅ | Five feature types shipped |
+| **Nuts** (named in the brief) | ❌ | No `nut` type exists |
+| Localisation — *which* fastener is wrong and where | ✅ | Slot-level `PRESENT`/`MISSING`/`DISPLACED`/`WRONG_TYPE` |
+| Alignment checking | ✅ | Real, via the positional check + capture gate. *The 1.8s "ALIGNED (98%)" mock is gone.* |
+| Dimensions (pixel→mm) | 🟡 | Stage A only — see below |
+| Variable lighting robustness | 🟡 | Implemented adaptively, **never measured** |
+| Few-shot learning from rare examples | ✅ | 97.1% leave-one-out on 34 curated crops |
+| Automatic documentation | ✅ | PDF via iText + share intent |
+| **Barcode → part linking** | ❌ | Manual text entry + 3 presets. ML Kit dependency present but **unused** |
+| Camera capture | ✅ | CameraX, live-gated, auto-shutter on a 3s hold |
+| Evaluation / precision & recall | 🟡 | Component studies exist; no app-level per-type P/R |
+
+### Done
+
+- **Two-stage pipeline** — adaptive OpenCV detection + DINOv2-S few-shot classification.
+- **Camera capture** with live alignment gating, three-second hold and automatic shutter.
+- **Alignment gate** — embedding similarity + scale probe for distance + motion gate, all
+  fitted against 252 labelled asset pairs with RANSAC-verified ground truth.
+- **Positional/slot check** with one-to-one inlier counting, a `max(3, half the slots)` inlier
+  floor, and outright refusal of layouts under 4 slots (a check that structurally cannot fail
+  is worse than none).
+- **Severity scale** — every type is `CRITICAL`, `ADVISORY` or `IGNORED`, deciding whether it
+  reaches the quantitative table, the trend notes, or neither. Snapshotted at save time so a
+  later re-grade cannot rewrite a filed report.
+- **Supervised active-learning loop** — review queue, spot checks, per-part threshold tuning.
+- **Source-resolution crops** (`ml/SourceCropper`) — crops are cut from the original 4032×3024
+  photo via `BitmapRegionDecoder`, not the 1280px working copy, with proportional padding.
+- **Room database v9** with real migrations (no destructive fallback on new schema changes).
+- **PDF reporting** + share intent, and per-part advisory trend notes.
+- **138 unit tests**, all passing.
+- **Reproducible studies** in `python/` — encoder comparison, detector A/B harness, scale
+  probe study, and objective same-area pair ground truth.
+
+### In progress / partial
+
+| Area | What exists | What's missing |
+|---|---|---|
+| **Dimensions** | `ScaleCalibration` finds a printed square marker geometrically; `FeatureMeasurement` reports mm sizes when one is in frame | Stage B: a single uniform mm/px is applied everywhere, valid only for a perpendicular camera and coplanar features. Homography rectification from the marker's four corners is designed but not built |
+| **Evaluation** | Encoder LOO, detector stability A/B, gate threshold sweeps | No per-type precision/recall for the shipped app. Brief Phase 4 is effectively empty |
+| **Lighting robustness** | Glare suppression and adaptive denoising implemented | Never quantified, despite matched pairs sitting in assets (`whole.jpg`/`whole_light.jpg`, `screws_flash.jpg`/`screws_none.jpg`) |
+| **Layout drift** | Fixed for operator-labelled references | References made before labelling, or via **SKIP SETUP**, still re-classify and still drift |
+
+### Not started
+
+- **Barcode scanning.** The ML Kit dependency is in the build and never called. This is the
+  most visible gap against Phase 3 of the brief.
+- **Nut** as a feature type.
+- **Balanced/macro accuracy** in `ThresholdTuner` — it optimises plain accuracy, which is
+  misleading on imbalanced classes, a challenge the brief names explicitly.
+- **Linear probe** instead of nearest-centroid classification.
+- **Type rename/delete** — types can only be re-graded. `FeatureResult` stores the display
+  name, so a rename would orphan a part's advisory baseline.
+- **`removeExample()`** — correcting a crop twice leaves the stale label in the wrong
+  prototype permanently.
+
+### Known bugs
+
+- **"USE BUILT-IN PRESET" points at a missing asset.** `ReferenceSetupFragment` loads
+  `chassis_hardware_preset.jpg`, which is not in `assets/`. It fails silently → zero
+  detections → a spurious "INSPECTION PASSED".
+- **Symmetric layouts cannot be pinned.** Slot identity is geometric, so four bolt heads on a
+  perfect square have several equally good alignments. The count of missing positions and the
+  verdict stay correct; *which* slot is named is arbitrary.
+
+### Suggested order of work
+
+**Priority rule: software proof-of-concepts first.** Work that can be developed, measured and
+written up from the bundled assets and the existing `python/` harnesses outranks work that
+needs a physical rig — a device, a printed marker, a barcode label — to make progress on. The
+hardware items are not less important to the brief; they are less able to produce evidence for
+the report right now, and they block on things outside the repo.
+
+*Software, measurable from assets:*
+
+1. **Evaluation set + per-type precision/recall** (Phase 4) — the single biggest gap in the
+   report. Hundreds of labelled crops already exist on-device, and `compare_encoders.py`
+   already mirrors `ReferenceLibrary`'s scoring maths. Confusion matrix per type.
+2. **Lighting study** using matched pairs already in `assets/chassis_images/` — turns
+   "implemented, never measured" into a result with no new photography.
+3. **Balanced accuracy in the tuner** — small change, named brief challenge, and it makes
+   every subsequent tuning figure defensible.
+4. **Linear probe** vs. the nearest-centroid baseline on the same crops.
+5. **Fix the preset-button asset bug** — it is a silent false PASS.
+6. **`removeExample()`** + crop→type tracking.
+7. **Dimensions Stage B** — homography rectification, removing the coplanarity assumption.
+
+*Hardware-dependent, deprioritised:*
+
+8. **Barcode scanning** — needs printed labels and a device; produces little report evidence.
+9. **`nut` type** — needs photographs that do not exist in `assets/` yet.
+10. **On-device performance profiling** — latency, memory, battery on real hardware.
+
+---
+
+## Building and running
+
+**Prerequisites:** Android Studio, and a device or emulator on API 24+.
+
+```bash
+JAVA_HOME="/c/Program Files/Android/Android Studio/jbr" ./gradlew assembleDebug
+```
+
+Run the unit tests:
+
+```bash
+./gradlew testDebugUnitTest
+```
+
+In Android Studio: **Open** the project directory and let it resolve the Gradle sync.
+
+Notes:
+
+- ABI filters limit the build to `x86_64` and `arm64-v8a`. OpenCV and ONNX Runtime ship
+  native libraries for four ABIs, which pushed the debug APK past 350 MB.
+- No API keys or `.env` file are needed. The app makes no network calls.
+- The ONNX model is kept uncompressed (`noCompress += "onnx"`) so ONNX Runtime can memory-map
+  it from the APK rather than decompressing it into RAM.
+
+### Using the app
+
+1. **Home** → enter or pick a Part ID.
+2. **Reference setup** — choose a reference photo, then label every detected crop. Those
+   labels become both the prototype library and the expected slot layout, so this step is not
+   optional decoration; a reference saved without it defines far less than it appears to.
+3. **Inspection** — point the camera at the part. The traffic light turns green once framing,
+   distance and steadiness are all within tolerance, and the shutter fires automatically.
+4. **Results** — counts per type, positional findings, advisory trend notes, verdict.
+5. **Report** — generate and share a PDF.
+
+---
+
+## Repository layout
+
+```
+app/src/main/java/com/example/
+  ml/                    detection, embedding, matching, learning
+    HardwareFeatureExtractor  stage 1: OpenCV detection pipeline
+    FeatureEmbedder           stage 2: DINOv2-S ONNX encoder
+    ReferenceLibrary          prototypes, cosine classification
+    FeatureLocalisation       stage 3: slot-level findings
+    LayoutMatcher             RANSAC similarity-transform registration
+    AlignmentGate             live capture gating
+    ActiveLearningPolicy      review queue selection
+    ThresholdTuner            per-part threshold fitting
+    ScaleCalibration          marker-based pixel→mm
+    SourceCropper             full-resolution crop extraction
+  ui/fragment/           one fragment per screen (Navigation Component)
+  data/                  Room entities, DAOs, migrations
+  report/                advisory trend notes
+app/src/main/assets/
+  models/                feature_encoder.onnx (DINOv2-S, int8)
+  reference_crops/       bundled seed crops, one folder per type
+  chassis_images/        test photographs
+python/                  offline studies and the ONNX export script
+app/src/test/            138 unit tests
+```
+
+Note: `HardwareFeatureExtractor` currently lives under `ui/fragment/` despite being pure
+CV/ML with no UI. It belongs in `ml/`.
+
+---
+
+## Where state lives
+
+| What | Where |
+|---|---|
+| Inspections, feature results, slot results, classification events | Room `shop_quality_inspection_db`, version 9 |
+| Prototypes | `filesDir/clip_lib/<partId>.json` |
+| Fitted thresholds | `filesDir/thresholds/<partId>.json` |
+| Feature type catalog + severity | `filesDir/feature_types.json` (**global**, not per-part) |
+| Reference layouts | `filesDir/layouts/<partId>.json` |
+| Training crops | `filesDir/learning_crops/<partId>/*.png` (pruned to a disk budget) |
+| Reports, captures | `getExternalFilesDir(...)` |
+
+Learning is **per-part** except the type catalog: labels on one part do nothing for another,
+and each part must independently reach 20 confirmations before threshold tuning engages.
+
+### Encoder identity is load-bearing
+
+`FeatureEmbedder.ENCODER_ID` is `dinov2-s14-cls-384-tightcrop`. Prototypes only mean anything
+against queries from the same encoder, and cosine comparison silently truncates to the shorter
+vector — so a stale library returns *confident nonsense* rather than failing. Libraries,
+fitted thresholds and logged events all carry the encoder id and are discarded on mismatch.
+Any change to the model **or to crop framing** must bump this id.
+
+---
+
+## Technical notes for the final report
+
+Material here is written to be lifted into the dissertation. Each item states the problem, the
+alternatives tried, what shipped, and — where one exists — the measurement that settled it.
+**Provenance is marked**, because a figure quoted in a viva needs to be re-derivable.
+
+### Measured results
+
+| # | Result | Value | Source | Status |
+|---|---|---|---|---|
+| M1 | DINOv2-S vs CLIP ViT-B/32, leave-one-out accuracy over 34 curated crops | **97.1%** vs **79.4%** | `python/compare_encoders.py` | Carried from prior study, not re-run today |
+| M2 | int8 export cost to CLIP's accuracy | ~9 points | `python/compare_encoders.py` | Carried |
+| M3 | Alignment gate threshold sweep, 252 labelled pairs | 0.70 → 5 false accepts, 0 false rejects; 0.74 → 2 FA but 5 FR | `python/scale_probe_study.py` | Carried, tabulated in `AlignmentGate` javadoc |
+| M4 | Scale probe separation: crop-in gain, correctly framed vs too far | mean **−0.070** vs **+0.156** | `python/scale_probe_study.py` | Carried |
+| M5 | Crop framing: feature occupancy before vs after proportional padding | 6–44% → **52–58%** across the size range | Measured on bundled crop set | Carried |
+| M6 | On-device crop resolution, working copy vs source decode | ~38×30 px → **120–169 px** | Measured on-device | Carried |
+| M7 | Unit test suite | **138 tests, 0 failures** | `./gradlew testDebugUnitTest --rerun` | **Re-verified** |
+| M8 | Seed crop set composition | bolt_head 6, hole 9, rivet_head 2, screw 7, stud 10 (=34), unknown 3 | `assets/reference_crops/` | **Re-verified** |
+
+**Gap to close:** there is no per-type precision/recall for the shipped end-to-end system.
+M1 measures the *encoder* on curated crops, which is not the same claim. Say so explicitly in
+the report rather than letting M1 stand in for system accuracy.
+
+### Design decisions worth a paragraph each
+
+**Two decoupled stages rather than an end-to-end detector.** A YOLO-style detector would need
+hundreds of labelled boxes per part and a retraining run whenever an SME introduces a new
+fastener. Splitting *where* (classical CV) from *what* (few-shot embedding comparison) means a
+new type costs a handful of labelled crops and takes effect on the next crop, with no
+gradients computed on-device. The trade is that stage 1 has no notion of the objects it is
+finding, so recall is bounded by contour geometry.
+
+**Classification by comparison, not by a fixed label set.** A fixed-head classifier cannot
+represent a type it was never trained on. Cosine similarity against per-type prototypes lets
+the operator define the label space at setup time. The honest limit — worth stating plainly —
+is that "generality" here is a claim about *coverage effort*, not about the model recognising
+new categories unaided.
+
+**Encoder identity as a correctness invariant.** `cosine()` silently truncates to the shorter
+vector, so a library built with one encoder and queried with another returns confident
+nonsense rather than an error. Every persisted artefact (libraries, thresholds, logged events)
+carries `ENCODER_ID` and is discarded on mismatch. Crop framing counts as part of that
+identity, because changing it moves every embedding — hence the `-tightcrop` suffix. This is a
+good example of a failure mode that is invisible at runtime and only preventable by design.
+
+**No pseudo-labelling — rejected twice, on specific grounds.** On a mean prototype a
+high-confidence crop is by construction nearly parallel to that prototype, so adding it is
+close to a no-op, while diluting the rare human corrections that carry real signal. Confidence
+gating also selects *against* the novel views that would broaden coverage. And it must never
+feed threshold tuning, which would be circular. Note this contradicts the mid-year report,
+which described automatic pseudo-labelling above a 0.95 upper threshold — see Corrections.
+
+**Spot checks are load-bearing, not decoration.** The review queue selects crops near the
+decision boundary. If every label came from crops the classifier already flagged, the
+threshold tuner would be fitting on its own failures. One random spot check of an *accepted*
+prediction per round breaks that loop. This is not hypothetical: the margin once collapsed
+to 0 without it.
+
+**`MIN_ACCURACY` exists because beating a bad baseline is not evidence.** A fit once scored
+34% against a 21% baseline and was adopted. A relative-improvement gate alone is insufficient;
+an absolute floor is also required.
+
+**Positional registration must ignore type.** Inlier counting and slot assignment compare
+position only. This is what lets a stud in a screw's hole read as *that slot, wrong hardware*
+rather than as a missing screw plus an unexpected stud. Type agreement only prioritises which
+correspondences RANSAC tries first. Requiring type agreement to seed made alignment starve
+exactly as substitutions grew — the failure scaled with the defect it was meant to catch.
+
+**Type must never break an alignment tie.** Four fasteners at the corners of a parallelogram
+map onto themselves under a half turn, so "every fastener swapped" and "photographed upside
+down" have identical positional support. Preferring the type-consistent alignment took the
+second reading every time, reporting a fully swapped part as all present. Ties go to the
+smallest rotation instead. A good worked example of a plausible-sounding heuristic that was
+guaranteed to hide the exact defect it sat next to.
+
+**A verification that cannot fail is worse than none.** Layouts under 4 slots are refused
+outright: with 3 slots, the only alignment clearing a 3-inlier floor is the one where all 3
+are present, so the check could report "all verified" and nothing else. Likewise the inlier
+floor of `max(3, half the slots)` — two correspondences supply exactly the 4 constraints a
+similarity transform needs, so a floor of 2 is a tautology, not a threshold.
+
+**Honest refusal over confident output.** Three places return "unavailable" rather than a
+guess: unclassifiable crops become `unknown`, un-registerable layouts report no positional
+claim, and an inspection with no real reference is `UNVERIFIED` rather than `PASSED`. For a
+quality-inspection tool a false PASS is the costly error, so the system is biased toward
+visibly declining to answer.
+
+### Rejected alternatives (with the evidence)
+
+These are worth a section of their own — a rejected approach with a measured reason is
+dissertation material; a bare decision is not.
+
+| Approach | Why rejected | Evidence |
+|---|---|---|
+| ORB keypoints + RANSAC homography for the alignment gate | The chassis plate is near-featureless, so keypoints land on the hardware — exactly what changes between reference and inspection | 8 of ~1000 keypoints survived on a true match vs 2 on a completely different area: signal absent, not weak |
+| Detected-feature geometry for the gate | Detector merges clustered fasteners into one box; a different area scored closer than a genuine match | Measured on bundled assets |
+| Median detected-blob diameter as a distance cue | Wanders by 3× across crops of one image — surviving contours are surface grain, not hardware | `scale_probe_study.py` |
+| Texture spatial-frequency centroid as a distance cue | Flattens at close range where sensor noise dominates; moves the wrong way on `corner.jpg` | `scale_probe_study.py` |
+| CLIP ViT-B/32 encoder | Compressed all five types into a 0.06-wide similarity band | M1 |
+| Fixed 40 px crop padding | Made framing a function of shooting distance; encoder described background for small features | M5 |
+| Raising the gate threshold to fix shooting distance | Takes genuine same-distance shots with it, and cannot tell the operator which way to move | M3 |
+
+### Threats to validity — state these before an examiner finds them
+
+| Limitation | Detail | Status |
+|---|---|---|
+| No system-level accuracy figure | M1 measures the encoder on curated crops, not the shipped pipeline on real photos | Open — priority 1 |
+| Small evaluation set | 34 crops, and `rivet_head` has only 2 — leave-one-out on 2 examples is close to meaningless for that class | Open; report per-class counts alongside any accuracy figure |
+| Lighting robustness unquantified | Adaptive glare/noise handling is implemented but never measured, despite matched pairs sitting in assets | Open — priority 2 |
+| Tuner metric is plain accuracy | Misleading under class imbalance, which this dataset has | Open — priority 3 |
+| Gate ground truth is partly unprovable | RANSAC verification yields trustworthy positives only; the one pair the gate was built for (`screws.jpg`/`screws_test.jpg`) cannot be certified by it | Documented in `pair_ground_truth.py` |
+| Symmetric layouts | Slot identity is geometric; verdict and missing-count hold, named slot is arbitrary | Known limit; needs an asymmetric fiducial |
+| Dimensions assume coplanarity | Single uniform mm/px; tilt biases measurements by camera pose | Stage B designed, not built |
+| Emulator-only performance | No latency, memory or battery figures from real hardware | Open |
+
+### Corrections to the mid-year report
+
+The mid-year technical report describes the system as it was, and the following claims are no
+longer accurate. Revise before building on them.
+
+| Prior claim | Current position |
+|---|---|
+| "OpenAI's CLIP model was chosen" as the encoder | Replaced by DINOv2-S at commit `c3c3a76`, on the measured grounds in M1 |
+| Automatic pseudo-labelling above a ≈0.95 upper threshold expands the library unattended | **Removed deliberately.** Nothing enters the library without a human; the reasoning is in the design-decisions section above |
+| Dual thresholds of ≈0.95 / ≈0.80 | Shipped values are similarity `0.74`, margin `0.02`, high-confidence `0.88`, and they are re-fitted per part by `ThresholdTuner` |
+| Non-critical artifacts go to a "filter list" | Generalised into a three-level severity scale (`CRITICAL` / `ADVISORY` / `IGNORED`) |
+| Inspection outcome is determined by count comparison against the manifest | Count comparison **plus** a positional check that catches swaps and displacement, which counting cannot see |
+
+Two items are ready-made narrative arcs: the mid-year report named "finding a good balance
+point [for the confidence line]" as an open question carried into the second half — the
+threshold sweeps in M3 and the per-part `ThresholdTuner` answer it. And it predicted that
+similar-looking types "may end up closer together in embedding space"; M1 quantifies exactly
+that as CLIP's 0.06-wide band, and the encoder swap resolves it.
+
+---
+
+## Further documentation
+
+`CLAUDE.md` in this directory holds the detailed engineering context: calibrated constants and
+their provenance, decisions that should not be relitigated, and the specific traps in the Room
+migrations. Read it before changing thresholds or the detection geometry.
