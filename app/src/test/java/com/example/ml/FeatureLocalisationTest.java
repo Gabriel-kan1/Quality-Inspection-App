@@ -155,16 +155,26 @@ public class FeatureLocalisationTest {
     /**
      * The regression this pins: a small layout must not demand perfection.
      *
-     * The inlier floor is an absolute 3, so on a 4-slot layout an uncapped rule would need
-     * 3 of 4 — fine — but on a 3-slot layout it needed 3 of 3, meaning one absent fastener
-     * made the check vanish rather than report the fastener. The requirement is capped at
-     * {@code slots - 1} so there is always somewhere for a defect to be found.
+     * The requirement is capped at {@code slots - 1} so there is always somewhere for a defect
+     * to be found. Without the cap the floor dominates a small layout and demands perfection:
+     * a 3-slot layout needed 3 of 3, meaning one absent fastener made the check vanish rather
+     * than report the fastener.
+     *
+     * The floor itself depends on which transform the layout can afford. Four slots get the
+     * 4-DOF similarity, where two correspondences fit exactly and three is the first evidence.
+     * Five and above get the 6-DOF affine, where three fit exactly and four is the first
+     * evidence — measurably the better model (it cuts the p95 residual on real photo pairs by
+     * 38%), at the price of one more position needing to be located.
      */
     @Test
-    public void aSmallLayoutStillLeavesRoomForOneMissingFeature() {
-        assertEquals(3, LayoutMatcher.requiredInliers(4));
-        assertEquals(3, LayoutMatcher.requiredInliers(5));
-        assertEquals(3, LayoutMatcher.requiredInliers(6));
+    public void theInlierFloorFollowsTheModelTheLayoutCanAfford() {
+        assertEquals("4 slots keep the similarity model", 3, LayoutMatcher.requiredInliers(4));
+        assertEquals("5 slots can afford affine, which needs one more", 4,
+                LayoutMatcher.requiredInliers(5));
+        assertEquals(4, LayoutMatcher.requiredInliers(6));
+        // Past 7 slots the half-the-layout rule already exceeds either floor, so the model
+        // choice stops affecting the requirement at all.
+        assertEquals(4, LayoutMatcher.requiredInliers(7));
         assertEquals(5, LayoutMatcher.requiredInliers(10));
         for (int slots = 4; slots <= 30; slots++) {
             assertTrue("a layout of " + slots + " must tolerate at least one missing feature",
@@ -591,10 +601,23 @@ public class FeatureLocalisationTest {
         assertNull(findingFor(result, 4).foundType);
     }
 
-    /** Two empty positions must not both blame the same stray detection. */
+    /**
+     * Two empty positions must not both blame the same stray detection.
+     *
+     * Six slots rather than five: with two positions empty, four remain to be located, which
+     * is what the affine model's floor requires. On a five-slot layout the same scenario now
+     * refuses to register at all — see
+     * {@link #aFiveSlotLayoutMissingTwoPositionsCannotAffordTheAffineModel}.
+     */
     @Test
     public void oneStrayDetectionExplainsAtMostOnePosition() {
-        FeatureLayout layout = referenceLayout();
+        FeatureLayout layout = FeatureLocalisation.layoutFrom(Arrays.asList(
+                        at(0.15f, 0.15f), at(0.85f, 0.20f), at(0.30f, 0.85f),
+                        at(0.85f, 0.80f), at(0.45f, 0.50f), at(0.55f, 0.15f)),
+                Arrays.asList("bolt_head", "bolt_head", "bolt_head", "bolt_head", "screw", "stud"),
+                CRITICAL);
+        assertEquals(6, layout.slots().size());
+
         Detections d = shotOf(layout,
                 new LinkedHashSet<>(Arrays.asList(1, 4)), null);
         FeatureLayout.Slot one = layout.slotById(1);
@@ -688,17 +711,41 @@ public class FeatureLocalisationTest {
         assertTrue(result.findings.isEmpty());
     }
 
-    /** Three of five is above the floor, so the two absent positions are named. */
+    /** Four of five is above the floor, so the absent position is named. */
     @Test
     public void aMajorityOfPositionsIsEnoughToRegister() {
         FeatureLayout layout = referenceLayout();
-        Detections d = shotOf(layout, new LinkedHashSet<>(Arrays.asList(2, 5)), null);
+        Detections d = shotOf(layout, java.util.Collections.singleton(2), null);
 
         FeatureLocalisation.Result result = FeatureLocalisation.localise(layout, d.rects, d.types, null);
         assertTrue(result.aligned);
-        assertEquals(2, result.countWithStatus(FeatureLocalisation.Status.MISSING));
+        assertEquals(1, result.countWithStatus(FeatureLocalisation.Status.MISSING));
         assertEquals(FeatureLocalisation.Status.MISSING, findingFor(result, 2).status);
-        assertEquals(FeatureLocalisation.Status.MISSING, findingFor(result, 5).status);
+    }
+
+    /**
+     * The price of the affine model, pinned so it stays a decision rather than a surprise.
+     *
+     * A 5-slot layout is the smallest that can afford a 6-DOF transform, and three
+     * correspondences determine one exactly — so four must be located before an alignment is
+     * evidence of anything. A part missing two of five therefore reports no position at all,
+     * where the 4-DOF similarity would have named them.
+     *
+     * That is the trade accepted for a model that fits real photo pairs 38% more tightly at
+     * p95: the residual a rigid transform leaves is dominated by the anisotropic
+     * foreshortening of a tilted camera, which no tolerance can tell apart from a genuinely
+     * misplaced fastener. The count comparison still reports the shortfall; only the
+     * positional claim is withheld. See {@code python/localisation_tolerance_study.py}.
+     */
+    @Test
+    public void aFiveSlotLayoutMissingTwoPositionsCannotAffordTheAffineModel() {
+        FeatureLayout layout = referenceLayout();
+        Detections d = shotOf(layout, new LinkedHashSet<>(Arrays.asList(2, 5)), null);
+        assertEquals(3, d.rects.size());
+
+        FeatureLocalisation.Result result = FeatureLocalisation.localise(layout, d.rects, d.types, null);
+        assertFalse("3 of 5 no longer clears the affine floor", result.aligned);
+        assertTrue(result.findings.isEmpty());
     }
 
     /** A projection outside the frame is not drawable, so the overlay must not be told it is. */
@@ -712,6 +759,135 @@ public class FeatureLocalisationTest {
         assertTrue(missing.hasProjection());
         assertTrue(missing.projectedX >= 0f && missing.projectedX <= 1f);
         assertTrue(missing.projectedY >= 0f && missing.projectedY <= 1f);
+    }
+
+    /** Shifts, turns and rescales a point the way a freehand second photo would. */
+    private static RectF shot(FeatureLayout.Slot s, double degrees, double scale,
+                              double dx, double dy) {
+        double a = Math.toRadians(degrees);
+        return at((float) (scale * (s.x * Math.cos(a) - s.y * Math.sin(a)) + dx),
+                (float) (scale * (s.x * Math.sin(a) + s.y * Math.cos(a)) + dy));
+    }
+
+    /**
+     * The same defect must read the same however far back the operator stood.
+     *
+     * The matching tolerance is a fraction of the part, but it was computed from the layout's
+     * spread and then applied to distances measured in the photo — so shooting the part at half
+     * its reference size silently doubled the tolerance relative to the part. A fastener a
+     * fifth of the way out of position landed inside it and was reported as correctly fitted,
+     * which is the false-PASS direction. The tolerance is now scaled by the transform's own
+     * scale, so the check means the same thing at every shooting distance.
+     */
+    @Test
+    public void theCheckIsAsStrictWhenThePartIsShotSmaller() {
+        FeatureLayout layout = referenceLayout();
+        // Slot 4's fastener is fitted well out of position, measured on the part.
+        float offX = 0.08f, offY = 0.04f;
+
+        for (double scale : new double[]{1.0, 0.5}) {
+            List<RectF> rects = new ArrayList<>();
+            List<String> types = new ArrayList<>();
+            for (FeatureLayout.Slot s : layout.slots()) {
+                if (s.id == 4) continue;
+                rects.add(shot(s, 0, scale, 0.1, 0.1));
+                types.add(s.type);
+            }
+            FeatureLayout.Slot four = layout.slotById(4);
+            rects.add(at((float) (scale * (four.x + offX) + 0.1),
+                    (float) (scale * (four.y + offY) + 0.1)));
+            types.add(four.type);
+
+            FeatureLocalisation.Result result =
+                    FeatureLocalisation.localise(layout, rects, types, null);
+
+            assertTrue("must still register at scale " + scale, result.aligned);
+            assertEquals("the misplaced fastener must not read as fitted at scale " + scale,
+                    FeatureLocalisation.Status.DISPLACED, findingFor(result, 4).status);
+            assertEquals("and nothing else may be disturbed at scale " + scale,
+                    4, result.countWithStatus(FeatureLocalisation.Status.PRESENT));
+        }
+    }
+
+    /**
+     * The alignment must be more accurate than any single detection that produced it.
+     *
+     * The winning transform used to be the one derived exactly from the two detections that
+     * seeded it, so it inherited their measurement error and carried it into every projection —
+     * the ghost markers drawn over the photo and the displacement offsets alike. It is now
+     * fitted by least squares over the whole agreed correspondence set, which averages that
+     * error down instead of enshrining whichever two boxes happened to seed the winner.
+     *
+     * The jitter here is deterministic and cancels across the set, so this asserts a property
+     * of the fit rather than the outcome of one lucky draw.
+     */
+    @Test
+    public void theAlignmentIsFittedOverEveryAgreeingFeatureNotJustTheSeedPair() {
+        FeatureLayout layout = referenceLayout();
+        double angle = Math.toRadians(8), scale = 0.9, dx = 0.05, dy = 0.03;
+        float jitter = 0.008f;
+        float[][] nudge = {{jitter, 0}, {-jitter, 0}, {0, jitter}, {0, -jitter}, {0, 0}};
+
+        List<RectF> rects = new ArrayList<>();
+        List<String> types = new ArrayList<>();
+        List<float[]> truth = new ArrayList<>();
+        int i = 0;
+        for (FeatureLayout.Slot s : layout.slots()) {
+            float tx = (float) (scale * (s.x * Math.cos(angle) - s.y * Math.sin(angle)) + dx);
+            float ty = (float) (scale * (s.x * Math.sin(angle) + s.y * Math.cos(angle)) + dy);
+            truth.add(new float[]{tx, ty});
+            rects.add(at(tx + nudge[i][0], ty + nudge[i][1]));
+            types.add(s.type);
+            i++;
+        }
+
+        FeatureLocalisation.Result result =
+                FeatureLocalisation.localise(layout, rects, types, null);
+        assertTrue(result.aligned);
+        assertEquals(5, result.countWithStatus(FeatureLocalisation.Status.PRESENT));
+
+        double worst = 0;
+        for (int k = 0; k < result.findings.size(); k++) {
+            FeatureLocalisation.SlotFinding f = result.findings.get(k);
+            worst = Math.max(worst, Math.hypot(f.projectedX - truth.get(k)[0],
+                    f.projectedY - truth.get(k)[1]));
+        }
+        assertTrue("the fit must beat the error of the detections it was fitted to, got " + worst,
+                worst < jitter);
+    }
+
+    /**
+     * A layout with many positions must register reliably.
+     *
+     * Seeds used to be 400 random draws from every slot paired with every detection, which on a
+     * layout this size is sparse coverage of a large candidate space — so registration on a
+     * perfectly good photo was partly a matter of luck, and the luck depended on a hardcoded
+     * random seed. Seeding now enumerates the candidate space, with the distance network
+     * discarding the implausible pairings for the cost of one division each.
+     */
+    @Test
+    public void aLayoutWithManyPositionsStillRegisters() {
+        List<RectF> rects = new ArrayList<>();
+        List<String> types = new ArrayList<>();
+        // Twelve fasteners around an irregular ring, so no rotation maps it onto itself.
+        for (int k = 0; k < 12; k++) {
+            double a = 2 * Math.PI * k / 12;
+            double r = 0.30 + 0.06 * Math.sin(3 * a) + 0.03 * k / 12.0;
+            rects.add(at((float) (0.5 + r * Math.cos(a)), (float) (0.5 + r * Math.sin(a))));
+            types.add(k % 3 == 0 ? "screw" : "bolt_head");
+        }
+        FeatureLayout layout = FeatureLocalisation.layoutFrom(rects, types, CRITICAL);
+        assertEquals(12, layout.slots().size());
+
+        Detections d = shotOf(layout, new LinkedHashSet<>(Arrays.asList(3, 9)), null);
+        FeatureLocalisation.Result result =
+                FeatureLocalisation.localise(layout, d.rects, d.types, null);
+
+        assertTrue(result.aligned);
+        assertEquals(2, result.countWithStatus(FeatureLocalisation.Status.MISSING));
+        assertEquals(FeatureLocalisation.Status.MISSING, findingFor(result, 3).status);
+        assertEquals(FeatureLocalisation.Status.MISSING, findingFor(result, 9).status);
+        assertEquals(10, result.countWithStatus(FeatureLocalisation.Status.PRESENT));
     }
 
     @Test
