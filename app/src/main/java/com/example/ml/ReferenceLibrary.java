@@ -59,19 +59,39 @@ public final class ReferenceLibrary {
      * match is too close to call and we report "unknown" with the best guess as
      * closestMatch, rather than silently picking a winner.
      *
-     * Kept deliberately low rather than removed. The sweep found that this encoder's
-     * mistakes are confidently wrong (the one leave-one-out error scored 0.734 with a
-     * 0.091 margin) rather than near-ties, so raising the margin buys nothing here and
-     * only costs correct answers. It stays non-zero because near-ties remain the
-     * failure mode this check exists for, and they get more likely as inspectors add
-     * feature types that genuinely do sit close together.
+     * <h3>This value is a floor, not a fit — treat it as provisional</h3>
+     * It is numerically identical to {@link ThresholdTuner#MARGIN_MIN}, which exists so
+     * tuning can never switch the ambiguity check off. Nothing ever measured 0.02 as a
+     * good value; it is the smallest the design permits.
+     *
+     * The sweep that blessed it could not have chosen otherwise. Over the 34 bundled
+     * reference crops the single leave-one-out error scores 0.635 with a runner-up gap of
+     * 0.061 — below {@link #DEFAULT_SIMILARITY_THRESHOLD}, so the score check already
+     * rejects it and the margin is never consulted. That crop set contains no near-ties at
+     * all (the least confident correct answer has a gap of 0.033), so every margin from
+     * 0.02 upward scores identically on it. An earlier version of this comment cited 0.734
+     * and 0.091 for that error; those figures predate the {@code -tightcrop} preprocessing
+     * change, which moved every embedding, and no longer reproduce.
+     *
+     * Real inspection history <em>does</em> contain the failure mode. Of 30 confirmed
+     * accepted predictions on the shipping encoder, three were wrong — all "stud" where
+     * the operator said "screw" — with gaps of 0.020, 0.054 and 0.064, against a minimum
+     * of 0.087 for the ones the operator agreed with. Cleanly separated, which suggests
+     * roughly 0.075. That is not applied here yet: those confirmations are themselves a
+     * biased sample, drawn by a spot check that until recently only sampled high-confidence
+     * crops. Fit this from unbiased history once enough has accumulated — the harness is
+     * {@code python/margin_study.py}, and {@link ThresholdTuner} already does it per part.
      */
     public static final float DEFAULT_MARGIN_THRESHOLD = 0.02f;
     /**
-     * Above this a classification is reported as "high" confidence, which is also what
-     * makes it eligible for {@link ActiveLearningPolicy} spot checks. Set near the upper
+     * Above this a classification is reported as "high" confidence. Set near the upper
      * quartile of correct scores (measured 0.881) so "high" means genuinely top-tier
      * rather than merely accepted.
+     *
+     * Presentation only. This used to gate {@link ActiveLearningPolicy} spot-check
+     * eligibility as well, which quietly exempted the whole 0.74-0.88 band — 88 of 141
+     * accepted predictions in this project's history, and every known silent error — from
+     * ever being sampled. Spot checks now draw from all accepted predictions.
      */
     public static final float DEFAULT_HIGH_CONFIDENCE = 0.88f;
 

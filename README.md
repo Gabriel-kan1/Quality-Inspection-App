@@ -26,7 +26,7 @@ photo ──> [1] classical CV detection ──> crops ──> [2] few-shot clas
                 (OpenCV, no ML)                        (DINOv2-S, ONNX)
                                                                 │
    reference layout ────> [3] positional check <────────────────┘
-   (operator-labelled)      (RANSAC alignment)
+   (operator-labelled)      (distance-network alignment)
                                     │
                                     v
                         verdict + PDF report
@@ -49,12 +49,26 @@ same pipeline handle a fastener the model was never trained on.
 > Was CLIP ViT-B/32 until commit `c3c3a76`. CLIP squeezed all five types into a 0.06-wide
 > similarity band. Benchmark: `python/compare_encoders.py`.
 
-**Stage 3 — localisation (`ml/FeatureLocalisation`, `ml/LayoutMatcher`).** Counting answers
-"how many bolt heads"; localisation answers "which one is missing, and where". Detections are
-registered against the operator's labelled reference layout via RANSAC over a similarity
-transform, then each expected slot is reported as `PRESENT`, `MISSING`, `DISPLACED` or
-`WRONG_TYPE`. This is what catches a *swap* — two screws expected, two found, one in the
-wrong hole — which count comparison cannot see at all.
+**Stage 3 — localisation (`ml/FeatureLocalisation`, `ml/LayoutMatcher`, `ml/DistanceNetwork`).**
+Counting answers "how many bolt heads"; localisation answers "which one is missing, and where".
+Detections are registered against the operator's labelled reference layout, then each expected
+slot is reported as `PRESENT`, `MISSING`, `DISPLACED` or `WRONG_TYPE`. This is what catches a
+*swap* — two screws expected, two found, one in the wrong hole — which count comparison cannot
+see at all.
+
+Registration works on the **network of separations** between features rather than on positions:
+a distance matrix describes the part, not the photograph, since it survives shift and rotation
+and scales by one common factor. A correspondence set is grown by mutual agreement — each new
+feature must match its expected separation from *every* member already accepted — and a
+transform is then fitted by least squares over that set and verified by inlier count.
+Separations are invariant to reflection, so the network proposes and the transform disposes.
+
+The transform is **affine** where the layout can afford it (5+ slots) and a proper similarity
+below that. Measured over 18 RANSAC-verified asset pairs, a rigid transform leaves a p95
+residual of 0.141 of the layout's spread against affine's 0.087 — the leftover is the
+anisotropic foreshortening of a camera that is not square to the part, which no threshold can
+tell apart from a misplaced fastener. Affine costs one more inlier before an alignment counts
+as evidence, which is why small layouts keep the poorer model.
 
 **Capture gating (`ml/AlignmentGate`).** The camera will not fire until the frame actually
 shows the reference area, at the right distance, held steady for three seconds. Each frame is
@@ -65,8 +79,9 @@ and wrong verdict.
 
 **Supervised learning loop.** Nothing enters the library without a human — there is no
 pseudo-labelling, deliberately. Every detection is logged; `ActiveLearningPolicy` picks ≤8
-crops to ask about (unknowns nearest the decision boundary, plus one random *spot check* of an
-accepted prediction); the inspector labels them; the crop joins that type's prototype
+crops to ask about (unknowns nearest the decision boundary, plus one random *spot check* drawn
+uniformly from **all** accepted predictions — gating that on high confidence exempted the band
+holding 88 of 141 acceptances and every known silent error); the inspector labels them; the crop joins that type's prototype
 immediately; and `ThresholdTuner` re-fits the similarity/margin thresholds once a part has
 20+ confirmations. The spot check is load-bearing: without it every label would come from
 crops the classifier already flagged, so the tuner would be fitting on its own failures.
@@ -99,9 +114,10 @@ Legend: ✅ done · 🟡 partial · ❌ not started
 - **Camera capture** with live alignment gating, three-second hold and automatic shutter.
 - **Alignment gate** — embedding similarity + scale probe for distance + motion gate, all
   fitted against 252 labelled asset pairs with RANSAC-verified ground truth.
-- **Positional/slot check** with one-to-one inlier counting, a `max(3, half the slots)` inlier
-  floor, and outright refusal of layouts under 4 slots (a check that structurally cannot fail
-  is worse than none).
+- **Positional/slot check** with one-to-one inlier counting, a model-dependent inlier floor,
+  and outright refusal of layouts under 4 slots (a check that structurally cannot fail is
+  worse than none). Verified end-to-end on a 12-slot layout: 11 of 12 positions matched with
+  residuals of 0.0006–0.023 and 2.9% network distortion.
 - **Severity scale** — every type is `CRITICAL`, `ADVISORY` or `IGNORED`, deciding whether it
   reaches the quantitative table, the trend notes, or neither. Snapshotted at save time so a
   later re-grade cannot rewrite a filed report.
@@ -110,8 +126,10 @@ Legend: ✅ done · 🟡 partial · ❌ not started
   photo via `BitmapRegionDecoder`, not the 1280px working copy, with proportional padding.
 - **Room database v9** with real migrations (no destructive fallback on new schema changes).
 - **PDF reporting** + share intent, and per-part advisory trend notes.
-- **138 unit tests**, all passing.
-- **Reproducible studies** in `python/` — encoder comparison, detector A/B harness, scale
+- **151 unit tests**, all passing.
+- **Reproducible studies** in `python/` — localisation tolerance and transform model
+  (`localisation_tolerance_study.py`), classifier margin fitted from real inspection history
+  (`margin_study.py`), encoder comparison, detector A/B harness, scale
   probe study, and objective same-area pair ground truth.
 
 ### In progress / partial
@@ -221,7 +239,8 @@ app/src/main/java/com/example/
     FeatureEmbedder           stage 2: DINOv2-S ONNX encoder
     ReferenceLibrary          prototypes, cosine classification
     FeatureLocalisation       stage 3: slot-level findings
-    LayoutMatcher             RANSAC similarity-transform registration
+    LayoutMatcher             consensus growth + similarity-transform registration
+    DistanceNetwork           pairwise separations, correspondence growth
     AlignmentGate             live capture gating
     ActiveLearningPolicy      review queue selection
     ThresholdTuner            per-part threshold fitting
@@ -284,7 +303,14 @@ alternatives tried, what shipped, and — where one exists — the measurement t
 | M4 | Scale probe separation: crop-in gain, correctly framed vs too far | mean **−0.070** vs **+0.156** | `python/scale_probe_study.py` | Carried |
 | M5 | Crop framing: feature occupancy before vs after proportional padding | 6–44% → **52–58%** across the size range | Measured on bundled crop set | Carried |
 | M6 | On-device crop resolution, working copy vs source decode | ~38×30 px → **120–169 px** | Measured on-device | Carried |
-| M7 | Unit test suite | **138 tests, 0 failures** | `./gradlew testDebugUnitTest --rerun` | **Re-verified** |
+| M7 | Unit test suite | **151 tests, 0 failures** | `./gradlew testDebugUnitTest --rerun` | **Re-verified** |
+| M9 | Registration residual, similarity vs affine, 18 RANSAC-verified asset pairs (158 correspondences) | p95 **0.141** vs **0.087** of layout spread; pairs registering at tolerance 0.12: **16/18** vs **18/18** | `python/localisation_tolerance_study.py` | **New** |
+| M10 | Is a rigid transform the right model? Pairwise distance-ratio spread across the same pairs (1.0 = rigid) | median **×1.28**, p90 ×1.89, max ×2.80 | `python/localisation_tolerance_study.py` | **New** |
+| M11 | Correct match is nearer than any wrong slot (what one-to-one assignment resolves on) | **100%** of 158 correspondences, both models | `python/localisation_tolerance_study.py` | **New** |
+| M12 | Silent misclassification rate among *accepted* predictions, real inspection history | **4 of 35** confirmed — every one `stud` where the operator said `screw` | `python/margin_study.py` | **New** |
+| M13 | Runner-up gap separates silent errors from correct calls | errors **0.020/0.039/0.054/0.064**, correct min **0.087** → separable, midpoint **~0.075** | `python/margin_study.py` | **New**, provisional — only 1 unbiased sample in the band |
+| M14 | Spot-check coverage of the 0.74–0.88 confidence band before the fix | **0 of 88** accepted predictions ever sampled; all known errors lived there. After the fix, spot checks reach it | `python/margin_study.py` | **New** |
+| M15 | Localisation end-to-end on a 12-slot layout (`whole screws1.jpg` → `whole screws2.jpg`, affine path) | **11 of 12 positions matched**, residuals 0.0006–0.023, network distortion **2.9%** of the part | On-device, `LayoutMatcher` log | **New** |
 | M8 | Seed crop set composition | bolt_head 6, hole 9, rivet_head 2, screw 7, stud 10 (=34), unknown 3 | `assets/reference_crops/` | **Re-verified** |
 
 **Gap to close:** there is no per-type precision/recall for the shipped end-to-end system.
@@ -330,11 +356,19 @@ to 0 without it.
 34% against a 21% baseline and was adopted. A relative-improvement gate alone is insufficient;
 an absolute floor is also required.
 
-**Positional registration must ignore type.** Inlier counting and slot assignment compare
-position only. This is what lets a stud in a screw's hole read as *that slot, wrong hardware*
-rather than as a missing screw plus an unexpected stud. Type agreement only prioritises which
-correspondences RANSAC tries first. Requiring type agreement to seed made alignment starve
+**Positional registration must ignore type.** Consensus growth, inlier counting and slot
+assignment compare position only. This is what lets a stud in a screw's hole read as *that
+slot, wrong hardware* rather than as a missing screw plus an unexpected stud. Type agreement
+only orders which seeds are tried. Requiring type agreement to seed made alignment starve
 exactly as substitutions grew — the failure scaled with the defect it was meant to catch.
+
+**Agreeing on distances is necessary for a match, not sufficient.** A detection displaced
+along the line to its neighbour changes that separation by its full error; one displaced
+across it barely changes it at all. So the network's agreement test must run *tighter* than
+the positional gate it feeds, or it becomes the more permissive of the two — and it is the
+one deciding what the transform is fitted over. A fastener a fifth out of position was
+admitted to the consensus at the edge of a 12% threshold, least squares stretched to meet it,
+and the defect was reported as correctly fitted. Conservative growth, generous verification.
 
 **Type must never break an alignment tie.** Four fasteners at the corners of a parallelogram
 map onto themselves under a half turn, so "every fastener swapped" and "photographed upside

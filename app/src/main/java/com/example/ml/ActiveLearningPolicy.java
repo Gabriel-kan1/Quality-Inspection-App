@@ -21,12 +21,27 @@ import java.util.Random;
  *    zero against everything is either a novel feature type or noise; still worth
  *    asking about, but only after the boundary cases.
  *
- * 2. SPOT CHECKS: a small random sample of *confidently accepted* predictions.
+ * 2. SPOT CHECKS: a small uniform random sample of *accepted* predictions.
  *    These matter more than they look. If the only labels we ever collect come from
  *    crops the classifier already called "unknown", the tuning set is systematically
  *    biased toward its own failures, and {@link ThresholdTuner} will happily drive
  *    thresholds to zero to "fix" a population that contains no true accepts. Spot
  *    checks put correctly-classified examples back in the sample so the fit is honest.
+ *
+ *    <h3>Why the pool is every accepted prediction, not the confident ones</h3>
+ *    It used to be gated on {@code "high"} confidence, i.e. a score above
+ *    {@link ReferenceLibrary#DEFAULT_HIGH_CONFIDENCE}. That defeated the purpose. The
+ *    point of the sample is to be <em>unbiased</em> with respect to what the classifier
+ *    thinks, and drawing only from the safest quartile is no less biased than drawing
+ *    only from the failures — merely biased the other way, and toward the crops with
+ *    least to teach.
+ *
+ *    Measured on this project's own inspection history: of 141 accepted predictions on
+ *    the shipping encoder, 88 sat in the 0.74-0.88 band and received <em>zero</em> spot
+ *    checks between them. Every one of the three known silent misclassifications lived
+ *    in that band, and every one was found by the operator tapping the box by hand — the
+ *    review loop surfaced none of them. A sample that cannot reach the population where
+ *    the errors are is not bias control. See {@code python/margin_study.py}.
  */
 public final class ActiveLearningPolicy {
 
@@ -94,7 +109,9 @@ public final class ActiveLearningPolicy {
             if (c == null) continue;
             if (ReferenceLibrary.UNKNOWN.equals(c.type)) {
                 unknowns.add(new Candidate(i, Kind.UNKNOWN, informativeness(c, library)));
-            } else if ("high".equals(c.confidence)) {
+            } else {
+                // Every accepted prediction, at any confidence. Filtering to "high" here made
+                // the spot check unable to see the band the errors actually occupy.
                 accepted.add(i);
             }
         }
