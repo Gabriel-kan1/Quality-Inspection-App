@@ -143,7 +143,10 @@ public class HardwareFeatureExtractor {
     static {
         boolean ready;
         try {
-            ready = OpenCVLoader.initDebug();
+            // initLocal() is the entry point the official OpenCV Android package documents for
+            // a library bundled into the APK; initDebug() is the older name kept for
+            // compatibility and says nothing about debug builds despite how it reads.
+            ready = OpenCVLoader.initLocal();
         } catch (Throwable t) {
             // A missing or ABI-mismatched .so surfaces here as UnsatisfiedLinkError.
             Log.e(TAG, "OpenCV native libraries could not be loaded.", t);

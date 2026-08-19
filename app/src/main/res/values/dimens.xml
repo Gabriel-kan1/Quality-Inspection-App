@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Phone defaults for the two fixed-height image panes on the results screen.
+
+    These were laid out against a tablet viewport, where 200dp and 280dp are a comfortable
+    fraction of the screen. On a ~640dp-tall phone the same numbers put 480dp of imagery above
+    everything else, so the counts and the verdict — the part an operator is actually reading —
+    start below the fold. The screen scrolls, so nothing is clipped either way; this is about
+    what is visible without scrolling.
+
+    values-sw600dp restores the original sizes for tablets.
+-->
+<resources>
+    <dimen name="results_preview_height">150dp</dimen>
+    <dimen name="results_overlay_height">220dp</dimen>
+</resources>
