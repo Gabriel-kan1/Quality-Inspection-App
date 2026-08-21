@@ -34,6 +34,8 @@ import com.example.ml.FeatureEmbedder;
 import com.example.ml.FeatureLayout;
 import com.example.ml.FeatureLocalisation;
 import com.example.ml.FeatureTypeRegistry;
+import com.example.ml.PartFiles;
+import com.example.report.InspectionExport;
 import com.example.ml.LearningCropStore;
 import com.example.ml.ReferenceLibrary;
 import com.example.report.AdvisoryNotes;
@@ -45,6 +47,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.UUID;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Random;
@@ -76,6 +79,7 @@ public class ResultsFragment extends Fragment {
     /** Remembers whether the edge preview is expanded, so the choice survives the next inspection. */
     private static final String PREFS = "results_view_prefs";
     private static final String KEY_CANNY_EXPANDED = "canny_edges_expanded";
+    private static final String KEY_OPERATOR = "operator_id";
 
     private FragmentResultsBinding binding;
     private String partId = "";
@@ -182,6 +186,7 @@ public class ResultsFragment extends Fragment {
 
         setUpCannyEdgesToggle();
 
+        setUpOperatorField();
         runFeatureVerificationPipeline();
     }
 
@@ -190,6 +195,19 @@ public class ResultsFragment extends Fragment {
      * every run, so it collapses away. The bitmap is still set on the (hidden) ImageView
      * when the pipeline finishes — expanding just reveals it, no re-analysis.
      */
+    /**
+     * Carries the inspector id over from the last inspection.
+     *
+     * <p>A field that has to be retyped on every part is a field that ends up empty, and an
+     * empty one puts "not recorded" on the filed report — which is the gap this exists to
+     * close. It stays editable rather than being locked to the device, because a tablet on a
+     * bench gets handed between shifts.
+     */
+    private void setUpOperatorField() {
+        SharedPreferences prefs = requireContext().getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        binding.etOperator.setText(prefs.getString(KEY_OPERATOR, ""));
+    }
+
     private void setUpCannyEdgesToggle() {
         SharedPreferences prefs = requireContext().getSharedPreferences(PREFS, Context.MODE_PRIVATE);
         applyCannyEdgesExpanded(prefs.getBoolean(KEY_CANNY_EXPANDED, false));
@@ -891,6 +909,21 @@ public class ResultsFragment extends Fragment {
         nameInput.setHint("New feature type name (e.g. Scratch)");
         nameInput.setTextColor(Color.WHITE);
         nameInput.setHintTextColor(Color.rgb(180, 180, 188));
+
+        // Enter finishes the name instead of opening a second line: this field holds one short
+        // label, and a stray newline would otherwise ride along into the type key.
+        nameInput.setSingleLine(true);
+        nameInput.setImeOptions(android.view.inputmethod.EditorInfo.IME_ACTION_DONE);
+        nameInput.setOnEditorActionListener((v, actionId, event) -> {
+            if (actionId != android.view.inputmethod.EditorInfo.IME_ACTION_DONE
+                    && actionId != android.view.inputmethod.EditorInfo.IME_NULL) return false;
+            v.clearFocus();
+            android.view.inputmethod.InputMethodManager imm =
+                    (android.view.inputmethod.InputMethodManager) requireContext()
+                            .getSystemService(android.content.Context.INPUT_METHOD_SERVICE);
+            if (imm != null) imm.hideSoftInputFromWindow(v.getWindowToken(), 0);
+            return true;
+        });
         newTypePanel.addView(nameInput);
         root.addView(newTypePanel);
 
@@ -1606,6 +1639,14 @@ public class ResultsFragment extends Fragment {
             notes = notes.isEmpty() ? caveat : caveat + "\n\n" + notes;
         }
         final String finalNotes = notes;
+        String typedOperator = binding.etOperator.getText().toString().trim();
+        // Remembered for the next inspection, but only when it says something — persisting an
+        // empty value would quietly wipe the id the previous run set.
+        if (!typedOperator.isEmpty()) {
+            requireContext().getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                    .edit().putString(KEY_OPERATOR, typedOperator).apply();
+        }
+        final String finalOperator = typedOperator.isEmpty() ? null : typedOperator;
         binding.btnSaveReport.setEnabled(false);
 
         final android.content.Context context = requireContext().getApplicationContext();
@@ -1619,8 +1660,14 @@ public class ResultsFragment extends Fragment {
                     : verdict == Verdict.UNVERIFIED ? "UNVERIFIED" : "PASS");
             record.setImageUri(imageUri);
             record.setNotes(finalNotes);
+            record.setOperator(finalOperator);
+            // Identity is assigned here, not derived later: this is the value the printed QR
+            // and the exported file both name, and it has to be the same one in all three.
+            record.setUuid(UUID.randomUUID().toString());
+            record.setCanonicalPartId(PartFiles.safeName(partId));
 
             long inspectionId = db.inspectionDao().insertInspection(record);
+            record.setId(inspectionId);
 
             List<FeatureResult> results = new ArrayList<>();
             for (String type : orderedTypes) {
@@ -1668,6 +1715,15 @@ public class ResultsFragment extends Fragment {
             if (!loggedEventIds.isEmpty()) {
                 db.classificationEventDao().assignInspection(inspectionId, loggedEventIds);
             }
+
+            // Seal last, because the digest covers the child rows and they did not exist until
+            // now. Read back rather than digesting the in-memory lists: what a later
+            // verification will hash is whatever the database holds, so that is what has to be
+            // hashed here, including any coercion the insert applied on the way in.
+            String digest = InspectionExport.digest(record,
+                    db.inspectionDao().getFeatureResultsForInspection(inspectionId),
+                    db.inspectionDao().getSlotResultsForInspection(inspectionId));
+            db.inspectionDao().sealInspection(inspectionId, digest, InspectionExport.SCHEMA_VERSION);
 
             postToUi(() -> {
                 Toast.makeText(getContext(), "Inspection report filed offline.", Toast.LENGTH_SHORT).show();

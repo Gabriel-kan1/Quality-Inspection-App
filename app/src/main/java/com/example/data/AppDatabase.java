@@ -1,6 +1,7 @@
 package com.example.data;
 
 import android.content.Context;
+import android.database.Cursor;
 import androidx.annotation.NonNull;
 import androidx.room.Database;
 import androidx.room.Room;
@@ -16,9 +17,12 @@ import com.example.data.entity.FeatureResult;
 import com.example.data.entity.InspectionRecord;
 import com.example.data.entity.ReferenceProfile;
 import com.example.data.entity.SlotResult;
+import com.example.ml.PartFiles;
+
+import java.util.UUID;
 
 @Database(entities = {InspectionRecord.class, FeatureResult.class, ReferenceProfile.class,
-        ClassificationEvent.class, SlotResult.class}, version = 9, exportSchema = false)
+        ClassificationEvent.class, SlotResult.class}, version = 11, exportSchema = false)
 public abstract class AppDatabase extends RoomDatabase {
     private static volatile AppDatabase INSTANCE;
 
@@ -193,14 +197,201 @@ public abstract class AppDatabase extends RoomDatabase {
         }
     };
 
+    /**
+     * Gives a filed inspection an identity and an integrity seal: uuid, digest, schemaVersion,
+     * supersedesUuid, operator and canonicalPartId.
+     *
+     * All six are added as plain ALTERs rather than the table rebuild the earlier column
+     * additions needed, because all six columns are nullable — the two that would otherwise
+     * have been primitives ({@code schemaVersion}) are boxed on the entity for exactly that
+     * reason, the same trade {@link #MIGRATION_8_9} made for {@code offsetPct}. As in
+     * {@link #MIGRATION_3_4}, none of them carries a SQL DEFAULT: the entity fields have no
+     * {@code @ColumnInfo(defaultValue = ...)} and Room fails schema validation on open if the
+     * two disagree.
+     *
+     * The backfill runs in Java rather than SQL because both values it writes are beyond what
+     * stock SQLite can express — a real UUID, and {@link PartFiles#safeName} whose character
+     * class has no regex equivalent here. There is one row per filed inspection, not one per
+     * detection, so the cursor pass is cheap.
+     *
+     * {@code digest} and {@code schemaVersion} are deliberately left null on existing rows.
+     * A digest claims "nothing has changed since this was filed"; computing one now would
+     * compute it over whatever the row holds today and assert a guarantee that was never in
+     * force. Those rows read as unsealed, which is the truth about them.
+     */
+    static final Migration MIGRATION_9_10 = new Migration(9, 10) {
+        @Override
+        public void migrate(@NonNull SupportSQLiteDatabase db) {
+            db.execSQL("ALTER TABLE InspectionRecord ADD COLUMN uuid TEXT");
+            db.execSQL("ALTER TABLE InspectionRecord ADD COLUMN digest TEXT");
+            db.execSQL("ALTER TABLE InspectionRecord ADD COLUMN schemaVersion INTEGER");
+            db.execSQL("ALTER TABLE InspectionRecord ADD COLUMN supersedesUuid TEXT");
+            db.execSQL("ALTER TABLE InspectionRecord ADD COLUMN operator TEXT");
+            db.execSQL("ALTER TABLE InspectionRecord ADD COLUMN canonicalPartId TEXT");
+
+            try (Cursor c = db.query("SELECT id, partId FROM InspectionRecord")) {
+                while (c.moveToNext()) {
+                    long id = c.getLong(0);
+                    String partId = c.isNull(1) ? null : c.getString(1);
+                    db.execSQL("UPDATE InspectionRecord SET uuid = ?, canonicalPartId = ?"
+                                    + " WHERE id = ?",
+                            new Object[]{UUID.randomUUID().toString(),
+                                    PartFiles.safeName(partId), id});
+                }
+            }
+
+            // Created after the backfill, not before: the column starts out entirely null and
+            // SQLite treats every null as distinct, so the index would be satisfied either way
+            // — but building it once over final values beats maintaining it across the updates.
+            db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_InspectionRecord_uuid"
+                    + " ON InspectionRecord (uuid)");
+            db.execSQL("CREATE INDEX IF NOT EXISTS index_InspectionRecord_canonicalPartId"
+                    + " ON InspectionRecord (canonicalPartId)");
+        }
+    };
+
+    /**
+     * Gives the three child tables the foreign keys and indices they never had.
+     *
+     * <p>Until now nothing connected a FeatureResult, SlotResult or ClassificationEvent to a
+     * live inspection, and every lookup by {@code inspectionId} was a full table scan — on
+     * ClassificationEvent, which grows by one row per detection, that is the table the learning
+     * loop reads on every single inspection.
+     *
+     * <p>The delete rule is deliberately not uniform. FeatureResult and SlotResult CASCADE
+     * because they are the report; ClassificationEvent is SET NULL because it is labelled
+     * training data that merely happened to be attached to one. See the entity for the full
+     * argument.
+     *
+     * <p>SQLite cannot add a constraint with ALTER TABLE, so each table is rebuilt the way
+     * {@link #MIGRATION_5_6} and {@link #MIGRATION_7_8} already do it. What is different here is
+     * that the constraint has to be <em>satisfiable</em> before it exists: Room runs
+     * {@code PRAGMA foreign_key_check} after migrating, and a device carrying real history that
+     * fails it will not open at all. So every INSERT ... SELECT below repairs as it copies.
+     */
+    static final Migration MIGRATION_10_11 = new Migration(10, 11) {
+        @Override
+        public void migrate(@NonNull SupportSQLiteDatabase db) {
+            // ── FeatureResult: cascade, so orphans go ──────────────────────────
+            db.execSQL("CREATE TABLE IF NOT EXISTS FeatureResult_new ("
+                    + "id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,"
+                    + "inspectionId INTEGER NOT NULL,"
+                    + "featureType TEXT,"
+                    + "expectedCount INTEGER NOT NULL,"
+                    + "detectedCount INTEGER NOT NULL,"
+                    + "status TEXT,"
+                    + "severity INTEGER NOT NULL,"
+                    + "FOREIGN KEY(inspectionId) REFERENCES InspectionRecord(id)"
+                    + " ON UPDATE NO ACTION ON DELETE CASCADE)");
+            // Rows whose parent is already gone are fragments of a report that no longer
+            // exists. Nothing can render them and no digest can verify them.
+            db.execSQL("INSERT INTO FeatureResult_new"
+                    + " (id, inspectionId, featureType, expectedCount, detectedCount, status, severity)"
+                    + " SELECT id, inspectionId, featureType, expectedCount, detectedCount, status,"
+                    + "        severity"
+                    + " FROM FeatureResult"
+                    + " WHERE inspectionId IN (SELECT id FROM InspectionRecord)");
+            db.execSQL("DROP TABLE FeatureResult");
+            db.execSQL("ALTER TABLE FeatureResult_new RENAME TO FeatureResult");
+            db.execSQL("CREATE INDEX IF NOT EXISTS index_FeatureResult_inspectionId"
+                    + " ON FeatureResult (inspectionId)");
+
+            // ── SlotResult: same reasoning ─────────────────────────────────────
+            db.execSQL("CREATE TABLE IF NOT EXISTS SlotResult_new ("
+                    + "id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,"
+                    + "inspectionId INTEGER NOT NULL,"
+                    + "slotId INTEGER NOT NULL,"
+                    + "expectedType TEXT,"
+                    + "foundType TEXT,"
+                    + "status TEXT,"
+                    + "x REAL NOT NULL,"
+                    + "y REAL NOT NULL,"
+                    + "relX REAL NOT NULL,"
+                    + "relY REAL NOT NULL,"
+                    + "offsetPct REAL,"
+                    + "zone TEXT,"
+                    + "FOREIGN KEY(inspectionId) REFERENCES InspectionRecord(id)"
+                    + " ON UPDATE NO ACTION ON DELETE CASCADE)");
+            db.execSQL("INSERT INTO SlotResult_new"
+                    + " (id, inspectionId, slotId, expectedType, foundType, status, x, y,"
+                    + "  relX, relY, offsetPct, zone)"
+                    + " SELECT id, inspectionId, slotId, expectedType, foundType, status, x, y,"
+                    + "        relX, relY, offsetPct, zone"
+                    + " FROM SlotResult"
+                    + " WHERE inspectionId IN (SELECT id FROM InspectionRecord)");
+            db.execSQL("DROP TABLE SlotResult");
+            db.execSQL("ALTER TABLE SlotResult_new RENAME TO SlotResult");
+            db.execSQL("CREATE INDEX IF NOT EXISTS index_SlotResult_inspectionId"
+                    + " ON SlotResult (inspectionId)");
+
+            // ── ClassificationEvent: set null, so nothing is lost ──────────────
+            db.execSQL("CREATE TABLE IF NOT EXISTS ClassificationEvent_new ("
+                    + "id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,"
+                    + "partId TEXT,"
+                    + "inspectionId INTEGER,"
+                    + "timestamp INTEGER NOT NULL,"
+                    + "cropPath TEXT,"
+                    + "predictedType TEXT,"
+                    + "predictedScore REAL NOT NULL,"
+                    + "runnerUpType TEXT,"
+                    + "runnerUpScore REAL NOT NULL,"
+                    + "reason TEXT,"
+                    + "similarityThreshold REAL NOT NULL,"
+                    + "marginThreshold REAL NOT NULL,"
+                    + "encoderId TEXT,"
+                    + "confirmedType TEXT,"
+                    + "reviewed INTEGER NOT NULL,"
+                    + "reviewSource TEXT,"
+                    + "FOREIGN KEY(inspectionId) REFERENCES InspectionRecord(id)"
+                    + " ON UPDATE NO ACTION ON DELETE SET NULL)");
+            // Two cases collapse to the same answer. The -1 sentinel meant "the operator never
+            // saved the report"; an id with no surviving parent means the report went away
+            // afterwards. Both are "attached to no inspection", and neither is a reason to throw
+            // away a human-labelled crop — these rows are what ThresholdTuner fits against, and
+            // they are read by partId and reviewed, never by inspectionId.
+            db.execSQL("INSERT INTO ClassificationEvent_new"
+                    + " (id, partId, inspectionId, timestamp, cropPath, predictedType,"
+                    + "  predictedScore, runnerUpType, runnerUpScore, reason,"
+                    + "  similarityThreshold, marginThreshold, encoderId, confirmedType,"
+                    + "  reviewed, reviewSource)"
+                    + " SELECT id, partId,"
+                    + "        CASE WHEN inspectionId IN (SELECT id FROM InspectionRecord)"
+                    + "             THEN inspectionId ELSE NULL END,"
+                    + "        timestamp, cropPath, predictedType, predictedScore, runnerUpType,"
+                    + "        runnerUpScore, reason, similarityThreshold, marginThreshold,"
+                    + "        encoderId, confirmedType, reviewed, reviewSource"
+                    + " FROM ClassificationEvent");
+            db.execSQL("DROP TABLE ClassificationEvent");
+            db.execSQL("ALTER TABLE ClassificationEvent_new RENAME TO ClassificationEvent");
+            db.execSQL("CREATE INDEX IF NOT EXISTS index_ClassificationEvent_inspectionId"
+                    + " ON ClassificationEvent (inspectionId)");
+            db.execSQL("CREATE INDEX IF NOT EXISTS"
+                    + " index_ClassificationEvent_partId_reviewed_timestamp"
+                    + " ON ClassificationEvent (partId, reviewed, timestamp)");
+
+            // ── The advisory-notes join ────────────────────────────────────────
+            db.execSQL("CREATE INDEX IF NOT EXISTS index_InspectionRecord_partId"
+                    + " ON InspectionRecord (partId)");
+        }
+    };
+
+    /**
+     * Every migration, in one place so that opening the database in a test goes through exactly
+     * the list a device does. A test that hand-copied this would keep passing after someone
+     * added a migration and forgot it, which is the case worth catching.
+     */
+    static final Migration[] MIGRATIONS = {
+            MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7,
+            MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11
+    };
+
     public static AppDatabase getInstance(final Context context) {
         if (INSTANCE == null) {
             synchronized (AppDatabase.class) {
                 if (INSTANCE == null) {
                     INSTANCE = Room.databaseBuilder(context.getApplicationContext(),
                                     AppDatabase.class, "shop_quality_inspection_db")
-                            .addMigrations(MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7,
-                                    MIGRATION_7_8, MIGRATION_8_9)
+                            .addMigrations(MIGRATIONS)
                             // Scoped to the two unversioned schemas that predate MIGRATION_3_4;
                             // those genuinely have no upgrade path and are only on long-dead dev
                             // installs. It used to be an unscoped fallbackToDestructiveMigration(),

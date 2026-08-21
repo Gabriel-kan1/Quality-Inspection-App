@@ -1,8 +1,10 @@
 package com.example.report;
 
+import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
+import android.graphics.RectF;
 import android.graphics.Typeface;
 import android.text.Layout;
 import android.text.StaticLayout;
@@ -76,6 +78,9 @@ public final class PdfReportWriter {
             new Style(10f, true, Color.BLACK, Layout.Alignment.ALIGN_NORMAL);
     public static final Style PASS =
             new Style(12f, true, Color.rgb(38, 166, 154), Layout.Alignment.ALIGN_NORMAL);
+    /** Small grey text for the machine-readable payload printed beneath the QR code. */
+    public static final Style CAPTION =
+            new Style(8f, false, Color.rgb(110, 110, 110), Layout.Alignment.ALIGN_NORMAL);
 
     private final PageSink sink;
     private final float contentWidth;
@@ -112,6 +117,41 @@ public final class PdfReportWriter {
 
     public void spacer(float points) {
         cursorY += points;
+    }
+
+    /**
+     * Appends a bitmap scaled to {@code widthPt} wide, keeping its aspect ratio, and breaks the
+     * page ahead of it if it will not fit.
+     *
+     * <p>Drawn with filtering and anti-aliasing explicitly off. That is not a default worth
+     * inheriting here: the only image this report carries is a QR code, and smoothing a QR
+     * blurs the boundary between modules, which is exactly the edge a decoder is looking for.
+     * Photographs would want the opposite, and can have their own entry point when one exists.
+     */
+    public void image(@NonNull Bitmap bitmap, float widthPt, Layout.Alignment alignment,
+                      float spacingBefore, float spacingAfter) {
+        cursorY += spacingBefore;
+        float heightPt = widthPt * bitmap.getHeight() / (float) bitmap.getWidth();
+        // Same guard as text(): something taller than a whole page must overflow rather than
+        // ask forever for a fresh page that will never be tall enough.
+        if (heightPt <= usableHeight() && !fits(heightPt)) {
+            newPage();
+        }
+        if (canvas != null) {
+            float x = MARGIN_PT;
+            if (alignment == Layout.Alignment.ALIGN_CENTER) {
+                x = MARGIN_PT + (contentWidth - widthPt) / 2f;
+            } else if (alignment == Layout.Alignment.ALIGN_OPPOSITE) {
+                x = MARGIN_PT + contentWidth - widthPt;
+            }
+            Paint paint = new Paint();
+            paint.setFilterBitmap(false);
+            paint.setAntiAlias(false);
+            paint.setDither(false);
+            canvas.drawBitmap(bitmap, null,
+                    new RectF(x, cursorY, x + widthPt, cursorY + heightPt), paint);
+        }
+        cursorY += heightPt + spacingAfter;
     }
 
     /**

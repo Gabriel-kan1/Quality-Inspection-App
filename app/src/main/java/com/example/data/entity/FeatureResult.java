@@ -1,9 +1,20 @@
 package com.example.data.entity;
 
 import androidx.room.Entity;
+import androidx.room.ForeignKey;
+import androidx.room.Index;
 import androidx.room.PrimaryKey;
 
-@Entity(tableName = "FeatureResult")
+/**
+ * Deleted with its inspection. A per-type count with no inspection attached is not data, it is
+ * debris — and the report digest is computed over these rows, so an orphan could never be
+ * verified against anything.
+ */
+@Entity(tableName = "FeatureResult",
+        foreignKeys = @ForeignKey(entity = InspectionRecord.class,
+                parentColumns = "id", childColumns = "inspectionId",
+                onDelete = ForeignKey.CASCADE),
+        indices = {@Index("inspectionId")})
 public class FeatureResult {
     @PrimaryKey(autoGenerate = true)
     private long id;

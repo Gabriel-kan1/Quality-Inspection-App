@@ -1,6 +1,10 @@
 package com.example.data.entity;
 
+import androidx.annotation.Nullable;
+
 import androidx.room.Entity;
+import androidx.room.ForeignKey;
+import androidx.room.Index;
 import androidx.room.PrimaryKey;
 
 /**
@@ -11,7 +15,24 @@ import androidx.room.PrimaryKey;
  * labelled dataset that {@link com.example.ml.ThresholdTuner} fits per-part
  * thresholds against, and that a future off-device fine-tune would train on.
  */
-@Entity(tableName = "ClassificationEvent")
+@Entity(tableName = "ClassificationEvent",
+        // SET NULL, not CASCADE, and the difference matters. These rows are not part of the
+        // report — they are human-labelled crops, and ThresholdTuner reads them by partId and
+        // reviewed without ever looking at inspectionId. Cascading would delete labelled
+        // training data as a side effect of tidying up a report, quietly degrading the
+        // classifier for that part. The report tables cascade because they genuinely are the
+        // report; this one outlives it.
+        foreignKeys = @ForeignKey(entity = InspectionRecord.class,
+                parentColumns = "id", childColumns = "inspectionId",
+                onDelete = ForeignKey.SET_NULL),
+        indices = {
+                @Index("inspectionId"),
+                // The learning loop's hot path, over the table that grows fastest: one row per
+                // detection, up to 300 per inspection. Covers getReviewedForPart,
+                // getRecentReviewedForPart including its ORDER BY, getUnreviewedCropPaths,
+                // countReviewedForPart and deleteStaleForPart.
+                @Index({"partId", "reviewed", "timestamp"})
+        })
 public class ClassificationEvent {
 
     /** Set on {@link #reviewSource} — how this event came to be reviewed by a human. */
@@ -27,8 +48,20 @@ public class ClassificationEvent {
     @PrimaryKey(autoGenerate = true)
     private long id;
     private String partId;
-    /** Inspection this belonged to, or -1 if the operator never saved the report. */
-    private long inspectionId = -1;
+    /**
+     * Inspection this belonged to, or null when it belongs to none.
+     *
+     * <p>Events are logged during the pipeline, before any inspection row exists, and are
+     * attached later by {@code ClassificationEventDao.assignInspection} — so "not attached"
+     * is a normal, permanent state for an event whose report the operator never saved.
+     *
+     * <p>This was a {@code long} defaulting to -1. A sentinel cannot survive the foreign key
+     * above, because no InspectionRecord has that id, and it should not have to: SQL already
+     * has a way to say "no parent". Boxing is what makes the column nullable without needing a
+     * SQL default, the same trade {@code SlotResult.offsetPct} makes.
+     */
+    @Nullable
+    private Long inspectionId;
     private long timestamp;
     /** Path to the persisted crop PNG, or null if it couldn't be written. */
     private String cropPath;
@@ -72,8 +105,9 @@ public class ClassificationEvent {
     public String getPartId() { return partId; }
     public void setPartId(String partId) { this.partId = partId; }
 
-    public long getInspectionId() { return inspectionId; }
-    public void setInspectionId(long inspectionId) { this.inspectionId = inspectionId; }
+    @Nullable
+    public Long getInspectionId() { return inspectionId; }
+    public void setInspectionId(@Nullable Long inspectionId) { this.inspectionId = inspectionId; }
 
     public long getTimestamp() { return timestamp; }
     public void setTimestamp(long timestamp) { this.timestamp = timestamp; }

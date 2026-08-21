@@ -1,6 +1,8 @@
 package com.example.data.entity;
 
 import androidx.room.Entity;
+import androidx.room.ForeignKey;
+import androidx.room.Index;
 import androidx.room.PrimaryKey;
 
 /**
@@ -13,7 +15,11 @@ import androidx.room.PrimaryKey;
  *
  * Only critical-severity types get rows here — see {@code FeatureLocalisation}.
  */
-@Entity(tableName = "SlotResult")
+@Entity(tableName = "SlotResult",
+        foreignKeys = @ForeignKey(entity = InspectionRecord.class,
+                parentColumns = "id", childColumns = "inspectionId",
+                onDelete = ForeignKey.CASCADE),
+        indices = {@Index("inspectionId")})
 public class SlotResult {
     @PrimaryKey(autoGenerate = true)
     private long id;

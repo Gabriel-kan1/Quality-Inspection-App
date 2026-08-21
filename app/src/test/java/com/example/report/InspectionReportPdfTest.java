@@ -1,6 +1,7 @@
 package com.example.report;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 
 import android.graphics.Bitmap;
@@ -8,10 +9,16 @@ import android.graphics.Canvas;
 import android.graphics.Color;
 
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 
 import com.example.data.entity.FeatureResult;
 import com.example.data.entity.InspectionRecord;
 import com.example.data.entity.SlotResult;
+import com.google.zxing.BinaryBitmap;
+import com.google.zxing.MultiFormatReader;
+import com.google.zxing.NotFoundException;
+import com.google.zxing.RGBLuminanceSource;
+import com.google.zxing.common.HybridBinarizer;
 
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -40,14 +47,32 @@ public class InspectionReportPdfTest {
     /** Renders each page to a bitmap so the test can look at what was actually drawn. */
     private static final class BitmapSink implements PageSink {
         final List<Bitmap> pages = new ArrayList<>();
+        /**
+         * Pixels per point. One is enough to see where rows broke; the QR test needs more,
+         * because a 90pt symbol rendered at 72dpi has fewer than three pixels per module and
+         * would be testing the emulation rather than the symbol. Four puts it at 288dpi, which
+         * is the neighbourhood a report actually gets printed at.
+         */
+        final int scale;
+
+        BitmapSink() {
+            this(1);
+        }
+
+        BitmapSink(int scale) {
+            this.scale = scale;
+        }
 
         @NonNull
         @Override
         public Canvas beginPage(int pageNumber, int widthPt, int heightPt) {
-            Bitmap bitmap = Bitmap.createBitmap(widthPt, heightPt, Bitmap.Config.ARGB_8888);
+            Bitmap bitmap = Bitmap.createBitmap(widthPt * scale, heightPt * scale,
+                    Bitmap.Config.ARGB_8888);
             bitmap.eraseColor(Color.WHITE);
             pages.add(bitmap);
-            return new Canvas(bitmap);
+            Canvas canvas = new Canvas(bitmap);
+            canvas.scale(scale, scale);
+            return canvas;
         }
 
         @Override public void finishPage() { }
@@ -100,12 +125,29 @@ public class InspectionReportPdfTest {
         return s;
     }
 
+    /** A record carrying the identity and seal that {@code ResultsFragment} now files. */
+    private static InspectionRecord sealedRecord() {
+        InspectionRecord r = record();
+        r.setUuid("3f2504e0-4f89-41d3-9a0c-0305e82c3301");
+        r.setOperator("SHIFT-A");
+        r.setDigest("9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08");
+        return r;
+    }
+
     private static BitmapSink render(List<FeatureResult> features,
                                      List<SlotResult> slots,
                                      List<AdvisoryNotes.Note> notes) {
-        BitmapSink sink = new BitmapSink();
+        return render(record(), features, slots, notes, 1);
+    }
+
+    private static BitmapSink render(InspectionRecord record,
+                                     List<FeatureResult> features,
+                                     List<SlotResult> slots,
+                                     List<AdvisoryNotes.Note> notes,
+                                     int scale) {
+        BitmapSink sink = new BitmapSink(scale);
         PdfReportWriter w = new PdfReportWriter(sink);
-        InspectionReportPdf.compose(w, record(), features, slots, notes);
+        InspectionReportPdf.compose(w, record, features, slots, notes);
         return sink;
     }
 
@@ -214,5 +256,75 @@ public class InspectionReportPdfTest {
 
         assertTrue(sink.pages.size() >= 1);
         assertTrue(sink.inkedPixels(sink.pages.size() - 1) > 200);
+    }
+
+    // ── Traceability block ──────────────────────────────────────────────────
+
+    /**
+     * The end-to-end one: the QR has to survive being drawn into the report at its printed
+     * size and read back as the pointer that went in. A code on a page that no scanner can
+     * resolve is worse than no code, because it looks like traceability.
+     */
+    @Test
+    public void printedQrDecodesBackToTheRecordItNames() throws Exception {
+        InspectionRecord record = sealedRecord();
+        BitmapSink sink = render(record, null, null, null, 4);
+
+        String scanned = readQrFromPage(sink.pages.get(sink.pages.size() - 1));
+        assertNotNull("no QR was found on the report page", scanned);
+
+        ReportCode.Pointer pointer = ReportCode.decode(scanned);
+        assertNotNull("the QR held something that was not one of ours", pointer);
+        assertEquals(record.getUuid(), pointer.uuid);
+        assertEquals("FAIL", pointer.verdictText());
+        assertTrue("the printed digest prefix should match the record", pointer.matches(record));
+    }
+
+    /**
+     * Records filed before sealing existed have no uuid, so there is nothing to point at. The
+     * report still has to come out — this is the whole back catalogue on an upgraded device.
+     */
+    @Test
+    public void laysOutAReportForAnUnsealedLegacyRecord() {
+        BitmapSink sink = render(record(), null, null, null, 1);
+
+        assertEquals(1, sink.pages.size());
+        assertTrue("the report should still be drawn without a code", sink.inkedPixels(0) > 200);
+    }
+
+    /**
+     * The QR is the last thing on the page, so a report already near the bottom is exactly
+     * where a missing page break would show up — as a symbol running off the paper.
+     */
+    @Test
+    public void breaksThePageRatherThanRunningTheQrOffTheBottom() {
+        List<SlotResult> many = new ArrayList<>();
+        for (int i = 1; i <= 120; i++) {
+            many.add(slot(i, "bolt_head", "bolt_head", "PRESENT"));
+        }
+
+        BitmapSink sink = render(sealedRecord(), null, many, null, 1);
+        int last = sink.pages.size() - 1;
+
+        assertTrue("nothing was drawn on the final page", sink.inkedPixels(last) > 200);
+        // A4 is 842pt tall with a 40pt margin. Anything inked below that is off the paper.
+        assertTrue("content reached " + sink.lowestInkedRow(last) + "pt, past the bottom margin",
+                sink.lowestInkedRow(last) <= 842 - 40 + 1);
+    }
+
+    @Nullable
+    private static String readQrFromPage(Bitmap page) {
+        int width = page.getWidth();
+        int height = page.getHeight();
+        int[] pixels = new int[width * height];
+        page.getPixels(pixels, 0, width, 0, 0, width, height);
+        try {
+            // No PURE_BARCODE hint: the symbol is a small part of a busy page, which is the
+            // situation a real scanner faces and the one worth proving works.
+            return new MultiFormatReader().decode(new BinaryBitmap(new HybridBinarizer(
+                    new RGBLuminanceSource(width, height, pixels)))).getText();
+        } catch (NotFoundException e) {
+            return null;
+        }
     }
 }

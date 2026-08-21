@@ -74,7 +74,7 @@ public interface ClassificationEventDao {
     @Query("SELECT * FROM ClassificationEvent WHERE reviewed = 1 ORDER BY timestamp ASC")
     List<ClassificationEvent> getAllReviewed();
 
-    /** Attaches orphan events to the inspection once the operator saves the report. */
+    /** Attaches unassigned events to the inspection once the operator saves the report. */
     @Query("UPDATE ClassificationEvent SET inspectionId = :inspectionId WHERE id IN (:ids)")
-    void assignInspection(long inspectionId, List<Long> ids);
+    void assignInspection(Long inspectionId, List<Long> ids);
 }
