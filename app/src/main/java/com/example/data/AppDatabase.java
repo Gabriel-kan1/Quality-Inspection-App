@@ -11,10 +11,14 @@ import androidx.sqlite.db.SupportSQLiteDatabase;
 
 import com.example.data.dao.ClassificationEventDao;
 import com.example.data.dao.InspectionDao;
+import com.example.data.dao.PartProfileDao;
+import com.example.data.dao.ProductDao;
 import com.example.data.dao.ReferenceProfileDao;
 import com.example.data.entity.ClassificationEvent;
 import com.example.data.entity.FeatureResult;
 import com.example.data.entity.InspectionRecord;
+import com.example.data.entity.PartProfile;
+import com.example.data.entity.Product;
 import com.example.data.entity.ReferenceProfile;
 import com.example.data.entity.SlotResult;
 import com.example.ml.PartFiles;
@@ -22,13 +26,28 @@ import com.example.ml.PartFiles;
 import java.util.UUID;
 
 @Database(entities = {InspectionRecord.class, FeatureResult.class, ReferenceProfile.class,
-        ClassificationEvent.class, SlotResult.class}, version = 11, exportSchema = false)
+        ClassificationEvent.class, SlotResult.class, Product.class, PartProfile.class},
+        version = 12, exportSchema = false)
 public abstract class AppDatabase extends RoomDatabase {
     private static volatile AppDatabase INSTANCE;
+
+    /**
+     * Duplicated from {@code Product.DEFAULT_NAME} on purpose: a migration has to keep writing
+     * the value it wrote on the day it shipped. If the constant is later renamed, every device
+     * that already ran this migration would still hold the old name, and a migration reading
+     * the new one would create a second, empty default product beside it.
+     */
+    private static final String DEFAULT_PRODUCT_NAME = "Uncategorised";
+
+    /** Likewise pinned: the preset ids as they were when the registry was introduced. */
+    private static final String[] SEED_PART_IDS =
+            {"CHASSIS-8821-B", "PART-CHASSIS-A03", "ENGINE-COV-X42"};
 
     public abstract InspectionDao inspectionDao();
     public abstract ReferenceProfileDao referenceProfileDao();
     public abstract ClassificationEventDao classificationEventDao();
+    public abstract ProductDao productDao();
+    public abstract PartProfileDao partProfileDao();
 
     /**
      * Adds ClassificationEvent.encoderId so ThresholdTuner can tell which embedding space
@@ -376,13 +395,84 @@ public abstract class AppDatabase extends RoomDatabase {
     };
 
     /**
+     * Introduces products, and the part registry that hangs off them.
+     *
+     * <p>Until now the part list was assembled at render time from whatever
+     * {@code ReferenceProfile} rows happened to exist, plus three hardcoded preset ids. That
+     * makes a part something that only exists once it has a photo, which is backwards: an
+     * operator wants to register the part first and photograph it second, and wants to see the
+     * ones still waiting for a reference.
+     *
+     * <p>Everything that existed before lands in one product, so nothing disappears from the
+     * list on upgrade. The presets are seeded here rather than left hardcoded in the fragment —
+     * once parts are rows the operator can rename and regroup, a list half from the database
+     * and half from a constant would be half editable.
+     *
+     * <p>displayName is left null for every backfilled row. Null means "no label set" and the
+     * list falls back to the id, which is exactly what was on screen before this ran; writing
+     * the id into the label as well would make an unrenamed part indistinguishable from one
+     * deliberately renamed to match its id.
+     */
+    static final Migration MIGRATION_11_12 = new Migration(11, 12) {
+        @Override
+        public void migrate(@NonNull SupportSQLiteDatabase db) {
+            db.execSQL("CREATE TABLE IF NOT EXISTS Product ("
+                    + "id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,"
+                    + "name TEXT,"
+                    + "createdAt INTEGER NOT NULL)");
+            db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_Product_name ON Product (name)");
+
+            db.execSQL("CREATE TABLE IF NOT EXISTS PartProfile ("
+                    + "id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,"
+                    + "productId INTEGER NOT NULL,"
+                    + "partId TEXT,"
+                    + "displayName TEXT,"
+                    + "createdAt INTEGER NOT NULL,"
+                    + "FOREIGN KEY(productId) REFERENCES Product(id)"
+                    + " ON UPDATE NO ACTION ON DELETE CASCADE)");
+            db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_PartProfile_partId"
+                    + " ON PartProfile (partId)");
+            db.execSQL("CREATE INDEX IF NOT EXISTS index_PartProfile_productId"
+                    + " ON PartProfile (productId)");
+
+            long now = System.currentTimeMillis();
+            db.execSQL("INSERT INTO Product (name, createdAt) VALUES (?, ?)",
+                    new Object[]{DEFAULT_PRODUCT_NAME, now});
+
+            long productId;
+            try (Cursor c = db.query("SELECT id FROM Product WHERE name = ?",
+                    new Object[]{DEFAULT_PRODUCT_NAME})) {
+                if (!c.moveToFirst()) return;
+                productId = c.getLong(0);
+            }
+
+            // Ordered oldest first so the registry keeps the order the list already showed.
+            try (Cursor c = db.query("SELECT DISTINCT partType FROM ReferenceProfile"
+                    + " WHERE partType IS NOT NULL AND partType != '' ORDER BY createdAt ASC")) {
+                while (c.moveToNext()) {
+                    db.execSQL("INSERT OR IGNORE INTO PartProfile"
+                                    + " (productId, partId, displayName, createdAt) VALUES (?, ?, NULL, ?)",
+                            new Object[]{productId, c.getString(0), now});
+                }
+            }
+
+            for (String preset : SEED_PART_IDS) {
+                db.execSQL("INSERT OR IGNORE INTO PartProfile"
+                                + " (productId, partId, displayName, createdAt) VALUES (?, ?, NULL, ?)",
+                        new Object[]{productId, preset, now});
+            }
+        }
+    };
+
+    /**
      * Every migration, in one place so that opening the database in a test goes through exactly
      * the list a device does. A test that hand-copied this would keep passing after someone
      * added a migration and forgot it, which is the case worth catching.
      */
     static final Migration[] MIGRATIONS = {
             MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7,
-            MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11
+            MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11,
+            MIGRATION_11_12
     };
 
     public static AppDatabase getInstance(final Context context) {

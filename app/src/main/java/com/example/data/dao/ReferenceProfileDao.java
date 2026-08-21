@@ -27,4 +27,14 @@ public interface ReferenceProfileDao {
 
     @Query("SELECT * FROM ReferenceProfile ORDER BY createdAt DESC")
     List<ReferenceProfile> getAllProfiles();
+
+    /**
+     * Drops the reference photo for a part.
+     *
+     * <p>Needed when a part is removed from the registry: the part list adopts any part that
+     * has a reference but no registry row, so leaving this behind would make a deleted part
+     * reappear on the next refresh.
+     */
+    @Query("DELETE FROM ReferenceProfile WHERE partType = :partType")
+    void deleteByPartType(String partType);
 }

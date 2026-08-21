@@ -63,49 +63,37 @@
             android:orientation="vertical"
             android:padding="20dp">
 
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="MANUAL IDENTIFIER INPUT"
-                android:textColor="@color/blue_primary"
-                android:textSize="11sp"
-                android:textStyle="bold"
-                android:letterSpacing="0.1" />
-
-            <!-- Elegant Manual Input EditText Field -->
-            <com.google.android.material.textfield.TextInputLayout
-                android:id="@+id/input_part_container"
-                style="@style/Widget.MaterialComponents.TextInputLayout.FilledBox"
+            <!-- Header row: the section title with the "add a product" affordance beside it,
+                 rather than at the bottom of a list that scrolls. -->
+            <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="12dp"
-                android:hint="Chassis ID (e.g. CHASSIS-8821-B)"
-                app:boxBackgroundColor="#15FFFFFF"
-                app:boxStrokeColor="@color/blue_primary"
-                app:hintTextColor="@color/blue_primary"
-                app:placeholderText="Enter part identifier...">
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
 
-                <com.google.android.material.textfield.TextInputEditText
-                    android:id="@+id/et_part_id"
-                    android:layout_width="match_parent"
+                <TextView
+                    android:layout_width="0dp"
                     android:layout_height="wrap_content"
-                    android:inputType="textCapCharacters"
-                    android:singleLine="true"
-                    android:text="CHASSIS-8821-B"
-                    android:textColor="@color/white"
-                    android:textSize="16sp"
-                    android:textStyle="bold" />
-            </com.google.android.material.textfield.TextInputLayout>
+                    android:layout_weight="1"
+                    android:text="PRODUCTS"
+                    android:textColor="@color/gray_text_secondary"
+                    android:textSize="11sp"
+                    android:textStyle="bold"
+                    android:letterSpacing="0.1" />
 
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="28dp"
-                android:text="PART PROFILES"
-                android:textColor="@color/gray_text_secondary"
-                android:textSize="11sp"
-                android:textStyle="bold"
-                android:letterSpacing="0.1" />
+                <Button
+                    android:id="@+id/btn_add_product"
+                    style="@style/Widget.Material3.Button.TextButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:minWidth="0dp"
+                    android:paddingStart="8dp"
+                    android:paddingEnd="8dp"
+                    android:text="+ ADD PRODUCT"
+                    android:textColor="@color/blue_primary"
+                    android:textSize="12sp"
+                    android:textStyle="bold" />
+            </LinearLayout>
 
             <TextView
                 android:id="@+id/tv_profiles_subtitle"
