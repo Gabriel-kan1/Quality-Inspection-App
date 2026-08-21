@@ -298,9 +298,17 @@ public class ReportFragment extends Fragment {
             } else if ("WRONG_TYPE".equals(s.getStatus())) {
                 tvStatus.setText("WRONG:\n" + s.getFoundType());
                 tvStatus.setTextColor(ContextCompat.getColor(requireContext(), R.color.orange_warn));
-            } else {
+            } else if ("OUT_OF_FRAME".equals(s.getStatus())) {
+                tvStatus.setText("NOT IN\nFRAME");
+                tvStatus.setTextColor(ContextCompat.getColor(requireContext(), R.color.orange_warn));
+            } else if ("PRESENT".equals(s.getStatus())) {
                 tvStatus.setText("PRESENT");
                 tvStatus.setTextColor(ContextCompat.getColor(requireContext(), R.color.green_pass));
+            } else {
+                // Never render an unrecognised status as a pass: the row would assert a
+                // verified position for a check this build does not know how to read.
+                tvStatus.setText(s.getStatus());
+                tvStatus.setTextColor(ContextCompat.getColor(requireContext(), R.color.gray_text_secondary));
             }
 
             row.addView(tvSlot);

@@ -748,6 +748,86 @@ public class FeatureLocalisationTest {
         assertTrue(result.findings.isEmpty());
     }
 
+    /**
+     * A position the photo does not cover is unverifiable, not missing.
+     *
+     * The operator shooting tighter than the reference is the ordinary case, not an
+     * error: the reference for a real part carried six fasteners, four of them in one
+     * cluster, and a capture framed on that cluster left the other two off-image. They
+     * found nothing nearby, were reported MISSING, and a positional defect fails the
+     * part — so a photograph of correct hardware failed it. The frame the operator chose
+     * is not evidence about the hardware they did not photograph.
+     *
+     * The shot here is scaled 1.15x and shifted down, which pushes slot 3 (the lowest)
+     * past the bottom edge while the other four stay in frame and carry the alignment.
+     */
+    @Test
+    public void aPositionOutsideThePhotoIsNotReportedMissing() {
+        FeatureLayout layout = referenceLayout();
+        List<RectF> rects = new ArrayList<>();
+        List<String> types = new ArrayList<>();
+        for (FeatureLayout.Slot s : layout.slots()) {
+            if (s.id == 3) continue;              // off the bottom edge, so never photographed
+            rects.add(shot(s, 0, 1.15, 0, 0.05));
+            types.add(s.type);
+        }
+
+        FeatureLocalisation.Result result =
+                FeatureLocalisation.localise(layout, rects, types, null);
+
+        assertTrue("four located slots still register", result.aligned);
+        FeatureLocalisation.SlotFinding off = findingFor(result, 3);
+        assertNotNull(off);
+        assertEquals(FeatureLocalisation.Status.OUT_OF_FRAME, off.status);
+        assertFalse("a slot off the edge has no drawable projection", off.hasProjection());
+        assertEquals(0, result.countWithStatus(FeatureLocalisation.Status.MISSING));
+        assertFalse("framing is not a defect in the part",
+                result.hasPositionalDefect());
+    }
+
+    /**
+     * ...but it is still reported. Dropping the row would turn a false FAIL into a false
+     * PASS, which is the worse trade: the operator would read four verified positions and
+     * no complaint, with nothing saying the fifth was never looked at.
+     */
+    @Test
+    public void anUnverifiedPositionIsStillDeclared() {
+        FeatureLayout layout = referenceLayout();
+        List<RectF> rects = new ArrayList<>();
+        List<String> types = new ArrayList<>();
+        for (FeatureLayout.Slot s : layout.slots()) {
+            if (s.id == 3) continue;
+            rects.add(shot(s, 0, 1.15, 0, 0.05));
+            types.add(s.type);
+        }
+
+        FeatureLocalisation.Result result =
+                FeatureLocalisation.localise(layout, rects, types, null);
+
+        assertTrue(result.hasUnverifiedPositions());
+        assertEquals(1, result.countWithStatus(FeatureLocalisation.Status.OUT_OF_FRAME));
+        assertTrue("the summary must admit the check was partial",
+                result.summary().contains("outside the photo"));
+    }
+
+    /**
+     * The regression guard for the above: an empty position the photo <em>does</em> cover is
+     * still MISSING and still fails the part. The fix must not have made absence unreportable.
+     */
+    @Test
+    public void anEmptyPositionInsideThePhotoIsStillMissing() {
+        FeatureLayout layout = referenceLayout();
+        Detections d = shotOf(layout, java.util.Collections.singleton(4), null);
+
+        FeatureLocalisation.Result result =
+                FeatureLocalisation.localise(layout, d.rects, d.types, null);
+
+        assertEquals(FeatureLocalisation.Status.MISSING, findingFor(result, 4).status);
+        assertEquals(0, result.countWithStatus(FeatureLocalisation.Status.OUT_OF_FRAME));
+        assertFalse(result.hasUnverifiedPositions());
+        assertTrue(result.hasPositionalDefect());
+    }
+
     /** A projection outside the frame is not drawable, so the overlay must not be told it is. */
     @Test
     public void aPositionInsideTheFrameIsDrawable() {

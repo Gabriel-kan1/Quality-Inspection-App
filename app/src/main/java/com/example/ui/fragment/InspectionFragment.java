@@ -485,8 +485,10 @@ public class InspectionFragment extends Fragment {
             frame = image.toBitmap();
             upright = rotateToUpright(frame, image.getImageInfo().getRotationDegrees());
 
-            AlignmentGate.Reading reading = gate.evaluate(upright);
+            // Read before evaluate: it times the motion rate, which must not include
+            // the encoder passes evaluate is about to spend.
             long now = SystemClock.elapsedRealtime();
+            AlignmentGate.Reading reading = gate.evaluate(upright, now);
             float progress = holdTimer.update(reading.inTolerance, now);
             boolean passed = holdTimer.isSatisfied();
 
@@ -529,12 +531,10 @@ public class InspectionFragment extends Fragment {
                     String.format(Locale.US, "HOLD STILL — %.1fs", remaining / 1000f),
                     reading.debugLine());
         } else {
-            // Carrying the match strength on the red light gives the operator something to
-            // maximise; without directional hints it is the only feedback that framing is
-            // improving before the light actually flips.
-            setLight(TrafficLightView.State.RED, 0f,
-                    reading.hint + "  ·  " + reading.matchPercent() + "%",
-                    reading.debugLine());
+            // The hint already carries the figure belonging to its own fault. Appending the
+            // area score to every hint put "78% match" beside a rejection for being too
+            // close, which reads as a contradiction rather than as advice.
+            setLight(TrafficLightView.State.RED, 0f, reading.hint, reading.debugLine());
         }
     }
 
@@ -666,7 +666,7 @@ public class InspectionFragment extends Fragment {
                 // A still has no predecessor, so the motion estimate must not carry over
                 // from whatever was scored before it.
                 gate.resetMotion();
-                reading = gate.evaluate(bitmap);
+                reading = gate.evaluate(bitmap, SystemClock.elapsedRealtime());
             } catch (Exception e) {
                 Log.e(TAG, "Still scoring failed", e);
                 return;
@@ -677,23 +677,20 @@ public class InspectionFragment extends Fragment {
             final AlignmentGate.Reading result = reading;
             mainHandler.post(() -> {
                 if (!isAdded() || binding == null || mode != Mode.STILL) return;
-                String strength = result.matchPercent() + "% match";
                 if (result.inTolerance) {
                     setLight(TrafficLightView.State.GREEN, 1f,
-                            "SAME AREA — " + strength, result.debugLine());
-                    binding.tvOperatorTip.setText(
-                            "Saved image shows the reference area (" + strength + "). Ready to analyze.");
+                            "SAME AREA, FRAMED LIKE THE REFERENCE", result.debugLine());
+                    binding.tvOperatorTip.setText("Saved image matches the reference area and"
+                            + " framing (area " + result.matchPercent() + "%). Ready to analyze.");
                 } else {
-                    // The hint distinguishes the wrong area from the right area shot at the
-                    // wrong distance; a still that is merely too far is not "not the area".
-                    setLight(TrafficLightView.State.RED, 0f,
-                            result.hint + " — " + strength, result.debugLine());
-                    binding.tvOperatorTip.setText(
-                            "Saved image isn't framed like the reference (" + strength
-                                    + "). You can still analyze it, but detections may be unreliable.");
+                    // The hint names the one thing that is wrong and by how much, so it is
+                    // the whole message here too rather than a prefix to a second number.
+                    setLight(TrafficLightView.State.RED, 0f, result.hint, result.debugLine());
+                    binding.tvOperatorTip.setText(result.hint
+                            + ". You can still analyze it, but detections may be unreliable.");
                     // Carried to the results screen: analysis is still allowed here, so the
                     // warning has to travel with the image rather than stopping at this screen.
-                    stillGateWarning = result.hint + " (" + strength + ")";
+                    stillGateWarning = result.hint;
                 }
             });
         });

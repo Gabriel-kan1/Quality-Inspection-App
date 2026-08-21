@@ -7,9 +7,14 @@ import static org.junit.Assert.assertTrue;
 import org.junit.Test;
 
 /**
- * Pins the gate's decision rule against the similarities actually measured over the
- * bundled chassis assets, so a future threshold change cannot silently start rejecting
- * the same-area case the gate exists to accept.
+ * Pins the gate's decision rule: which of the four things that can be wrong with a frame it
+ * reports, in which order, and what it tells the operator to do about it.
+ *
+ * <p>Area similarities are the ones measured over the bundled chassis assets with
+ * {@code screws.jpg} as the reference. Framing figures are supplied directly as
+ * {@link TemplateMatcher.Match} values so a test states only what it is about — the
+ * matcher's own accuracy is a separate question, measured in {@code python/} and recorded in
+ * its class notes.
  */
 public class AlignmentGateTest {
 
@@ -17,126 +22,114 @@ public class AlignmentGateTest {
     private static final float SCREWS_TEST = 0.747f;   // same area, different hardware
     private static final float REFERENCE = 0.739f;     // same area
     private static final float DEFECTED = 0.732f;      // same area
-    private static final float SCREWS_THREE = 0.659f;  // same area
-    private static final float SCREWS_FLASH = 0.603f;  // same area, flash
-    private static final float SCREWS_TWO = 0.578f;    // same area, further back
     private static final float ZERO = 0.510f;          // different area — closest false positive
-    private static final float CORNER = 0.309f;        // different area
     private static final float WHOLE = 0.218f;         // different area
-
-    // Wrong-distance shots of the SAME area, measured against stud1.jpg: similarity alone
-    // clears the threshold, and only the scale probe separates them. Gains are
-    // (crop-the-frame, crop-the-reference).
-    private static final float SCREWS_TWO_VS_STUD1 = 0.717f;   // ~2.5x too far
-    private static final float SCREWS_TWO_FAR_GAIN = 0.168f;
-    // screws_three against stud1 (0.676, gain +0.104) used to sit here as the second
-    // too-far exemplar. It stopped being one when MATCH_THRESHOLD moved from 0.67 to 0.70:
-    // below the threshold the frame is WEAK_MATCH and the probe never runs, so the pair no
-    // longer demonstrates "similarity alone would have accepted this". screws2 against
-    // stud3 is the same too-far case at a similarity that does clear 0.70.
-    private static final float SCREWS2_VS_STUD3 = 0.714f;      // ~2.5x too far
-    private static final float SCREWS2_FAR_GAIN = 0.158f;
-    private static final float SCREWS2_CLOSE_GAIN = -0.070f;
-    private static final float STUD1_VS_SCREWS_TWO = 0.717f;   // the same pair, reference swapped
-    private static final float STUD1_CLOSE_GAIN = 0.168f;
-
-    // Correctly framed frames: cropping either side makes the match worse, so both gains
-    // are negative. p90 over the labelled pairs is +0.012, well inside the tolerance.
-    private static final float STEADY_FAR_GAIN = -0.070f;
-    private static final float STEADY_CLOSE_GAIN = -0.087f;
 
     private static final float STEADY = 1.5f;
     private static final float MOVING = 20f;
 
+    /** A frame framed the way the reference was: right size, centred, solid correlation. */
+    private static TemplateMatcher.Match wellFramed() {
+        return new TemplateMatcher.Match(0.45f, 1.00f, 0f, 0f);
+    }
+
+    private static TemplateMatcher.Match framed(float scale, float offX, float offY) {
+        return new TemplateMatcher.Match(0.45f, scale, offX, offY);
+    }
+
+    private static AlignmentGate.Reading judge(float similarity, TemplateMatcher.Match m, float motion) {
+        return AlignmentGate.classify(similarity, m, motion, -1L);
+    }
+
     @Test
-    public void acceptsTheSameAreaWithDifferentHardware() {
-        // The case this gate was rebuilt for: same four holes, swapped and missing fasteners.
-        AlignmentGate.Reading r = AlignmentGate.classify(SCREWS_TEST, STEADY);
-        assertTrue("screws_test must be accepted as the same area", r.inTolerance);
+    public void acceptsTheSameAreaCorrectlyFramed() {
+        // The case the gate exists for: same four holes, swapped and missing fasteners,
+        // photographed the way the reference was.
+        AlignmentGate.Reading r = judge(SCREWS_TEST, wellFramed(), STEADY);
+        assertTrue(r.inTolerance);
         assertEquals(AlignmentGate.Fault.NONE, r.fault);
     }
 
     @Test
-    public void acceptsEverySameAreaShotThatIsCloseEnoughToInspect() {
-        // SCREWS_TWO and the other wide shots are deliberately absent: they are the same
-        // area photographed from too far back, which the scale probe now rejects on
-        // purpose. See rejectsTheSameAreaShotFromTooFarAway().
-        float[] sameArea = {SCREWS_TEST, REFERENCE, DEFECTED};
-        for (float similarity : sameArea) {
+    public void acceptsEverySameAreaShotThatIsFramedLikeTheReference() {
+        for (float similarity : new float[]{SCREWS_TEST, REFERENCE, DEFECTED}) {
             assertTrue("similarity " + similarity + " should pass",
-                    AlignmentGate.classify(similarity, STEADY_FAR_GAIN, STEADY_CLOSE_GAIN, STEADY)
-                            .inTolerance);
+                    judge(similarity, wellFramed(), STEADY).inTolerance);
         }
     }
 
+    /**
+     * The complaint this was rebuilt for.
+     *
+     * <p>{@code defected.jpg} is the reference's own fastener cluster shot from far closer,
+     * so it scores as the same area and passed the old gate at 78%. Two of the six expected
+     * fasteners were never in the photograph, and the inspection then reported them missing
+     * and failed a good part. The frame covering a fraction of the reference is exactly what
+     * the framing ratio measures.
+     */
     @Test
-    public void rejectsTheSameAreaShotFromTooFarAway() {
-        // The complaint this probe exists for: same hardware, twice the distance, and a
-        // similarity that clears the threshold on its own.
-        AlignmentGate.Reading r = AlignmentGate.classify(
-                SCREWS_TWO_VS_STUD1, SCREWS_TWO_FAR_GAIN, -0.103f, STEADY);
-        assertFalse("a shot from 2.5x the reference distance must not pass", r.inTolerance);
-        assertEquals(AlignmentGate.Fault.TOO_FAR, r.fault);
-
-        // A second reference, so the rejection is not a property of stud1 alone.
-        AlignmentGate.Reading other = AlignmentGate.classify(
-                SCREWS2_VS_STUD3, SCREWS2_FAR_GAIN, SCREWS2_CLOSE_GAIN, STEADY);
-        assertFalse(other.inTolerance);
-        assertEquals(AlignmentGate.Fault.TOO_FAR, other.fault);
+    public void rejectsAZoomedInShotOfTheReferenceArea() {
+        AlignmentGate.Reading r = judge(DEFECTED, framed(0.57f, 0f, 0f), STEADY);
+        assertFalse("a frame showing 57% of the reference must not pass", r.inTolerance);
+        assertEquals(AlignmentGate.Fault.TOO_CLOSE, r.fault);
+        assertTrue("the hint must say how far out it is, was: " + r.hint,
+                r.hint.contains("57%"));
     }
 
     @Test
-    public void rejectsTheSameAreaShotFromTooCloseIn() {
-        AlignmentGate.Reading r = AlignmentGate.classify(
-                STUD1_VS_SCREWS_TWO, -0.103f, STUD1_CLOSE_GAIN, STEADY);
+    public void rejectsAShotFromTooFarBack() {
+        AlignmentGate.Reading r = judge(SCREWS_TEST, framed(2.0f, 0f, 0f), STEADY);
         assertFalse(r.inTolerance);
+        assertEquals(AlignmentGate.Fault.TOO_FAR, r.fault);
+    }
+
+    @Test
+    public void aimIsReportedWithADirection() {
+        assertEquals(AlignmentGate.Fault.AIM_RIGHT,
+                judge(SCREWS_TEST, framed(1.0f, 0.30f, 0f), STEADY).fault);
+        assertEquals(AlignmentGate.Fault.AIM_LEFT,
+                judge(SCREWS_TEST, framed(1.0f, -0.30f, 0f), STEADY).fault);
+        assertEquals(AlignmentGate.Fault.AIM_DOWN,
+                judge(SCREWS_TEST, framed(1.0f, 0f, 0.30f), STEADY).fault);
+        assertEquals(AlignmentGate.Fault.AIM_UP,
+                judge(SCREWS_TEST, framed(1.0f, 0f, -0.30f), STEADY).fault);
+    }
+
+    @Test
+    public void theLargerAimErrorIsTheOneReported() {
+        // Only one instruction is given at a time, so it has to be the one that helps most.
+        assertEquals(AlignmentGate.Fault.AIM_UP,
+                judge(SCREWS_TEST, framed(1.0f, 0.14f, -0.30f), STEADY).fault);
+        assertEquals(AlignmentGate.Fault.AIM_RIGHT,
+                judge(SCREWS_TEST, framed(1.0f, 0.30f, -0.14f), STEADY).fault);
+    }
+
+    @Test
+    public void aSmallAimErrorIsTolerated() {
+        assertTrue(judge(SCREWS_TEST, framed(1.0f, 0.05f, -0.05f), STEADY).inTolerance);
+    }
+
+    @Test
+    public void distanceIsReportedBeforeAim() {
+        // Distance decides whether the part is even fully in shot; correcting aim first
+        // would walk the operator around a frame that can never cover it.
+        AlignmentGate.Reading r = judge(SCREWS_TEST, framed(0.5f, 0.40f, 0f), STEADY);
         assertEquals(AlignmentGate.Fault.TOO_CLOSE, r.fault);
     }
 
     @Test
-    public void distanceIsReportedBeforeSteadiness() {
+    public void framingIsReportedBeforeSteadiness() {
         // A phone held at the wrong distance is steady-wrong; "hold still" would strand
         // the operator there.
-        AlignmentGate.Reading r = AlignmentGate.classify(
-                SCREWS_TWO_VS_STUD1, SCREWS_TWO_FAR_GAIN, -0.103f, MOVING);
-        assertEquals(AlignmentGate.Fault.TOO_FAR, r.fault);
+        assertEquals(AlignmentGate.Fault.TOO_CLOSE,
+                judge(SCREWS_TEST, framed(0.5f, 0f, 0f), MOVING).fault);
+        assertEquals(AlignmentGate.Fault.AIM_RIGHT,
+                judge(SCREWS_TEST, framed(1.0f, 0.30f, 0f), MOVING).fault);
     }
 
     @Test
-    public void aFrameShortOfTheThresholdIsNotBlamedOnDistance() {
-        // Below the threshold the probe never runs, so its gains arrive as NaN and must
-        // not be read as "within tolerance".
-        AlignmentGate.Reading r = AlignmentGate.classify(WHOLE, Float.NaN, Float.NaN, STEADY);
-        assertFalse(r.inTolerance);
-        assertEquals(AlignmentGate.Fault.NO_MATCH, r.fault);
-    }
-
-    @Test
-    public void aWrongDistanceFrameScoresLowerThanItsRawSimilarity() {
-        // What the operator sees has to agree with the verdict: a frame rejected for
-        // distance cannot keep advertising a 72% match.
-        AlignmentGate.Reading r = AlignmentGate.classify(
-                SCREWS_TWO_VS_STUD1, SCREWS_TWO_FAR_GAIN, -0.103f, STEADY);
-        assertEquals(55, r.matchPercent());
-
-        // A correctly framed frame has negative gains and keeps its raw score.
-        AlignmentGate.Reading ok = AlignmentGate.classify(
-                SCREWS_TEST, STEADY_FAR_GAIN, STEADY_CLOSE_GAIN, STEADY);
-        assertEquals(75, ok.matchPercent());
-    }
-
-    @Test
-    public void rejectsDifferentAreasOfTheChassis() {
-        float[] differentArea = {ZERO, CORNER, WHOLE};
-        for (float similarity : differentArea) {
-            assertFalse("similarity " + similarity + " should fail",
-                    AlignmentGate.classify(similarity, STEADY).inTolerance);
-        }
-    }
-
-    @Test
-    public void aMatchingButMovingFrameDoesNotCountTowardTheHold() {
-        AlignmentGate.Reading r = AlignmentGate.classify(SCREWS_TEST, MOVING);
+    public void aMatchingWellFramedButMovingFrameDoesNotCountTowardTheHold() {
+        AlignmentGate.Reading r = judge(SCREWS_TEST, wellFramed(), MOVING);
         assertFalse(r.inTolerance);
         assertEquals(AlignmentGate.Fault.MOVING, r.fault);
     }
@@ -144,43 +137,106 @@ public class AlignmentGateTest {
     @Test
     public void theFirstFrameIsNotJudgedAsMoving() {
         // NaN motion means there was no previous frame to compare against.
-        assertTrue(AlignmentGate.classify(SCREWS_TEST, Float.NaN).inTolerance);
+        assertTrue(judge(SCREWS_TEST, wellFramed(), Float.NaN).inTolerance);
+    }
+
+    @Test
+    public void rejectsDifferentAreasOfTheChassis() {
+        // Framing is irrelevant when the frame is not the right area at all — and note the
+        // framing here is perfect, so nothing but the area test can be rejecting it.
+        for (float similarity : new float[]{ZERO, WHOLE}) {
+            assertFalse("similarity " + similarity + " should fail",
+                    judge(similarity, wellFramed(), STEADY).inTolerance);
+        }
     }
 
     @Test
     public void aNearMissIsDistinguishedFromLookingAtNothingRelevant() {
-        assertEquals(AlignmentGate.Fault.WEAK_MATCH, AlignmentGate.classify(ZERO, STEADY).fault);
-        assertEquals(AlignmentGate.Fault.NO_MATCH, AlignmentGate.classify(WHOLE, STEADY).fault);
+        assertEquals(AlignmentGate.Fault.WEAK_MATCH, judge(ZERO, null, STEADY).fault);
+        assertEquals(AlignmentGate.Fault.NO_MATCH, judge(WHOLE, null, STEADY).fault);
     }
 
     /**
-     * The tests above pin the decision rule; this one pins the threshold itself, because
-     * raising it makes them fail for reasons that read like arithmetic ("similarity 0.747
-     * should pass") rather than like the actual objection.
+     * The safety property of the rebuild: no framing measurement, no pass.
      *
-     * <p>The objection: over the 252 labelled pairs in python/scale_probe_study.py, with the
-     * scale probe on, 0.70 is the last threshold that costs no true accepts —
-     * 0.70 gives 5 false accepts and 0 false rejects; 0.74 gives 2 and 5; 0.80 gives 2 and 9.
-     * Scored against the RANSAC-verified pairs from python/pair_ground_truth.py, recall falls
-     * from 17/19 to 15/19 over the same move, and the pairs lost are proven same-area by
-     * several hundred inliers. Re-run both scripts before changing this.
+     * <p>The search can fail — OpenCV missing, a reference whose gradients could not be
+     * prepared, a correlation peak indistinguishable from noise. Treating that as "framing
+     * is probably fine" would let through exactly the capture the search exists to stop,
+     * silently, on the devices where it is least able to help.
      */
     @Test
-    public void theThresholdStaysWhereTheStudiesPutIt() {
-        // Just below 0.70 must fail and just above must pass; together these pin the value
-        // without reaching into the private constant.
-        assertFalse("threshold must not be looser than 0.70 — see python/scale_probe_study.py",
-                AlignmentGate.classify(0.699f, STEADY).inTolerance);
-        assertTrue("threshold must not be tighter than 0.70 — tightening it rejects same-area"
-                        + " pairs proven by hundreds of RANSAC inliers; see"
-                        + " python/pair_ground_truth.py",
-                AlignmentGate.classify(0.701f, STEADY).inTolerance);
+    public void anAreaMatchWithNoFramingMeasurementMustNotPass() {
+        AlignmentGate.Reading r = judge(SCREWS_TEST, null, STEADY);
+        assertFalse(r.inTolerance);
+        assertEquals(AlignmentGate.Fault.NO_FRAMING, r.fault);
+    }
+
+    @Test
+    public void aCorrelationPeakInTheNoiseIsNotAFramingMeasurement() {
+        AlignmentGate.Reading r = judge(SCREWS_TEST, new TemplateMatcher.Match(0.05f, 1.0f, 0f, 0f), STEADY);
+        assertFalse(r.inTolerance);
+        assertEquals(AlignmentGate.Fault.NO_FRAMING, r.fault);
+    }
+
+    /**
+     * Pins the area threshold, because raising it makes the tests above fail for reasons that
+     * read like arithmetic rather than like the actual objection.
+     *
+     * <p>Over the 252 labelled pairs in {@code python/scale_probe_study.py}, 0.70 is the last
+     * threshold that costs no true accepts. Scored against the RANSAC-verified pairs from
+     * {@code python/pair_ground_truth.py}, recall falls from 17/19 to 15/19 by 0.74, and the
+     * pairs lost are proven same-area by several hundred inliers. Re-run both before changing it.
+     */
+    @Test
+    public void theAreaThresholdStaysWhereTheStudiesPutIt() {
+        assertFalse("must not be looser than 0.70 — see python/scale_probe_study.py",
+                judge(0.699f, wellFramed(), STEADY).inTolerance);
+        assertTrue("must not be tighter than 0.70 — see python/pair_ground_truth.py",
+                judge(0.701f, wellFramed(), STEADY).inTolerance);
+    }
+
+    /**
+     * Each hint carries the figure that explains its own fault, and no other.
+     *
+     * <p>The screen used to append the area score to every rejection, so a frame turned away
+     * for covering 60% of the part was captioned "TOO CLOSE — MOVE BACK ... — 78% match".
+     * Both numbers were true and the pairing read as a contradiction: the operator is being
+     * told the match is good and that the frame is rejected, with nothing linking the number
+     * to the reason. The area score is what they climb toward the threshold, so it belongs on
+     * an area miss and is noise anywhere else.
+     */
+    @Test
+    public void aHintCarriesOnlyTheFigureThatExplainsItsOwnFault() {
+        String weak = judge(ZERO, null, STEADY).hint;
+        assertTrue("an area miss states the area score, was: " + weak, weak.contains("51%"));
+
+        String tooClose = judge(DEFECTED, framed(0.57f, 0f, 0f), STEADY).hint;
+        assertTrue("a framing fault states its own coverage", tooClose.contains("57%"));
+        assertFalse("and must not also advertise the area score, was: " + tooClose,
+                tooClose.contains("73%"));
+
+        String aim = judge(SCREWS_TEST, framed(1.0f, 0.30f, 0f), STEADY).hint;
+        assertTrue("an aim fault states how far off it is", aim.contains("30%"));
+        assertFalse("and not the area score, was: " + aim, aim.contains("75%"));
+
+        String moving = judge(SCREWS_TEST, wellFramed(), MOVING).hint;
+        assertFalse("steadiness needs no percentage at all, was: " + moving,
+                moving.contains("%"));
     }
 
     @Test
     public void matchPercentIsClampedToADisplayableRange() {
-        assertEquals(75, AlignmentGate.classify(0.747f, STEADY).matchPercent());
-        assertEquals(0, AlignmentGate.classify(-0.4f, STEADY).matchPercent());
-        assertEquals(100, AlignmentGate.classify(1.0f, STEADY).matchPercent());
+        assertEquals(75, judge(0.747f, wellFramed(), STEADY).matchPercent());
+        assertEquals(0, judge(-0.4f, null, STEADY).matchPercent());
+        assertEquals(100, judge(1.0f, wellFramed(), STEADY).matchPercent());
+    }
+
+    @Test
+    public void theTemplateScoreIsCarriedSeparatelyFromTheAreaScore() {
+        // Two different measurements answering two different questions; collapsing them into
+        // one number is what made the old gate unable to say which was wrong.
+        AlignmentGate.Reading r = judge(0.747f, new TemplateMatcher.Match(0.42f, 1.0f, 0f, 0f), STEADY);
+        assertEquals(75, r.matchPercent());
+        assertEquals(42, r.templatePercent());
     }
 }
