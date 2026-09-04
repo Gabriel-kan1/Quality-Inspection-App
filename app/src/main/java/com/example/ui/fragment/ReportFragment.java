@@ -30,6 +30,7 @@ import com.example.ml.PartFiles;
 import com.example.report.AdvisoryNotes;
 import com.example.report.InspectionExport;
 import com.example.report.InspectionReportPdf;
+import com.example.report.ReportCode;
 
 import java.io.File;
 import java.io.FileOutputStream;
@@ -46,6 +47,13 @@ import java.util.Locale;
 public class ReportFragment extends Fragment {
 
     private static final String TAG = "ReportFragment";
+
+    /**
+     * Pixels the on-screen QR is rasterised at. Rendered above the 132dp view size so the
+     * modules stay square when the ImageView scales it down — a blurred module edge is exactly
+     * what a decoder cannot resolve.
+     */
+    private static final int QR_ON_SCREEN_PX = 400;
 
     private FragmentReportBinding binding;
     private long inspectionId = -1;
@@ -125,6 +133,7 @@ public class ReportFragment extends Fragment {
                 if (record != null) {
                     binding.tvReportNum.setText("Report ID: QC-RECORD-" + record.getId());
                     binding.tvReportPartId.setText(record.getPartId());
+                    bindTraceability(record);
 
                     SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault());
                     String dateStr = sdf.format(new Date(record.getTimestamp()));
@@ -371,6 +380,42 @@ public class ReportFragment extends Fragment {
             row.addView(bar);
             row.addView(tvNote);
             binding.layoutReportWarningsContainer.addView(row);
+        }
+    }
+
+    /**
+     * Renders the record's identity, seal state and scannable code onto the screen.
+     *
+     * <p>The same pointer the PDF carries, shown where it can actually be reached: until this
+     * was here the only copy of the code lived inside an exported file, so scanning one meant
+     * exporting a PDF and opening it in a viewer first. On screen it can be read straight off
+     * one tablet by another, which is also the only way to exercise the scanner without a
+     * printer.
+     */
+    private void bindTraceability(InspectionRecord record) {
+        binding.tvReportIntegrity.setText(record.getDigest() != null
+                ? "Sealed. SHA-256 " + record.getDigest()
+                : "Not sealed. Filed before integrity sealing was added, so there is no digest"
+                        + " to check this against.");
+
+        if (record.getUuid() == null) {
+            // Pre-sealing records have no identity to point at, so there is nothing to draw.
+            binding.cardReportTraceability.setVisibility(View.GONE);
+            return;
+        }
+        binding.cardReportTraceability.setVisibility(View.VISIBLE);
+        binding.tvReportUuid.setText(record.getUuid());
+
+        try {
+            String payload = ReportCode.encode(record);
+            binding.tvReportCodePayload.setText(payload);
+            binding.ivReportQr.setImageBitmap(ReportCode.toQrBitmap(payload, QR_ON_SCREEN_PX));
+        } catch (Exception e) {
+            // The record and its seal are the information that matters; the code is a
+            // convenience on top. Losing the card entirely would hide both.
+            Log.w(TAG, "Could not render the report code", e);
+            binding.ivReportQr.setVisibility(View.GONE);
+            binding.tvReportCodePayload.setText("Code unavailable on this device.");
         }
     }
 

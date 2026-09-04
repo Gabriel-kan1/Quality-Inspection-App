@@ -66,7 +66,8 @@
             <!-- Highly responsive filter field -->
             <EditText
                 android:id="@+id/et_search"
-                android:layout_width="match_parent"
+                android:layout_width="0dp"
+                android:layout_weight="1"
                 android:layout_height="48dp"
                 android:layout_marginStart="8dp"
                 android:background="@null"
@@ -76,6 +77,20 @@
                 android:textColorHint="@color/gray_text_secondary"
                 android:textSize="14sp"
                 android:inputType="text" />
+
+            <!-- The other way into a report: typing the part ID finds every inspection of that
+                 part, scanning the code on a printout finds the one in your hand. -->
+            <TextView
+                android:id="@+id/btn_scan_report"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:paddingHorizontal="12dp"
+                android:paddingVertical="10dp"
+                android:text="SCAN"
+                android:textColor="@color/blue_primary"
+                android:textSize="14sp"
+                android:textStyle="bold"
+                android:contentDescription="Scan the QR code on a printed report" />
 
         </LinearLayout>
 

@@ -113,5 +113,23 @@
         <action
             android:id="@+id/action_history_to_report"
             app:destination="@id/navigation_report" />
+        <action
+            android:id="@+id/action_history_to_scan"
+            app:destination="@id/navigation_report_scan" />
+    </fragment>
+
+    <fragment
+        android:id="@+id/navigation_report_scan"
+        android:name="com.example.ui.fragment.ReportScanFragment"
+        android:label="Scan Report Code"
+        tools:layout="@layout/fragment_report_scan">
+        <!-- popUpTo the history list rather than leaving the scanner on the stack: backing out
+             of a report the scanner opened should return to the list, not to a live camera
+             that would immediately rescan the same code and bounce forward again. -->
+        <action
+            android:id="@+id/action_scan_to_report"
+            app:destination="@id/navigation_report"
+            app:popUpTo="@id/navigation_report_scan"
+            app:popUpToInclusive="true" />
     </fragment>
 </navigation>

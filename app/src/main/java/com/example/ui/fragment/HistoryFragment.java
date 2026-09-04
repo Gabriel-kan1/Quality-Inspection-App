@@ -51,6 +51,9 @@ public class HistoryFragment extends Fragment {
         adapter = new HistoryAdapter();
         binding.recyclerHistoryLogs.setAdapter(adapter);
 
+        binding.btnScanReport.setOnClickListener(v ->
+                Navigation.findNavController(v).navigate(R.id.action_history_to_scan));
+
         binding.etSearch.addTextChangedListener(new TextWatcher() {
             @Override
             public void beforeTextChanged(CharSequence s, int start, int count, int after) { }
