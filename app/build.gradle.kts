@@ -102,6 +102,10 @@ dependencies {
   // Camera JPEGs and gallery picks carry orientation in EXIF rather than in the pixels;
   // the encoder is not rotation invariant, so every disk load has to apply it.
   implementation(libs.androidx.exifinterface)
+  // QR generation for the traceability code on each report. ZXing core is pure Java,
+  // Apache-2.0, and encodes as well as decodes — ML Kit only decodes, and even its bundled
+  // variant would pull Play Services back into an app that deliberately removed it above.
+  implementation(libs.zxing.core)
   testImplementation(libs.androidx.compose.ui.test.junit4)
   testImplementation(libs.androidx.core)
   testImplementation(libs.androidx.junit)

@@ -617,6 +617,21 @@ public class ReferenceSetupFragment extends Fragment {
         nameInput.setHint("Name (e.g. Scratch)");
         nameInput.setTextColor(Color.WHITE);
         nameInput.setHintTextColor(Color.rgb(180, 180, 188));
+
+        // Enter finishes the name instead of opening a second line: this field holds one short
+        // label, and a stray newline would otherwise ride along into the type key.
+        nameInput.setSingleLine(true);
+        nameInput.setImeOptions(android.view.inputmethod.EditorInfo.IME_ACTION_DONE);
+        nameInput.setOnEditorActionListener((v, actionId, event) -> {
+            if (actionId != android.view.inputmethod.EditorInfo.IME_ACTION_DONE
+                    && actionId != android.view.inputmethod.EditorInfo.IME_NULL) return false;
+            v.clearFocus();
+            android.view.inputmethod.InputMethodManager imm =
+                    (android.view.inputmethod.InputMethodManager) requireContext()
+                            .getSystemService(android.content.Context.INPUT_METHOD_SERVICE);
+            if (imm != null) imm.hideSoftInputFromWindow(v.getWindowToken(), 0);
+            return true;
+        });
         root.addView(nameInput);
 
         android.widget.TextView heading = new android.widget.TextView(getContext());

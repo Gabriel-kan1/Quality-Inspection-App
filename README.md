@@ -103,8 +103,8 @@ Legend: ✅ done · 🟡 partial · ❌ not started
 | Dimensions (pixel→mm) | 🟡 | Stage A only — see below |
 | Variable lighting robustness | 🟡 | Implemented adaptively, **never measured** |
 | Few-shot learning from rare examples | ✅ | 97.1% leave-one-out on 34 curated crops |
-| Automatic documentation | ✅ | PDF via iText + share intent |
-| **Barcode → part linking** | ❌ | Manual text entry + 3 presets. ML Kit dependency present but **unused** |
+| Automatic documentation | ✅ | PDF (platform `PdfDocument`, no third-party library), plus JSON + CSV export, all via share intent |
+| **Barcode → part linking** | 🟡 | Reports now *carry* a QR pointer (ZXing, generated + tested). Scanning one *in* is still manual text entry + 3 presets |
 | Camera capture | ✅ | CameraX, live-gated, auto-shutter on a 3s hold |
 | Evaluation / precision & recall | 🟡 | Component studies exist; no app-level per-type P/R |
 
@@ -124,9 +124,25 @@ Legend: ✅ done · 🟡 partial · ❌ not started
 - **Supervised active-learning loop** — review queue, spot checks, per-part threshold tuning.
 - **Source-resolution crops** (`ml/SourceCropper`) — crops are cut from the original 4032×3024
   photo via `BitmapRegionDecoder`, not the 1280px working copy, with proportional padding.
-- **Room database v9** with real migrations (no destructive fallback on new schema changes).
+- **Room database v11** with real migrations (no destructive fallback on new schema changes),
+  foreign keys on every child table and indices on the columns actually queried. The delete
+  rule is deliberately split: `FeatureResult` and `SlotResult` cascade because they *are* the
+  report, while `ClassificationEvent` is `SET NULL` because it is human-labelled training data
+  that outlives the report it was attached to — cascading there would cost the classifier its
+  history for a part as a side effect of housekeeping.
 - **PDF reporting** + share intent, and per-part advisory trend notes.
-- **151 unit tests**, all passing.
+- **Immutable report identity** — every filed inspection carries a uuid, an operator, and a
+  SHA-256 digest over its own canonical form, so a later edit is detectable and a re-inspection
+  appends rather than overwrites. Legacy rows are backfilled with identity but deliberately
+  left *unsealed* rather than back-dated, and the report says so.
+- **Machine-readable export** — full record as JSON, roll-up row as CSV, beside the PDF and out
+  through the same FileProvider. Previously the PDF was the only artefact, so the numbers had
+  to be retyped off a page to reach a spreadsheet.
+- **Traceability QR** on every report — a fixed 26-byte pointer (record id, verdict, digest
+  prefix) as Base32, rendered with ZXing. It replaces a footer that read "Factory QC Manager
+  digital signature valid." on every report the app had ever produced, which was decoration
+  claiming an assurance that did not exist.
+- **214 unit tests**, all passing.
 - **Reproducible studies** in `python/` — localisation tolerance and transform model
   (`localisation_tolerance_study.py`), classifier margin fitted from real inspection history
   (`margin_study.py`), encoder comparison, detector A/B harness, scale
@@ -143,8 +159,10 @@ Legend: ✅ done · 🟡 partial · ❌ not started
 
 ### Not started
 
-- **Barcode scanning.** The ML Kit dependency is in the build and never called. This is the
-  most visible gap against Phase 3 of the brief.
+- **Barcode *scanning*.** Reports now carry a QR, but nothing reads one *in* — part IDs are
+  still typed. `BarcodeScanFragment` owns part-ID entry and has no camera. ZXing is already in
+  the build and decodes as well as encodes, so this is a fragment change, not a new dependency.
+  It is deprioritised only because it needs printed labels and a device to produce evidence.
 - **Nut** as a feature type.
 - **Balanced/macro accuracy** in `ThresholdTuner` — it optimises plain accuracy, which is
   misleading on imbalanced classes, a challenge the brief names explicitly.
@@ -187,7 +205,7 @@ the report right now, and they block on things outside the repo.
 
 *Hardware-dependent, deprioritised:*
 
-8. **Barcode scanning** — needs printed labels and a device; produces little report evidence.
+8. **Barcode scanning (input side)** — needs printed labels and a device; produces little report evidence. The decoder ships with the QR encoder already.
 9. **`nut` type** — needs photographs that do not exist in `assets/` yet.
 10. **On-device performance profiling** — latency, memory, battery on real hardware.
 
@@ -248,13 +266,13 @@ app/src/main/java/com/example/
     SourceCropper             full-resolution crop extraction
   ui/fragment/           one fragment per screen (Navigation Component)
   data/                  Room entities, DAOs, migrations
-  report/                advisory trend notes
+  report/                PDF layout, advisory trend notes, export + digest, QR pointer
 app/src/main/assets/
   models/                feature_encoder.onnx (DINOv2-S, int8)
   reference_crops/       bundled seed crops, one folder per type
   chassis_images/        test photographs
 python/                  offline studies and the ONNX export script
-app/src/test/            138 unit tests
+app/src/test/            214 unit tests
 ```
 
 Note: `HardwareFeatureExtractor` currently lives under `ui/fragment/` despite being pure

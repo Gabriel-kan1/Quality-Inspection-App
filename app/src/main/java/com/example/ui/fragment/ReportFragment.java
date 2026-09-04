@@ -28,11 +28,17 @@ import com.example.databinding.FragmentReportBinding;
 import com.example.ml.FeatureTypeRegistry;
 import com.example.ml.PartFiles;
 import com.example.report.AdvisoryNotes;
+import com.example.report.InspectionExport;
 import com.example.report.InspectionReportPdf;
 
 import java.io.File;
 import java.io.FileOutputStream;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.Date;
 import java.util.List;
 import java.util.Locale;
@@ -76,6 +82,8 @@ public class ReportFragment extends Fragment {
         });
 
         binding.btnExportPdf.setOnClickListener(v -> generatePdfReport(true));
+
+        binding.btnExportData.setOnClickListener(v -> exportDataFiles());
 
         binding.btnShareReport.setOnClickListener(v -> sharePdfReport());
 
@@ -374,22 +382,39 @@ public class ReportFragment extends Fragment {
         }
     }
 
+    /**
+     * Base name shared by every artefact this inspection produces, so the PDF, the JSON and
+     * the CSV sort together and obviously belong to each other.
+     *
+     * <p>Keyed on the uuid where there is one. The rowid it falls back to is only meaningful
+     * inside this database, which is the wrong property for a filename that exists to be
+     * copied somewhere else.
+     *
+     * <p>The part ID is free text the operator typed, and these paths are handed straight to
+     * FileProvider below. Without the sanitiser a separator or a ".." in the ID writes outside
+     * the reports folder, so use the same one the rest of the app already does.
+     */
+    private String reportBaseName() {
+        String suffix = record.getUuid() != null ? record.getUuid() : String.valueOf(record.getId());
+        return "QC_REPORT_" + PartFiles.safeName(record.getPartId()) + "_" + suffix;
+    }
+
+    @Nullable
+    private File reportsFolder() {
+        File folder = requireContext().getExternalFilesDir("reports");
+        if (folder != null && !folder.exists()) {
+            folder.mkdirs();
+        }
+        return folder;
+    }
+
     private void generatePdfReport(boolean showToast) {
         if (record == null) {
             Toast.makeText(getContext(), "Report details still loading. Please hold...", Toast.LENGTH_SHORT).show();
             return;
         }
 
-        File pdfFolder = requireContext().getExternalFilesDir("reports");
-        if (pdfFolder != null && !pdfFolder.exists()) {
-            pdfFolder.mkdirs();
-        }
-
-        // The part ID is free text the operator typed, and this path is handed straight to
-        // FileProvider below. Without the sanitiser a separator or a ".." in the ID writes
-        // outside the reports folder, so use the same one the rest of the app already does.
-        File target = new File(pdfFolder,
-                "QC_REPORT_" + PartFiles.safeName(record.getPartId()) + "_" + record.getId() + ".pdf");
+        File target = new File(reportsFolder(), reportBaseName() + ".pdf");
 
         try (FileOutputStream out = new FileOutputStream(target)) {
             InspectionReportPdf.write(out, record, features, slotResults, warningNotes);
@@ -412,6 +437,69 @@ public class ReportFragment extends Fragment {
         }
     }
 
+    /**
+     * Writes the machine-readable pair — full record as JSON, roll-up row as CSV — and offers
+     * them to a share target.
+     *
+     * <p>Sharing is part of the export rather than a separate step because the folder these
+     * land in is app-scoped external storage, which no file manager on a modern Android will
+     * show the operator. Writing them and stopping there would produce two files nobody can
+     * reach; the FileProvider grant is the only way off the device, and it is the reason that
+     * provider exists.
+     *
+     * <p>The JSON carries the per-slot findings, the CSV deliberately does not — a row whose
+     * width depends on how many slots the part has is not a spreadsheet column. See
+     * {@link InspectionExport}.
+     */
+    private void exportDataFiles() {
+        if (record == null) {
+            Toast.makeText(getContext(), "Report details still loading. Please hold...", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        File folder = reportsFolder();
+        File jsonFile = new File(folder, reportBaseName() + ".json");
+        File csvFile = new File(folder, reportBaseName() + ".csv");
+
+        try {
+            writeText(jsonFile, InspectionExport.toJson(record, features, slotResults));
+            writeText(csvFile,
+                    InspectionExport.csvHeader() + "\n"
+                            + InspectionExport.toCsvRow(record, features, slotResults) + "\n");
+        } catch (Exception e) {
+            // Same reasoning as the PDF path: a half-written export is a file that parses
+            // partly and misleads completely, so neither is left behind.
+            Log.e(TAG, "Data export failed", e);
+            deleteQuietly(jsonFile);
+            deleteQuietly(csvFile);
+            Toast.makeText(getContext(), "Error exporting data: " + e.getMessage(),
+                    Toast.LENGTH_LONG).show();
+            return;
+        }
+
+        Toast.makeText(getContext(), "Data exported to: Internal Storage/reports/"
+                + jsonFile.getName() + " (+ .csv)", Toast.LENGTH_LONG).show();
+
+        shareFiles(Arrays.asList(jsonFile, csvFile), "*/*",
+                "QC Inspection Data: " + record.getPartId(),
+                "Machine-readable inspection record for part " + record.getPartId()
+                        + " (Verdict: " + record.getPassOrFail() + ", Record ID: "
+                        + record.getUuid() + ").",
+                "Share Inspection Data via:");
+    }
+
+    private static void writeText(File target, String content) throws IOException {
+        try (FileOutputStream out = new FileOutputStream(target)) {
+            out.write(content.getBytes(StandardCharsets.UTF_8));
+        }
+    }
+
+    private void deleteQuietly(File file) {
+        if (file.exists() && !file.delete()) {
+            Log.w(TAG, "Could not remove partial export at " + file);
+        }
+    }
+
     private void sharePdfReport() {
         if (generatedPdfFile == null || !generatedPdfFile.exists()) {
             // Unsaved generate first
@@ -419,19 +507,42 @@ public class ReportFragment extends Fragment {
         }
 
         if (generatedPdfFile != null && generatedPdfFile.exists()) {
-            Uri pdfUri = FileProvider.getUriForFile(requireContext(), requireContext().getPackageName() + ".fileprovider", generatedPdfFile);
-
-            Intent shareIntent = new Intent(Intent.ACTION_SEND);
-            shareIntent.setType("application/pdf");
-            shareIntent.putExtra(Intent.EXTRA_STREAM, pdfUri);
-            shareIntent.putExtra(Intent.EXTRA_SUBJECT, "Chassis QC Report: " + record.getPartId());
-            shareIntent.putExtra(Intent.EXTRA_TEXT, "Automated factory QC validation report PDF generated for chassis SKU ID: " + record.getPartId() + " (Verdict: " + record.getPassOrFail() + ").");
-            shareIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-
-            startActivity(Intent.createChooser(shareIntent, "Share Inspection PDF via:"));
+            shareFiles(Collections.singletonList(generatedPdfFile), "application/pdf",
+                    "Chassis QC Report: " + record.getPartId(),
+                    "Automated factory QC validation report PDF generated for chassis SKU ID: "
+                            + record.getPartId() + " (Verdict: " + record.getPassOrFail() + ").",
+                    "Share Inspection PDF via:");
         } else {
             Toast.makeText(getContext(), "Failed to prepare PDF file for sharing.", Toast.LENGTH_SHORT).show();
         }
+    }
+
+    /**
+     * Hands one or more generated files to a share target through the app's FileProvider.
+     *
+     * <p>Takes a MIME type and a list rather than assuming a single PDF, which is what it used
+     * to do. Everything shared here comes out of the same {@code reports/} folder, which is
+     * the only path {@code res/xml/file_paths.xml} maps — deliberately, so a URI grant issued
+     * by this app can never reach anything else the user owns.
+     */
+    private void shareFiles(List<File> files, String mimeType, String subject, String body,
+                            String chooserTitle) {
+        String authority = requireContext().getPackageName() + ".fileprovider";
+        ArrayList<Uri> uris = new ArrayList<>(files.size());
+        for (File file : files) {
+            uris.add(FileProvider.getUriForFile(requireContext(), authority, file));
+        }
+
+        Intent shareIntent = uris.size() == 1
+                ? new Intent(Intent.ACTION_SEND).putExtra(Intent.EXTRA_STREAM, uris.get(0))
+                : new Intent(Intent.ACTION_SEND_MULTIPLE).putParcelableArrayListExtra(
+                        Intent.EXTRA_STREAM, uris);
+        shareIntent.setType(mimeType);
+        shareIntent.putExtra(Intent.EXTRA_SUBJECT, subject);
+        shareIntent.putExtra(Intent.EXTRA_TEXT, body);
+        shareIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+
+        startActivity(Intent.createChooser(shareIntent, chooserTitle));
     }
 
     @Override

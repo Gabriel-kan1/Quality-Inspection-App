@@ -1,5 +1,8 @@
 package com.example.report;
 
+import android.graphics.Bitmap;
+import android.util.Log;
+
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
@@ -27,6 +30,18 @@ import java.util.Locale;
  * only reachable by driving the screen.
  */
 public final class InspectionReportPdf {
+
+    private static final String TAG = "InspectionReportPdf";
+
+    /**
+     * Printed size of the traceability QR, in points. 90pt is about 31mm, which at this
+     * payload's symbol size leaves a module comfortably wider than the ~0.5mm a tablet camera
+     * needs to resolve.
+     */
+    private static final float QR_SIZE_PT = 90f;
+
+    /** Pixels the QR is rasterised at before being scaled down into {@link #QR_SIZE_PT}. */
+    private static final int QR_RENDER_PX = 360;
 
     private InspectionReportPdf() { }
 
@@ -148,9 +163,60 @@ public final class InspectionReportPdf {
             }
         }
 
-        w.text("OFFLINE AUTOMATION SYSTEM LOG GENERATOR SEAL\n"
-                        + "Factory QC Manager digital signature valid.",
-                PdfReportWriter.BODY.withAlignment(Layout.Alignment.ALIGN_OPPOSITE), 40f, 0f);
+        traceability(w, record);
+    }
+
+    /**
+     * The block that lets a printed report be traced back to the record it came from.
+     *
+     * <p>This replaces a footer that read "Factory QC Manager digital signature valid." on
+     * every report the app had ever produced. Nothing was signed and no manager was involved;
+     * it was decoration asserting an assurance that did not exist, which on a quality document
+     * is worse than a blank space. What is printed now is checkable: an identifier that names
+     * one row, and a digest state that either says the record still matches what was filed or
+     * says plainly that it was never sealed.
+     */
+    private static void traceability(PdfReportWriter w, InspectionRecord record) {
+        w.text("TRACEABILITY", PdfReportWriter.SECTION, 30f, 4f);
+
+        String uuid = record.getUuid();
+        w.text("RECORD ID: " + (uuid == null ? "not assigned" : uuid),
+                PdfReportWriter.BODY_BOLD);
+        w.text("OPERATOR: " + (record.getOperator() == null || record.getOperator().isEmpty()
+                        ? "not recorded" : record.getOperator()),
+                PdfReportWriter.BODY);
+
+        if (record.getDigest() != null) {
+            w.text("INTEGRITY: SEALED (SHA-256 " + record.getDigest() + ")",
+                    PdfReportWriter.BODY, 0f, 8f);
+        } else {
+            // Said out loud rather than left as an absence. A reader comparing two reports has
+            // to be able to tell "this one is verifiable" from "this one predates verification".
+            w.text("INTEGRITY: NOT SEALED. This inspection was filed before integrity sealing"
+                            + " was added and carries no digest to check against.",
+                    PdfReportWriter.BODY, 0f, 8f);
+        }
+
+        if (uuid == null) return;
+
+        String payload;
+        Bitmap qr;
+        try {
+            payload = ReportCode.encode(record);
+            qr = ReportCode.toQrBitmap(payload, QR_RENDER_PX);
+        } catch (Exception e) {
+            // A report without its code is still a valid report. Losing the whole document
+            // because the encoder objected would trade something useful for nothing.
+            Log.w(TAG, "QR generation failed; report continues without it", e);
+            return;
+        }
+
+        w.image(qr, QR_SIZE_PT, Layout.Alignment.ALIGN_NORMAL, 0f, 4f);
+        w.text(payload, PdfReportWriter.CAPTION, 0f, 4f);
+        w.text("Scan to retrieve this inspection, or type the code above if the symbol is"
+                        + " damaged. The code carries the record id, the verdict and the first"
+                        + " eight bytes of the digest.",
+                PdfReportWriter.CAPTION, 0f, 0f);
     }
 
     private static String slotResultText(SlotResult s) {

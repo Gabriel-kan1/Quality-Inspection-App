@@ -448,6 +448,25 @@
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 
+        <!-- Who filed this. Remembered between inspections so it is not retyped every time,
+             but left editable because a tablet on a bench gets passed between shifts. -->
+        <com.google.android.material.textfield.TextInputLayout
+            android:id="@+id/text_input_layout_operator"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="12dp"
+            android:hint="Inspector / Shift ID">
+
+            <com.google.android.material.textfield.TextInputEditText
+                android:id="@+id/et_operator"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:textColor="@color/white"
+                android:inputType="textCapCharacters"
+                android:maxLines="1"
+                android:textSize="14sp" />
+        </com.google.android.material.textfield.TextInputLayout>
+
         <!-- Operators Notes Field -->
         <com.google.android.material.textfield.TextInputLayout
             android:id="@+id/text_input_layout_notes"

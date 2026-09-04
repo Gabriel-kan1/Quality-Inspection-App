@@ -320,6 +320,18 @@
                 android:textStyle="bold"
                 android:layout_marginBottom="12dp" />
 
+            <!-- EXPORT DATA. Separate from the PDF button because it answers a different
+                 need: the PDF is for a person to read and file, this is for the numbers to
+                 reach a spreadsheet or an ERP without being retyped off the page. -->
+            <Button
+                android:id="@+id/btn_export_data"
+                style="@style/Widget.Material3.Button.OutlinedButton"
+                android:layout_width="match_parent"
+                android:layout_height="64dp"
+                android:text="EXPORT DATA (JSON + CSV)"
+                android:textColor="@color/white"
+                android:layout_marginBottom="12dp" />
+
             <!-- SHARE REPORT -->
             <Button
                 android:id="@+id/btn_share_report"
