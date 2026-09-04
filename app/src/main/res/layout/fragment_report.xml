@@ -302,6 +302,107 @@
 
         </com.google.android.material.card.MaterialCardView>
 
+        <!-- Traceability. Mirrors the block on the generated PDF, so the code is scannable
+             straight off the screen instead of only out of an exported file — which is what
+             makes History > SCAN usable without a printer. -->
+        <com.google.android.material.card.MaterialCardView
+            android:id="@+id/card_report_traceability"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="24dp"
+            app:cardBackgroundColor="@color/surface_card"
+            app:cardCornerRadius="16dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="18dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginBottom="4dp"
+                    android:text="TRACEABILITY"
+                    android:textColor="@color/blue_primary"
+                    android:textSize="12sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/tv_report_integrity"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginBottom="12dp"
+                    android:textColor="@color/gray_text_secondary"
+                    android:textSize="11sp"
+                    tools:text="Sealed. SHA-256 9f86d081…" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <!-- White plate behind the symbol: the card is dark, and a QR needs its
+                         quiet zone to be light or the finder patterns lose their border. -->
+                    <FrameLayout
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:background="@color/white"
+                        android:padding="6dp">
+
+                        <ImageView
+                            android:id="@+id/iv_report_qr"
+                            android:layout_width="132dp"
+                            android:layout_height="132dp"
+                            android:contentDescription="QR code identifying this inspection" />
+                    </FrameLayout>
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="14dp"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:text="RECORD ID"
+                            android:textColor="@color/gray_text_secondary"
+                            android:textSize="10sp"
+                            android:textStyle="bold" />
+
+                        <TextView
+                            android:id="@+id/tv_report_uuid"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginBottom="8dp"
+                            android:textColor="@color/white"
+                            android:textSize="11sp"
+                            tools:text="3f2504e0-4f89-41d3-9a0c-0305e82c3301" />
+
+                        <TextView
+                            android:id="@+id/tv_report_code_payload"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginBottom="6dp"
+                            android:textColor="@color/gray_text_secondary"
+                            android:textSize="10sp"
+                            tools:text="QCRAE7SKBHAJ6EUDU42BQBQL2BMGMAQCAAAAAAAAAAAAA" />
+
+                        <TextView
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:text="Scan from History &gt; SCAN to reopen this inspection."
+                            android:textColor="@color/gray_text_secondary"
+                            android:textSize="10sp" />
+                    </LinearLayout>
+                </LinearLayout>
+            </LinearLayout>
+
+        </com.google.android.material.card.MaterialCardView>
+
         <!-- Actions Deck -->
         <LinearLayout
             android:layout_width="match_parent"

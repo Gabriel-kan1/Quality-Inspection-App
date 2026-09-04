@@ -104,7 +104,7 @@ Legend: ✅ done · 🟡 partial · ❌ not started
 | Variable lighting robustness | 🟡 | Implemented adaptively, **never measured** |
 | Few-shot learning from rare examples | ✅ | 97.1% leave-one-out on 34 curated crops |
 | Automatic documentation | ✅ | PDF (platform `PdfDocument`, no third-party library), plus JSON + CSV export, all via share intent |
-| **Barcode → part linking** | 🟡 | Reports now *carry* a QR pointer (ZXing, generated + tested). Scanning one *in* is still manual text entry + 3 presets |
+| **Barcode → report linking** | ✅ | Reports carry a QR pointer and **History > SCAN reads one back** to open that inspection (ZXing, both directions). Linking a scanned code to a *part* is still not done — parts are chosen from the registry |
 | Camera capture | ✅ | CameraX, live-gated, auto-shutter on a 3s hold |
 | Evaluation / precision & recall | 🟡 | Component studies exist; no app-level per-type P/R |
 
@@ -142,7 +142,14 @@ Legend: ✅ done · 🟡 partial · ❌ not started
   prefix) as Base32, rendered with ZXing. It replaces a footer that read "Factory QC Manager
   digital signature valid." on every report the app had ever produced, which was decoration
   claiming an assurance that did not exist.
-- **214 unit tests**, all passing.
+- **Report code on screen and on paper** — the traceability card on the report screen shows
+  the same QR the PDF carries, so a code can be scanned straight off one tablet by another
+  without exporting and opening a file first.
+- **Report code lookup** — `History > SCAN` reads the QR off a printed or on-screen report,
+  resolves the uuid against the local database and opens that inspection, warning first if the
+  printout's digest no longer matches the filed record. A code from another device resolves to
+  nothing and says so, because the code identifies a record rather than containing one.
+- **245 unit tests**, all passing.
 - **Reproducible studies** in `python/` — localisation tolerance and transform model
   (`localisation_tolerance_study.py`), classifier margin fitted from real inspection history
   (`margin_study.py`), encoder comparison, detector A/B harness, scale
@@ -159,10 +166,10 @@ Legend: ✅ done · 🟡 partial · ❌ not started
 
 ### Not started
 
-- **Barcode *scanning*.** Reports now carry a QR, but nothing reads one *in* — part IDs are
-  still typed. `BarcodeScanFragment` owns part-ID entry and has no camera. ZXing is already in
-  the build and decodes as well as encodes, so this is a fragment change, not a new dependency.
-  It is deprioritised only because it needs printed labels and a device to produce evidence.
+- **Barcode → *part* linking.** `ReportScanFragment` reads report codes, but nothing maps a
+  scanned label to a part. Parts are deliberately chosen from the registry rather than typed —
+  free text produced silent near-duplicates, each with its own reference photo and history — so
+  a scan should *match* an existing part, never create one.
 - **Nut** as a feature type.
 - **Balanced/macro accuracy** in `ThresholdTuner` — it optimises plain accuracy, which is
   misleading on imbalanced classes, a challenge the brief names explicitly.
@@ -205,7 +212,7 @@ the report right now, and they block on things outside the repo.
 
 *Hardware-dependent, deprioritised:*
 
-8. **Barcode scanning (input side)** — needs printed labels and a device; produces little report evidence. The decoder ships with the QR encoder already.
+8. **Barcode → part linking** — needs printed labels and a device; produces little report evidence. The decoder already ships, and must match registered parts rather than create them.
 9. **`nut` type** — needs photographs that do not exist in `assets/` yet.
 10. **On-device performance profiling** — latency, memory, battery on real hardware.
 
@@ -272,7 +279,7 @@ app/src/main/assets/
   reference_crops/       bundled seed crops, one folder per type
   chassis_images/        test photographs
 python/                  offline studies and the ONNX export script
-app/src/test/            214 unit tests
+app/src/test/            245 unit tests
 ```
 
 Note: `HardwareFeatureExtractor` currently lives under `ui/fragment/` despite being pure

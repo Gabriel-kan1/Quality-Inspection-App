@@ -213,9 +213,13 @@ public final class InspectionReportPdf {
 
         w.image(qr, QR_SIZE_PT, Layout.Alignment.ALIGN_NORMAL, 0f, 4f);
         w.text(payload, PdfReportWriter.CAPTION, 0f, 4f);
-        w.text("Scan to retrieve this inspection, or type the code above if the symbol is"
-                        + " damaged. The code carries the record id, the verdict and the first"
-                        + " eight bytes of the digest.",
+        // Says where the code works, not just what it does. It identifies a record rather
+        // than containing one, so it only resolves on a device that holds this inspection —
+        // and a caption that did not say so would send someone scanning a report on the wrong
+        // tablet and reading the empty result as a fault.
+        w.text("Scan from History > SCAN on the tablet that filed this inspection to open it"
+                        + " again. The code carries the record id, the verdict and the first"
+                        + " eight bytes of the digest — not the findings themselves.",
                 PdfReportWriter.CAPTION, 0f, 0f);
     }
 
