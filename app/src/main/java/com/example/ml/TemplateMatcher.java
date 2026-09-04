@@ -23,11 +23,13 @@ import java.util.Locale;
  * for in a <em>different</em> photo of the same scene under different light:
  *
  * <pre>
- *   raw grayscale      0/10 recovered      mean scale error 0.240
- *   CLAHE grayscale    1/10                                 0.235
- *   Sobel magnitude    9/10                                 0.025
- *   Canny edges        7/10                                 0.075
+ *   raw grayscale      0/10 recovered      mean scale error 0.275
+ *   CLAHE grayscale    0/10                                 0.245
+ *   Sobel magnitude   10/10                                 0.015
+ *   Canny edges        3/10                                 0.185
  * </pre>
+ *
+ * Reproduce with {@code python python/template_matching_study.py --part A}.
  *
  * The plate is matte and specular: intensity is dominated by where the light happens to be,
  * while the gradient response is dominated by the hardware's edges, which is the content
@@ -36,19 +38,24 @@ import java.util.Locale;
  *
  * <h3>Working size</h3>
  *
- * {@link #WORK_WIDTH} 320 measured better than both larger and smaller. Accuracy against the
- * same ground truth: 192 px 5/10, 256 px 7/10, <b>320 px 10/10</b>, 480 px 8/10, 640 px 9/10.
- * Downscaling low-passes away the sensor noise and fine specular texture that otherwise wins
- * the correlation, while the fastener edges survive. It is also what makes the search
- * affordable — cost grows with the square of the width.
+ * {@link #WORK_WIDTH} 320 is the <em>smallest</em> width that recovers every case, which is the
+ * reason to prefer it: search cost grows with the square of the width and wider is no more
+ * accurate. Against the same ground truth: 192 px 5/10, 256 px 8/10, <b>320 px 10/10</b>,
+ * 480 px 10/10, 640 px 10/10. Below 320 the downsampling takes the fastener edges with the
+ * sensor noise.
+ *
+ * <p>An earlier run put 480 px at 8/10 and 640 px at 9/10 and this paragraph claimed 320 beat
+ * both. That did not survive re-measurement against the shipped resampling; the accuracy
+ * argument for 320 over wider was wrong, and the cost argument stands on its own.
  *
  * <h3>What this cannot do</h3>
  *
  * The search covers translation and uniform scale only. It has no model of rotation or
  * perspective, so it degrades as the camera angle changes rather than merely the distance.
  * Measured across real pairs shot from different angles the framing ratio is unreliable, and
- * the score does <em>not</em> separate the reference area from a different one — same-area
- * scores ran from 0.285 while different-area scores reached 0.456 on the same reference.
+ * the score does <em>not</em> separate the reference area from a different one. Worst same-area
+ * against best different-area: 0.322 vs 0.386 on {@code screws.jpg}, 0.355 vs 0.507 on
+ * {@code screws_flash.jpg} — negative separation both times, so no threshold divides them.
  *
  * <p>So this answers "how should the camera move from roughly here", not "is this the right
  * part". {@link AlignmentGate} keeps the encoder for the second question and uses this for

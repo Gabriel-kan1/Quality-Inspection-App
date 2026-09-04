@@ -29,9 +29,10 @@ import java.util.Locale;
  * spatial meaning, so it can say "wrong" but never "40% too close and aimed left".
  *
  * <p>The split is not a preference, it is what the measurements support. The template score
- * does <b>not</b> separate the reference area from a different one — same-area scores ran
- * down to 0.285 while different-area scores reached 0.456 on the same reference — so it must
- * not be promoted to the area test. Equally, the encoder's own scale probe was tried as a
+ * does <b>not</b> separate the reference area from a different one: worst same-area against
+ * best different-area is 0.322 vs 0.386 on {@code screws.jpg} and 0.355 vs 0.507 on
+ * {@code screws_flash.jpg}, negative separation both times — so it must not be promoted to
+ * the area test. Equally, the encoder's own scale probe was tried as a
  * framing test and could not report direction at all. See {@link TemplateMatcher}'s notes for
  * the representation study behind the matching, and re-run both before changing either half.
  *
@@ -54,11 +55,24 @@ public final class AlignmentGate {
     /**
      * Cosine similarity a frame must reach to count as the reference area.
      *
-     * <p>Fitted over 252 labelled asset pairs in {@code python/scale_probe_study.py}: 0.70 is
-     * the knee, and the last value that costs no true accepts. 0.65 gives 9 false accepts and
-     * 0 false rejects, 0.70 gives 5 and 0, 0.74 gives 2 and 5, 0.80 gives 2 and 9. Recall
-     * against the RANSAC-verified pairs from {@code python/pair_ground_truth.py} falls from
-     * 17/19 to 15/19 over that same move.
+     * <p>Fitted over 252 labelled asset pairs in {@code python/scale_probe_study.py}. The
+     * figures that matter are its <em>similarity-alone</em> column, because the scale probe
+     * whose column this threshold was originally read from no longer exists — framing is now
+     * {@link TemplateMatcher}'s job. False accepts / false rejects, similarity alone:
+     *
+     * <pre>
+     *   0.68   21 / 0        0.74    4 / 1
+     *   0.70   15 / 0        0.76    3 / 8
+     *   0.72    7 / 0        0.80    3 / 14
+     * </pre>
+     *
+     * 0.74 is where the first true accept is lost, so anything up to 0.72 is free. <b>0.70 is
+     * therefore not the tightest defensible value any more</b>: standing alone it admits 15
+     * false accepts where 0.72 admits 7, at no cost in recall. It is kept at 0.70 because the
+     * framing check now rejects much of that band on its own — {@code head3.jpg} clears this
+     * threshold at 0.732 and is caught at scale 0.35 — and tightening the area test before
+     * measuring the two together would be fitting one half against the other's old baseline.
+     * Measure the combined gate on real captures, then revisit.
      */
     private static final float MATCH_THRESHOLD = 0.7f;
 
