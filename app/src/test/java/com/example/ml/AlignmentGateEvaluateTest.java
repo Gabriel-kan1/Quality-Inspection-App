@@ -16,16 +16,16 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Pins {@link AlignmentGate#evaluate}, in particular the scale probe's short-circuit.
+ * Pins {@link AlignmentGate#evaluate}: what it costs per frame, and what it does when the
+ * framing search cannot run.
  *
- * <p>The gate is documented as costing "one extra encoder pass, charged only on frames that
- * already clear the threshold". That is a performance claim about the live camera path — most
- * frames are below threshold while the operator is still hunting for the area — and nothing
- * verified it. A refactor that always ran the probe would double the per-frame encoder cost
- * silently, because every visible behaviour would stay identical.
+ * <p>OpenCV's native libraries are not loaded in a JVM test, so {@link TemplateMatcher}
+ * returns nothing here. That is not a gap — it is the same state a device with a missing or
+ * ABI-mismatched {@code .so} is in, and the gate's behaviour there is a safety property
+ * worth pinning: it must refuse rather than pass.
  *
- * <p>Uses a fake {@link Encoder} returning canned vectors, so the similarity a frame scores is
- * chosen by the test rather than hoped for from a real crop.
+ * <p>Uses a fake {@link Encoder} returning canned vectors, so the similarity a frame scores
+ * is chosen by the test rather than hoped for from a real crop.
  */
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk = {36})
@@ -67,54 +67,72 @@ public class AlignmentGateEvaluateTest {
     }
 
     @Test
-    public void aFrameBelowThresholdCostsExactlyOneEncoderPass() {
-        CountingEncoder encoder = new CountingEncoder(WEAK);
-        AlignmentGate gate = new AlignmentGate(encoder, REFERENCE, REFERENCE);
+    public void everyFrameCostsExactlyOneEncoderPass() {
+        // The framing search runs on gradients, not embeddings, so rebuilding the gate around
+        // it must not have added encoder work per frame. It previously cost two passes on
+        // every frame that cleared the threshold.
+        CountingEncoder encoder = new CountingEncoder(STRONG);
+        AlignmentGate gate = new AlignmentGate(encoder, REFERENCE, null);
 
-        AlignmentGate.Reading r = gate.evaluate(frame());
+        gate.evaluate(frame(), 0L);
 
-        assertEquals("the probe must not run below the threshold", 1, encoder.calls);
-        assertTrue("farGain must be NaN when the probe was skipped", Float.isNaN(r.farGain));
-        assertFalse(r.inTolerance);
+        assertEquals("one pass for the area check and nothing more", 1, encoder.calls);
     }
 
     @Test
-    public void aFrameAboveThresholdPaysForTheProbe() {
-        // Frame scores 0.866, so the probe runs; the second vector is the centre crop's.
-        CountingEncoder encoder = new CountingEncoder(STRONG, STRONG);
-        AlignmentGate gate = new AlignmentGate(encoder, REFERENCE, REFERENCE);
+    public void aFrameBelowTheAreaThresholdIsRejectedWithoutSearchingFraming() {
+        CountingEncoder encoder = new CountingEncoder(WEAK);
+        AlignmentGate gate = new AlignmentGate(encoder, REFERENCE, null);
 
-        AlignmentGate.Reading r = gate.evaluate(frame());
+        AlignmentGate.Reading r = gate.evaluate(frame(), 0L);
 
-        assertEquals("frame plus centre-crop probe", 2, encoder.calls);
-        assertFalse("farGain must be measured once the probe runs", Float.isNaN(r.farGain));
+        assertFalse(r.inTolerance);
+        assertEquals(AlignmentGate.Fault.WEAK_MATCH, r.fault);
+        assertTrue("no framing was measured, so it must not be reported",
+                Float.isNaN(r.scale));
     }
 
     @Test
     public void similarityIsTheCosineAgainstTheReference() {
-        CountingEncoder encoder = new CountingEncoder(STRONG, STRONG);
-        AlignmentGate gate = new AlignmentGate(encoder, REFERENCE, REFERENCE);
+        CountingEncoder encoder = new CountingEncoder(STRONG);
+        AlignmentGate gate = new AlignmentGate(encoder, REFERENCE, null);
 
-        assertEquals(0.866f, gate.evaluate(frame()).similarity, 1e-3f);
+        assertEquals(0.866f, gate.evaluate(frame(), 0L).similarity, 1e-3f);
     }
 
     @Test
     public void theInputVectorIsNormalisedBeforeComparison() {
-        // A non-unit vector must not inflate the similarity past 1.0: the gate normalises
-        // before the dot product, so scaling the encoder's output changes nothing.
-        CountingEncoder scaled = new CountingEncoder(
-                new float[]{10f, 0f, 0f}, new float[]{10f, 0f, 0f});
-        AlignmentGate gate = new AlignmentGate(scaled, REFERENCE, REFERENCE);
+        // A non-unit vector must not inflate the similarity past 1.0.
+        CountingEncoder scaled = new CountingEncoder(new float[]{10f, 0f, 0f});
+        AlignmentGate gate = new AlignmentGate(scaled, REFERENCE, null);
 
-        assertEquals(1.0f, gate.evaluate(frame()).similarity, 1e-3f);
+        assertEquals(1.0f, gate.evaluate(frame(), 0L).similarity, 1e-3f);
+    }
+
+    /**
+     * The area matches but nothing can measure the framing, so the gate must refuse.
+     *
+     * <p>This is the state a device without working OpenCV natives is permanently in. The
+     * old gate would have passed such a frame on similarity alone, which is precisely the
+     * misframed capture the rebuild exists to stop.
+     */
+    @Test
+    public void anAreaMatchWithoutAFramingSearchIsRefused() {
+        CountingEncoder encoder = new CountingEncoder(STRONG);
+        AlignmentGate gate = new AlignmentGate(encoder, REFERENCE, null);
+
+        AlignmentGate.Reading r = gate.evaluate(frame(), 0L);
+
+        assertFalse("similarity alone must never satisfy the gate", r.inTolerance);
+        assertEquals(AlignmentGate.Fault.NO_FRAMING, r.fault);
     }
 
     @Test
     public void aFailedEncodeIsReportedAsNoMatchRatherThanCrashing() {
         CountingEncoder failing = new CountingEncoder((float[]) null);
-        AlignmentGate gate = new AlignmentGate(failing, REFERENCE, REFERENCE);
+        AlignmentGate gate = new AlignmentGate(failing, REFERENCE, null);
 
-        AlignmentGate.Reading r = gate.evaluate(frame());
+        AlignmentGate.Reading r = gate.evaluate(frame(), 0L);
 
         assertFalse(r.inTolerance);
         assertEquals(AlignmentGate.Fault.NO_MATCH, r.fault);
@@ -124,22 +142,12 @@ public class AlignmentGateEvaluateTest {
     @Test
     public void aNullFrameIsHandled() {
         CountingEncoder encoder = new CountingEncoder(STRONG);
-        AlignmentGate gate = new AlignmentGate(encoder, REFERENCE, REFERENCE);
+        AlignmentGate gate = new AlignmentGate(encoder, REFERENCE, null);
 
-        AlignmentGate.Reading r = gate.evaluate(null);
+        AlignmentGate.Reading r = gate.evaluate(null, 0L);
 
         assertEquals("a null frame must not reach the encoder", 0, encoder.calls);
         assertFalse(r.inTolerance);
         assertEquals(AlignmentGate.Fault.NO_MATCH, r.fault);
-    }
-
-    @Test
-    public void withNoZoomedReferenceTheTooCloseProbeIsSkipped() {
-        // fromReference leaves the zoom vector null when the cropped reference fails to
-        // encode; closeGain must then be NaN rather than a comparison against nothing.
-        CountingEncoder encoder = new CountingEncoder(STRONG, STRONG);
-        AlignmentGate gate = new AlignmentGate(encoder, REFERENCE, null);
-
-        assertTrue(Float.isNaN(gate.evaluate(frame()).closeGain));
     }
 }

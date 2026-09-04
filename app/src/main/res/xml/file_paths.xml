@@ -1,6 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+    Only the generated PDF reports are ever shared out of this app. The scope is kept to that
+    one folder deliberately: a broader mapping (an <external-path> at "." covers the whole of
+    shared storage) would put every file the user owns behind a URI this app is able to grant,
+    for no gain.
+-->
 <paths xmlns:android="http://schemas.android.com/apk/res/android">
-    <external-path name="external_files" path="." />
-    <external-files-path name="external_files_dir" path="." />
-    <cache-path name="cache_files" path="." />
+    <external-files-path name="reports" path="reports/" />
 </paths>

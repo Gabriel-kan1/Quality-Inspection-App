@@ -15,7 +15,12 @@
 .cxx
 local.properties
 .env
+
+# Signing keys. debug.keystore is throwaway; the upload key is not -- committing it would let
+# anyone publish an update as this app, and it cannot be rotated after the fact.
 debug.keystore
+*.jks
+*.keystore
 
 # Intermediate encoder exports (~107 MiB). Regenerate with
 # python/export_encoder_onnx.py; only the int8 graph copied into

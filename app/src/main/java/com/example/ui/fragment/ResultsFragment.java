@@ -572,9 +572,18 @@ public class ResultsFragment extends Fragment {
                     status.setText("WRONG: " + FeatureTypeRegistry.displayName(requireContext(), f.foundType));
                     status.setTextColor(ContextCompat.getColor(requireContext(), R.color.orange_warn));
                     break;
-                default:
+                case OUT_OF_FRAME:
+                    status.setText("NOT IN FRAME");
+                    status.setTextColor(ContextCompat.getColor(requireContext(), R.color.orange_warn));
+                    break;
+                case PRESENT:
                     status.setText("PRESENT");
                     status.setTextColor(ContextCompat.getColor(requireContext(), R.color.green_pass));
+                    break;
+                default:
+                    // Never claim a pass for a status this build cannot read.
+                    status.setText(f.status.name());
+                    status.setTextColor(ContextCompat.getColor(requireContext(), R.color.gray_text_secondary));
                     break;
             }
 

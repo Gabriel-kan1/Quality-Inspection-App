@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    A phone on its side has roughly 360dp of height to work with, so the panes shrink again to
+    leave room for the verdict. Tablets never land here: values-sw600dp wins on precedence.
+-->
+<resources>
+    <dimen name="results_preview_height">120dp</dimen>
+    <dimen name="results_overlay_height">160dp</dimen>
+</resources>

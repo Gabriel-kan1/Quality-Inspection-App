@@ -201,10 +201,15 @@ public abstract class AppDatabase extends RoomDatabase {
                                     AppDatabase.class, "shop_quality_inspection_db")
                             .addMigrations(MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7,
                                     MIGRATION_7_8, MIGRATION_8_9)
-                            // Retained as a backstop for the older unversioned upgrade paths
-                            // that shipped before MIGRATION_3_4 existed. Any NEW schema change
-                            // should add its own Migration rather than rely on this.
-                            .fallbackToDestructiveMigration()
+                            // Scoped to the two unversioned schemas that predate MIGRATION_3_4;
+                            // those genuinely have no upgrade path and are only on long-dead dev
+                            // installs. It used to be an unscoped fallbackToDestructiveMigration(),
+                            // which meant ANY schema mismatch — including hopping between feature
+                            // branches on a real device — silently dropped every table and every
+                            // recorded inspection with it. Anything from v3 up now fails loudly
+                            // instead, which is what you want to find out in testing rather than
+                            // after a day of collected data has gone.
+                            .fallbackToDestructiveMigrationFrom(true, 1, 2)
                             .build();
                 }
             }

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Tablets: the sizes the results screen was originally designed at. Smallest-width qualifiers
+    take precedence over orientation, so these apply to a tablet held either way up and the
+    values-land phone sizes do not reach here.
+-->
+<resources>
+    <dimen name="results_preview_height">200dp</dimen>
+    <dimen name="results_overlay_height">280dp</dimen>
+</resources>

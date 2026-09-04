@@ -79,7 +79,18 @@ public final class FeatureLocalisation {
          */
         DISPLACED,
         /** Something is here, but it is not the type this position expects. */
-        WRONG_TYPE
+        WRONG_TYPE,
+        /**
+         * The fitted transform puts this position outside the inspection photo, so nothing
+         * could be checked there.
+         *
+         * Distinct from {@link #MISSING}, which asserts the hardware is absent. A capture
+         * framed tighter than the reference simply excludes part of the part, and calling
+         * what was never photographed "missing" fails a good one. Reported rather than
+         * dropped: a check that silently omits the positions it could not see reads as
+         * assurance, which is the worse error of the two.
+         */
+        OUT_OF_FRAME
     }
 
     /** One expected position and what was actually found at it. */
@@ -209,12 +220,23 @@ public final class FeatureLocalisation {
             return n;
         }
 
-        /** True when any expected position is unaccounted for or holds the wrong hardware. */
+        /**
+         * True when any expected position is unaccounted for or holds the wrong hardware.
+         *
+         * {@link Status#OUT_OF_FRAME} is deliberately not a defect: it says the photo did not
+         * cover that position, not that anything is wrong with the part. See
+         * {@link #hasUnverifiedPositions()}, which is what makes that visible.
+         */
         public boolean hasPositionalDefect() {
             // Displaced counts: hardware fitted off its position is a defect, not a near-pass.
             return countWithStatus(Status.MISSING) > 0
                     || countWithStatus(Status.WRONG_TYPE) > 0
                     || countWithStatus(Status.DISPLACED) > 0;
+        }
+
+        /** True when the photo did not cover every expected position, so the check is partial. */
+        public boolean hasUnverifiedPositions() {
+            return countWithStatus(Status.OUT_OF_FRAME) > 0;
         }
 
         public String summary() {
@@ -227,6 +249,10 @@ public final class FeatureLocalisation {
                     countWithStatus(Status.MISSING), countWithStatus(Status.WRONG_TYPE)));
             int displaced = countWithStatus(Status.DISPLACED);
             if (displaced > 0) sb.append(", ").append(displaced).append(" out of position");
+            int offImage = countWithStatus(Status.OUT_OF_FRAME);
+            if (offImage > 0) {
+                sb.append(", ").append(offImage).append(" outside the photo and not checked");
+            }
             return sb.append('.').toString();
         }
     }
@@ -414,6 +440,15 @@ public final class FeatureLocalisation {
         for (Integer slotId : match.missingSlotIds) {
             FeatureLayout.Slot slot = layout.slotById(slotId);
             if (slot == null || !reported(slot.type, reportTypes)) continue;
+
+            // Nothing can be concluded about a position the photo does not cover. Decided
+            // before the displacement search below, because attributing a stray detection to
+            // a slot that sits off-image is a guess rather than a measurement.
+            SlotFinding offImage = finding(slot, null, env, match, Status.OUT_OF_FRAME, -1f, -1);
+            if (!offImage.hasProjection()) {
+                result.findings.add(offImage);
+                continue;
+            }
 
             int nearest = -1;
             float nearestOffset = Float.MAX_VALUE;

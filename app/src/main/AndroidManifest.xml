@@ -9,8 +9,16 @@
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
 
+    <!--
+        Inspections photograph customer parts and store the results, the source images and the
+        generated PDFs on the device. This app is offline by design, and automatic backup is the
+        one path that would quietly copy that material off the device to Google's servers, so it
+        is turned off. allowBackup="false" covers cloud backup on every supported version;
+        device-to-device transfer on Android 12+ ignores it and is excluded in
+        @xml/data_extraction_rules instead.
+    -->
     <application
-        android:allowBackup="true"
+        android:allowBackup="false"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules"
         android:icon="@mipmap/ic_launcher"

@@ -4,83 +4,46 @@ import android.content.Context;
 import android.graphics.Bitmap;
 import android.util.Log;
 
+import org.opencv.core.Mat;
+
 import java.util.Locale;
 
 /**
- * Decides whether a live camera frame is showing the same area of the chassis as the
- * part's reference photo, closely enough framed to be worth inspecting.
+ * Decides whether a live camera frame is framed closely enough like the part's reference
+ * photo to be worth inspecting, and tells the operator how to move if it is not.
  *
- * <h3>Why this is an embedding comparison and not feature matching</h3>
+ * <h3>Two questions, two methods</h3>
  *
- * The obvious approach — ORB keypoints plus a RANSAC homography — was tried and measured
- * against the project's own assets, and it does not work here. On {@code screws.jpg} the
- * chassis plate is a near-featureless matte surface, so almost every keypoint lands on the
- * hardware itself. That hardware is exactly what changes between an inspection and its
- * reference: a missing stud or a swapped screw removes the very features the match depends
- * on. Scoring {@code screws.jpg} against {@code screws_test.jpg} (the same four-hole
- * cluster, different fasteners, one hole empty) survived 8 of ~1000 keypoints through the
- * ratio test — statistically indistinguishable from {@code corner.jpg}, a completely
- * different part of the chassis, which survived 2. The signal was absent, not merely weak,
- * so no amount of threshold loosening would have recovered it.
+ * <b>"Is this the right area?"</b> is answered by the DINOv2 encoder already shipped for
+ * feature classification — a cosine similarity between the frame and the reference. It
+ * describes what the area <em>is</em> rather than which corners it contains, which matters
+ * because the hardware is exactly what changes between an inspection and its reference.
+ * ORB keypoints plus a RANSAC homography was tried and measured first and carries no signal
+ * here: on {@code screws.jpg} against {@code screws_test.jpg} — the same four-hole cluster —
+ * 8 of ~1000 keypoints survived the ratio test, against 2 for a completely different part of
+ * the chassis.
  *
- * <p>Detected-feature geometry was tried next — matching the spatial pattern of hardware
- * positions rather than their appearance — and failed for a related reason: the detector
- * merges the four fasteners in {@code screws.jpg} into a single box, and a different area
- * ({@code defected.jpg}) scored closer to the reference than any genuine match did.
+ * <b>"How should the camera move?"</b> is answered by {@link TemplateMatcher}, which locates
+ * the frame inside the reference (or the reference inside the frame) and returns a framing
+ * ratio and an aim offset. An embedding cannot do this: it is a single number with no
+ * spatial meaning, so it can say "wrong" but never "40% too close and aimed left".
  *
- * <p>The DINOv2 encoder already shipped for feature classification does carry the signal,
- * because it describes what the area <em>is</em> rather than which corners it contains.
- * Measured over the bundled assets with {@code screws.jpg} as the reference:
+ * <p>The split is not a preference, it is what the measurements support. The template score
+ * does <b>not</b> separate the reference area from a different one: worst same-area against
+ * best different-area is 0.322 vs 0.386 on {@code screws.jpg} and 0.355 vs 0.507 on
+ * {@code screws_flash.jpg}, negative separation both times — so it must not be promoted to
+ * the area test. Equally, the encoder's own scale probe was tried as a
+ * framing test and could not report direction at all. See {@link TemplateMatcher}'s notes for
+ * the representation study behind the matching, and re-run both before changing either half.
  *
- * <pre>
- *   same area:      screws_test 0.747   reference 0.739   defected 0.732
- *                   screws_three 0.659  screws_flash 0.603  screws_two 0.578
- *   different area: zero 0.510   one 0.368   three 0.358   corner 0.309
- *                   whole 0.218  whole_light 0.198
- * </pre>
+ * <h3>Known limits</h3>
  *
- * <h3>Why similarity alone does not settle shooting distance</h3>
- *
- * The encoder is partly scale tolerant, so "the right area photographed from twice as far
- * away" still scores well: against {@code stud1.jpg} the mid-range {@code screws_two.jpg}
- * reaches 0.717 and {@code screws_three.jpg} 0.676, both clearing the threshold despite
- * framing the cluster at a fraction of the reference's size. Raising the threshold is not
- * the fix — it takes genuine same-distance shots with it, and it cannot tell the operator
- * which way to move.
- *
- * <p>What separates the two cases is a <em>scale probe</em>: re-score the frame's centre
- * 50% crop against the reference. If zooming in improves the match, the frame was showing
- * the area too small — the operator is too far away. The mirror image, scoring the frame
- * against a centre crop of the <em>reference</em>, catches being too close. Measured over
- * 252 labelled asset pairs (python/scale_probe_study.py):
- *
- * <pre>
- *   crop-in gain      correctly framed  mean -0.070 (p90 +0.012)
- *                     too far away      mean +0.156 (p10 +0.025)
- *   crop-reference    correctly framed  mean -0.087 (p90 +0.008)
- *   gain              too close         mean +0.218 (p10 +0.159)
- * </pre>
- *
- * The populations barely overlap, so {@link #SCALE_GAIN_TOLERANCE} sits between them. At
- * the current threshold this removes two thirds of the wrong-distance false accepts (15 to
- * 5 over that pair set) while rejecting none of the correctly framed shots — measured at
- * every threshold from 0.60 to 0.80, the probe never cost a true accept: the false-reject
- * column is identical with the probe on and off. Two cues that sound more direct were
- * tried first and both failed: median
- * detected-blob diameter wandered by 3x across crops of one image (the contours are
- * surface grain, not hardware), and the texture's spatial-frequency centroid flattened
- * out at close range where sensor noise dominates the spectrum, and moved the wrong way
- * entirely on {@code corner.jpg}.
- *
- * <h3>What this costs</h3>
- *
- * An embedding says "right area" but not "off by 12% to the left", so there are no
- * directional pan or rotate hints — that geometry genuinely is not recoverable from these
- * images by any method tested. Distance is now reported ("move closer" / "back off"),
- * bearing still is not. The probe costs one extra encoder pass, charged only on frames
- * that already clear the threshold: below it the frame is rejected regardless, so the
- * probe would not change the verdict. The too-close side is free — the cropped reference
- * is encoded once when the gate is built.
+ * The match models translation and uniform scale only, so advice degrades as the camera
+ * <em>angle</em> changes rather than its distance; roll is not modelled at all. And the area
+ * test is only as good as the reference photo: a wide reference whose subject occupies a few
+ * percent of the frame scores unrelated close-ups as high as its own (measured on
+ * {@code screws_flash.jpg}, where four different-area shots outranked the reference's own
+ * cluster). A reference-quality check at setup time is the fix for that, and does not exist.
  *
  * <p>Instances are not thread-safe; {@link #evaluate} is meant to be called from a single
  * camera-analysis thread.
@@ -89,176 +52,173 @@ public final class AlignmentGate {
 
     private static final String TAG = "AlignmentGate";
 
-    // ─────────────────────────────────────────────────────────────
-    // CONFIG — these were left non-final "so they can be adjusted at runtime while tuning",
-    // but nothing ever adjusted them: there is no setter and no debug screen, so they were
-    // constants that had merely lost the keyword. Restored to final. If runtime tuning is
-    // wanted, add the surface that provides it rather than removing the keyword again.
-    // ─────────────────────────────────────────────────────────────
-
     /**
      * Cosine similarity a frame must reach to count as the reference area.
      *
-     * <p>Fitted to the gap measured over the bundled assets. With a close reference such as
-     * {@code stud1.jpg}, same-area shots at the same distance sit at 0.81 and above while
-     * different areas top out around 0.49; the widest reference set pushes the worst
-     * different-area confusion to 0.72 ({@code head1.jpg} against {@code one.jpg}, two
-     * extreme close-ups of near-identical plain metal), which no threshold in this range
-     * separates. Expect to re-fit against your own reference photos — the debug readout on
-     * the inspection screen shows the live figure. Note that shooting distance is no longer
-     * this threshold's job; see {@link #SCALE_GAIN_TOLERANCE}.
-     *
-     * <p>0.70 is the knee of both studies, and is the last value that costs nothing. Over the
-     * 252 labelled pairs in {@code python/scale_probe_study.py}, with the probe on:
+     * <p>Fitted over 252 labelled asset pairs in {@code python/scale_probe_study.py}. The
+     * figures that matter are its <em>similarity-alone</em> column, because the scale probe
+     * whose column this threshold was originally read from no longer exists — framing is now
+     * {@link TemplateMatcher}'s job. False accepts / false rejects, similarity alone:
      *
      * <pre>
-     *   threshold   false accepts   false rejects   proven-pair recall
-     *     0.65            9               0              19/19
-     *     0.70            5               0              17/19
-     *     0.74            2               5              15/19
-     *     0.80            2               9              15/19
+     *   0.68   21 / 0        0.74    4 / 1
+     *   0.70   15 / 0        0.76    3 / 8
+     *   0.72    7 / 0        0.80    3 / 14
      * </pre>
      *
-     * Recall is scored against the RANSAC-verified same-area pairs from
-     * {@code python/pair_ground_truth.py}, which is the provenance for this number — re-run
-     * both scripts before changing it. Tightening past 0.70 buys three fewer false accepts
-     * and pays nine true accepts for them, including pairs proven same-area by several
-     * hundred inliers ({@code screws_test}/{@code screws_two}, {@code screws2}/{@code
-     * screws_test}). Loosening to 0.65 recovers the last two proven pairs but nearly doubles
-     * the false accepts.
+     * 0.74 is where the first true accept is lost, so anything up to 0.72 is free. <b>0.70 is
+     * therefore not the tightest defensible value any more</b>: standing alone it admits 15
+     * false accepts where 0.72 admits 7, at no cost in recall. It is kept at 0.70 because the
+     * framing check now rejects much of that band on its own — {@code head3.jpg} clears this
+     * threshold at 0.732 and is caught at scale 0.35 — and tightening the area test before
+     * measuring the two together would be fitting one half against the other's old baseline.
+     * Measure the combined gate on real captures, then revisit.
      */
     private static final float MATCH_THRESHOLD = 0.7f;
 
-    /** Below this fraction of the threshold the frame is treated as showing nothing
-     *  relevant at all, which earns a blunter hint than "keep adjusting". */
+    /** Below this fraction of the threshold the frame shows nothing relevant at all, which
+     *  earns a blunter hint than "keep adjusting". */
     private static final float NO_MATCH_FRACTION = 0.7f;
 
     /**
-     * How much a scale probe may improve the match before the frame counts as being shot
-     * from the wrong distance rather than merely framed loosely.
+     * Framing ratio band the frame must sit in, as a multiple of the reference's field of
+     * view. Below 1 the frame covers less of the part than the reference did, so expected
+     * hardware falls outside it — that is the direction that produces a confident report
+     * about features nobody photographed, so the floor is the tighter of the two.
      *
-     * <p>0.10 sits above the p90 of correctly framed frames (+0.012) and below the p10 of
-     * too-far ones (+0.025) with room to spare, deliberately biased towards letting a
-     * borderline frame through: a gain this large means the reference area is visibly
-     * smaller (or larger) than it was when the reference was saved, not that framing is
-     * a few percent off.
+     * <p>Provisional. The matcher recovers this ratio to within 0.02 when only lighting
+     * differs, and considerably worse when the camera angle does; these are set from that
+     * spread rather than from a threshold sweep, which needs frames the asset set does not
+     * contain. Re-fit once real captures exist.
      */
-    private static final float SCALE_GAIN_TOLERANCE = 0.10f;
+    private static final float SCALE_MIN = 0.85f;
+    private static final float SCALE_MAX = 1.35f;
 
-    /**
-     * Fraction of each side kept by the probe crop. 0.5 quarters the visible area, which
-     * is a big enough scale step to move the similarity decisively when the distance is
-     * wrong; smaller probes clipped the hardware out of frame on correctly framed shots
-     * and larger ones (0.75) blurred the two populations back together.
-     */
-    private static final float PROBE_CROP = 0.5f;
+    /** How far the aim may be off, as a fraction of the frame. Offset error measured 0.037
+     *  under lighting change, so this leaves room without letting the part drift off-frame. */
+    private static final float OFFSET_TOLERANCE = 0.12f;
+
+    /** Below this the correlation peak is noise and no advice can be trusted. */
+    private static final float MIN_TEMPLATE_SCORE = 0.20f;
 
     /**
      * Mean per-pixel luminance change between consecutive thumbnails, above which the phone
-     * counts as moving. 0-255 scale. Camera noise alone runs about 1-2 on a still handheld
-     * phone, so this sits far enough above the noise floor not to trip on it.
+     * counts as moving. 0-255 scale, per {@link #NOMINAL_INTERVAL_MS}. Camera noise alone
+     * runs about 1-2 on a still handheld phone. Unlike the constants above, this one has no
+     * study behind it.
      */
     private static final float MAX_MOTION = 6.0f;
 
-    /** Edge of the square thumbnail used for the motion estimate. Small on purpose: this
-     *  measures gross camera movement, not detail. */
+    /**
+     * The interval {@link #MAX_MOTION} is expressed at; raw deltas are scaled to it so the
+     * limit is a rate. Analysed frames arrive at whatever rate {@link #evaluate} runs at, so
+     * an unscaled delta made the same hand speed read differently depending on how much work
+     * the frame happened to cost. 100 ms is an assumption, not a measurement;
+     * {@link Reading#debugLine()} reports the observed interval so it can be checked on real
+     * hardware.
+     */
+    private static final long NOMINAL_INTERVAL_MS = 100L;
+
+    /** Below this, per-frame sensor noise dominates once divided out. */
+    private static final long MIN_INTERVAL_MS = 50L;
+
+    /** Beyond this the frames are not consecutive, so the pair is discarded and re-based. */
+    private static final long STALE_INTERVAL_MS = 500L;
+
+    /** Edge of the square thumbnail used for the motion estimate. */
     private static final int MOTION_THUMB = 32;
 
-    // ─────────────────────────────────────────────────────────────
-
     /** Why a frame was rejected, in the order the operator should act on it. */
-    public enum Fault { NONE, NO_MATCH, WEAK_MATCH, TOO_FAR, TOO_CLOSE, MOVING }
+    public enum Fault {
+        NONE, NO_MATCH, WEAK_MATCH, NO_FRAMING, TOO_CLOSE, TOO_FAR,
+        AIM_LEFT, AIM_RIGHT, AIM_UP, AIM_DOWN, MOVING
+    }
 
     /** One frame's verdict. Immutable so it can be handed straight to the UI thread. */
     public static final class Reading {
         /** True when the frame may count toward the three-second hold. */
         public final boolean inTolerance;
         public final Fault fault;
-        /** Short, imperative instruction for the operator. */
+        /** Short imperative instruction for the operator, with the magnitude of the error. */
         public final String hint;
         /** Cosine similarity to the reference, -1..1. NaN when the frame could not be encoded. */
         public final float similarity;
-        /**
-         * How much scoring the frame's centre crop instead improved the match. Positive
-         * means the reference area appears too small — the phone is too far away. NaN when
-         * the probe did not run, which is every frame that fell short of the threshold.
-         */
-        public final float farGain;
-        /** The mirror measure against a cropped reference; positive means too close. */
-        public final float closeGain;
-        /** Mean luminance change since the previous frame, 0-255. NaN on the first frame. */
+        /** Template match peak, -1..1. NaN when the framing search could not run. */
+        public final float score;
+        /** Frame field of view as a multiple of the reference's. NaN when unknown. */
+        public final float scale;
+        /** Aim error as a fraction of the frame; positive means pan right. NaN when unknown. */
+        public final float offsetX;
+        /** Positive means tilt down. */
+        public final float offsetY;
+        /** Mean luminance change since the previous frame, per {@link #NOMINAL_INTERVAL_MS}. */
         public final float motion;
+        /** What {@link #motion} was measured over, or -1. Debug only. */
+        public final long motionIntervalMs;
 
-        Reading(boolean inTolerance, Fault fault, String hint, float similarity,
-                float farGain, float closeGain, float motion) {
+        Reading(boolean inTolerance, Fault fault, String hint, float similarity, float score,
+                float scale, float offsetX, float offsetY, float motion, long motionIntervalMs) {
             this.inTolerance = inTolerance;
             this.fault = fault;
             this.hint = hint;
             this.similarity = similarity;
-            this.farGain = farGain;
-            this.closeGain = closeGain;
+            this.score = score;
+            this.scale = scale;
+            this.offsetX = offsetX;
+            this.offsetY = offsetY;
             this.motion = motion;
+            this.motionIntervalMs = motionIntervalMs;
         }
 
-        /**
-         * Similarity after the distance penalty, which is what the operator is shown.
-         *
-         * <p>Raw cosine overstates a wrong-distance frame — the same hardware at half the
-         * size still reads as broadly the right area — so a frame that only scores well
-         * because the probe found the content at another scale is docked by exactly that
-         * much. Correctly framed frames have negative gains and are untouched.
-         */
-        public float adjustedSimilarity() {
-            if (Float.isNaN(similarity)) return Float.NaN;
-            float penalty = 0f;
-            if (!Float.isNaN(farGain)) penalty = Math.max(penalty, farGain);
-            if (!Float.isNaN(closeGain)) penalty = Math.max(penalty, closeGain);
-            return similarity - penalty;
-        }
-
-        /** Match strength as a 0-100 figure for display. */
+        /** Area-match strength as a 0-100 figure for display. */
         public int matchPercent() {
-            float value = adjustedSimilarity();
-            if (Float.isNaN(value)) return 0;
-            return Math.max(0, Math.min(100, Math.round(value * 100f)));
+            if (Float.isNaN(similarity)) return 0;
+            return Math.max(0, Math.min(100, Math.round(similarity * 100f)));
+        }
+
+        /** Template correlation as a 0-100 figure. Its useful range is compressed — a good
+         *  match sits near 45 — so it reads as a confidence, not as a percentage correct. */
+        public int templatePercent() {
+            if (Float.isNaN(score)) return 0;
+            return Math.max(0, Math.min(100, Math.round(score * 100f)));
         }
 
         /** Compact numeric dump for the debug readout and logcat. */
         public String debugLine() {
-            String scale = "";
-            if (!Float.isNaN(farGain) || !Float.isNaN(closeGain)) {
-                scale = String.format(Locale.US, " · zoom %+.3f/%+.3f (max %.2f)",
-                        farGain, closeGain, SCALE_GAIN_TOLERANCE);
+            StringBuilder sb = new StringBuilder(String.format(Locale.US,
+                    "sim %.3f (need %.2f)", similarity, MATCH_THRESHOLD));
+            if (!Float.isNaN(score)) {
+                sb.append(String.format(Locale.US, " · tm %.3f scale %.2f (%.2f-%.2f)",
+                        score, scale, SCALE_MIN, SCALE_MAX));
+                sb.append(String.format(Locale.US, " aim %+.2f/%+.2f (max %.2f)",
+                        offsetX, offsetY, OFFSET_TOLERANCE));
             }
-            return String.format(Locale.US, "sim %.3f (need %.2f) · motion %.1f (max %.1f)%s",
-                    similarity, MATCH_THRESHOLD, motion, MAX_MOTION, scale);
+            sb.append(String.format(Locale.US, " · motion %.1f", motion));
+            if (motionIntervalMs >= 0) sb.append(String.format(Locale.US, " over %dms", motionIntervalMs));
+            sb.append(String.format(Locale.US, " (max %.1f per %dms)", MAX_MOTION, NOMINAL_INTERVAL_MS));
+            return sb.toString();
         }
     }
 
     private final Encoder embedder;
     private final float[] referenceEmbedding;
-    /** The reference's centre crop, encoded once so the too-close test is free per frame.
-     *  Null when it could not be encoded, which disables that test rather than the gate. */
-    private final float[] referenceZoomEmbedding;
+    /** Gradient image of the reference, prepared once. Null disables framing advice. */
+    private final Mat referenceEdges;
 
-    /** Luminance thumbnail of the previous frame, for the motion estimate. */
     private int[] previousThumb;
+    private long previousThumbMs;
 
-    // Package-visible so tests can build a gate around a null embedder and exercise the
-    // parts that do not need one — the motion estimate in particular, which is plain bitmap
-    // arithmetic gating every capture but was previously unreachable without an ONNX session.
-    AlignmentGate(Encoder embedder, float[] referenceEmbedding,
-                          float[] referenceZoomEmbedding) {
+    AlignmentGate(Encoder embedder, float[] referenceEmbedding, Mat referenceEdges) {
         this.embedder = embedder;
         this.referenceEmbedding = referenceEmbedding;
-        this.referenceZoomEmbedding = referenceZoomEmbedding;
+        this.referenceEdges = referenceEdges;
     }
 
     /**
      * Builds a gate from the part's reference photo.
      *
-     * @return null when the encoder is unavailable or the reference could not be encoded,
-     *         in which case the caller must block inspection rather than pass everything.
+     * @return null when the encoder is unavailable or the reference could not be encoded, in
+     *         which case the caller must block inspection rather than pass everything.
      */
     public static AlignmentGate fromReference(Context context, Bitmap reference) {
         if (reference == null) return null;
@@ -274,151 +234,150 @@ public final class AlignmentGate {
         }
         normalise(vector);
 
-        float[] zoomVector = null;
-        Bitmap zoomed = centreCrop(reference, PROBE_CROP);
-        if (zoomed != null) {
-            zoomVector = embedder.embed(zoomed);
-            if (zoomed != reference) zoomed.recycle();
-            if (zoomVector != null) {
-                normalise(zoomVector);
-            } else {
-                Log.w(TAG, "Reference centre crop could not be encoded — "
-                        + "frames that are too close will not be caught.");
-            }
+        Mat edges = TemplateMatcher.prepare(reference);
+        if (edges == null) {
+            Log.w(TAG, "Reference gradients unavailable — framing advice is disabled.");
         }
-
-        Log.d(TAG, "Reference encoded, " + vector.length + " dims.");
-        return new AlignmentGate(embedder, vector, zoomVector);
+        return new AlignmentGate(embedder, vector, edges);
     }
 
     /**
      * Scores one frame. The frame must already be rotated to upright display orientation:
-     * the encoder is not rotation invariant, and the reference was encoded upright.
+     * neither the encoder nor the template search is rotation invariant, and the reference
+     * was prepared upright.
      *
-     * @return the verdict; never null.
+     * @param nowMs monotonic timestamp, taken before the call so the motion rate excludes the
+     *              work this method is about to do.
      */
-    public Reading evaluate(Bitmap frame) {
+    public Reading evaluate(Bitmap frame, long nowMs) {
         if (frame == null) {
-            return new Reading(false, Fault.NO_MATCH, "NO FRAME",
-                    Float.NaN, Float.NaN, Float.NaN, Float.NaN);
+            return reading(false, Fault.NO_MATCH, "NO FRAME", Float.NaN, null, Float.NaN, -1L);
         }
 
-        float motion = measureMotion(frame);
+        long interval = previousThumb != null ? nowMs - previousThumbMs : -1L;
+        float motion = measureMotion(frame, nowMs);
 
         float[] vector = embedder.embed(frame);
         if (vector == null) {
-            return new Reading(false, Fault.NO_MATCH, "NO MATCH — POINT AT THE PART",
-                    Float.NaN, Float.NaN, Float.NaN, motion);
+            return reading(false, Fault.NO_MATCH, "NO MATCH — POINT AT THE PART",
+                    Float.NaN, null, motion, interval);
         }
         normalise(vector);
         float similarity = dot(vector, referenceEmbedding);
 
-        // A frame short of the threshold is rejected whatever the probes say, so skip them
-        // and spare the encoder pass — that is most frames while the operator is still
-        // hunting for the area.
-        if (similarity < MATCH_THRESHOLD) {
-            return classify(similarity, Float.NaN, Float.NaN, motion);
+        // The framing search costs more than the encoder pass, and a frame showing the wrong
+        // area gets the same hint whatever it says, so it is only worth paying for once the
+        // area is plausible.
+        TemplateMatcher.Match match = null;
+        if (similarity >= MATCH_THRESHOLD && referenceEdges != null) {
+            Mat frameEdges = TemplateMatcher.prepare(frame);
+            if (frameEdges != null) {
+                try {
+                    match = TemplateMatcher.match(referenceEdges, frameEdges);
+                } finally {
+                    frameEdges.release();
+                }
+            }
         }
-
-        float closeGain = Float.NaN;
-        if (referenceZoomEmbedding != null) {
-            closeGain = dot(vector, referenceZoomEmbedding) - similarity;
-        }
-
-        // Only worth paying for the frame's crop when it is not already failing the cheap
-        // test — the two faults are reported one at a time anyway.
-        float farGain = Float.NaN;
-        if (!(closeGain > SCALE_GAIN_TOLERANCE)) {
-            farGain = measureFarGain(frame, similarity);
-        }
-
-        return classify(similarity, farGain, closeGain, motion);
+        return classify(similarity, match, motion, interval);
     }
 
-    /**
-     * Re-scores the frame's centre crop against the reference. A positive result means the
-     * match improves when the frame is zoomed in, i.e. the area is being shot too small.
-     * Returns NaN when the crop could not be encoded, which suppresses the test rather than
-     * failing the frame.
-     */
-    private float measureFarGain(Bitmap frame, float baseSimilarity) {
-        Bitmap probe = centreCrop(frame, PROBE_CROP);
-        if (probe == null) return Float.NaN;
-        try {
-            float[] vector = embedder.embed(probe);
-            if (vector == null) return Float.NaN;
-            normalise(vector);
-            return dot(vector, referenceEmbedding) - baseSimilarity;
-        } finally {
-            if (probe != frame) probe.recycle();
-        }
-    }
-
-    /** Centre crop keeping {@code fraction} of each side, or null if the source is too small. */
-    private static Bitmap centreCrop(Bitmap src, float fraction) {
-        if (src == null) return null;
-        int w = Math.round(src.getWidth() * fraction);
-        int h = Math.round(src.getHeight() * fraction);
-        if (w < 8 || h < 8) return null;
-        return Bitmap.createBitmap(src, (src.getWidth() - w) / 2, (src.getHeight() - h) / 2, w, h);
-    }
-
-    /** Convenience for callers with no scale probe, such as the threshold tests. */
+    /** Convenience for tests with no framing search. */
     static Reading classify(float similarity, float motion) {
-        return classify(similarity, Float.NaN, Float.NaN, motion);
+        return classify(similarity, null, motion, -1L);
     }
 
     /**
      * Applies the thresholds and picks the single most useful thing to tell the operator.
      *
-     * <p>Distance faults outrank motion: a frame held at the wrong distance is steady-wrong,
-     * and telling the operator to hold still would strand them there. NaN gains mean the
-     * probe did not run and simply skip their test.
+     * <p>Order is area, then framing distance, then aim, then steadiness. Distance outranks
+     * aim because it decides whether the part is even fully in shot, and both outrank motion:
+     * a phone held wrong is steady-wrong, and "hold still" would strand the operator there.
      */
-    static Reading classify(float similarity, float farGain, float closeGain, float motion) {
-        boolean matches = similarity >= MATCH_THRESHOLD;
-        // The first frame has no predecessor to compare against, so it cannot be judged
-        // moving; the hold needs several frames anyway, so nothing is let through early.
-        boolean steady = Float.isNaN(motion) || motion <= MAX_MOTION;
-
-        if (!matches) {
+    static Reading classify(float similarity, TemplateMatcher.Match match, float motion,
+                            long intervalMs) {
+        if (similarity < MATCH_THRESHOLD) {
+            // The area score belongs on the area faults and nowhere else. It is what the
+            // operator is climbing toward the threshold here, and it is meaningless beside a
+            // framing rejection — printing it there read as "78% match, rejected".
+            int pct = Math.max(0, Math.min(100, Math.round(similarity * 100f)));
             if (similarity < MATCH_THRESHOLD * NO_MATCH_FRACTION) {
-                return new Reading(false, Fault.NO_MATCH, "NO MATCH — POINT AT THE PART",
-                        similarity, farGain, closeGain, motion);
+                return reading(false, Fault.NO_MATCH, String.format(Locale.US,
+                                "NO MATCH — POINT AT THE PART (area %d%%)", pct),
+                        similarity, match, motion, intervalMs);
             }
-            // Close but short: the operator is looking at roughly the right thing, and
-            // moving closer or squaring up is what raises the score.
-            return new Reading(false, Fault.WEAK_MATCH, "CLOSE — FRAME IT LIKE THE GHOST",
-                    similarity, farGain, closeGain, motion);
+            return reading(false, Fault.WEAK_MATCH, String.format(Locale.US,
+                            "CLOSE — FRAME IT LIKE THE GHOST (area %d%%)", pct),
+                    similarity, match, motion, intervalMs);
         }
 
-        if (closeGain > SCALE_GAIN_TOLERANCE) {
-            return new Reading(false, Fault.TOO_CLOSE, "TOO CLOSE — BACK OFF",
-                    similarity, farGain, closeGain, motion);
+        // The area matched but the framing could not be measured, so there is nothing to
+        // certify. Passing here would let exactly the misframed capture through that the
+        // search exists to catch.
+        if (match == null || Float.isNaN(match.scale) || match.score < MIN_TEMPLATE_SCORE) {
+            return reading(false, Fault.NO_FRAMING, "CANNOT READ FRAMING — STEADY AND RETRY",
+                    similarity, match, motion, intervalMs);
         }
-        if (farGain > SCALE_GAIN_TOLERANCE) {
-            return new Reading(false, Fault.TOO_FAR, "TOO FAR — MOVE CLOSER",
-                    similarity, farGain, closeGain, motion);
+
+        if (match.scale < SCALE_MIN) {
+            return reading(false, Fault.TOO_CLOSE, String.format(Locale.US,
+                            "TOO CLOSE — MOVE BACK (showing %.0f%% of the reference)",
+                            match.scale * 100f),
+                    similarity, match, motion, intervalMs);
         }
-        if (!steady) {
-            return new Reading(false, Fault.MOVING, "STEADY THE PHONE",
-                    similarity, farGain, closeGain, motion);
+        if (match.scale > SCALE_MAX) {
+            return reading(false, Fault.TOO_FAR, String.format(Locale.US,
+                            "TOO FAR — MOVE CLOSER (showing %.1fx the reference)", match.scale),
+                    similarity, match, motion, intervalMs);
         }
-        return new Reading(true, Fault.NONE, "HOLD STILL",
-                similarity, farGain, closeGain, motion);
+
+        if (match.worstOffset() > OFFSET_TOLERANCE) {
+            boolean horizontal = Math.abs(match.offsetX) >= Math.abs(match.offsetY);
+            float amount = (horizontal ? Math.abs(match.offsetX) : Math.abs(match.offsetY)) * 100f;
+            Fault fault;
+            String direction;
+            if (horizontal) {
+                fault = match.offsetX > 0 ? Fault.AIM_RIGHT : Fault.AIM_LEFT;
+                direction = match.offsetX > 0 ? "RIGHT" : "LEFT";
+            } else {
+                fault = match.offsetY > 0 ? Fault.AIM_DOWN : Fault.AIM_UP;
+                direction = match.offsetY > 0 ? "DOWN" : "UP";
+            }
+            return reading(false, fault, String.format(Locale.US,
+                            "AIM %s (%.0f%% off centre)", direction, amount),
+                    similarity, match, motion, intervalMs);
+        }
+
+        // The first frame has no predecessor, so it cannot be judged moving; the hold needs
+        // several frames anyway, so nothing is let through early.
+        if (!(Float.isNaN(motion) || motion <= MAX_MOTION)) {
+            return reading(false, Fault.MOVING, "STEADY THE PHONE",
+                    similarity, match, motion, intervalMs);
+        }
+        return reading(true, Fault.NONE, "HOLD STILL", similarity, match, motion, intervalMs);
+    }
+
+    private static Reading reading(boolean ok, Fault fault, String hint, float similarity,
+                                   TemplateMatcher.Match m, float motion, long intervalMs) {
+        return new Reading(ok, fault, hint, similarity,
+                m == null ? Float.NaN : m.score,
+                m == null ? Float.NaN : m.scale,
+                m == null ? Float.NaN : m.offsetX,
+                m == null ? Float.NaN : m.offsetY,
+                motion, intervalMs);
     }
 
     /**
-     * Mean absolute luminance change against the previous frame, on a 0-255 scale.
-     * Returns NaN for the first frame.
+     * Mean absolute luminance change against the previous frame on a 0-255 scale, scaled to
+     * {@link #NOMINAL_INTERVAL_MS}. NaN when there is no predecessor, or none close enough in
+     * time to give a rate.
      */
-    float measureMotion(Bitmap frame) {
+    float measureMotion(Bitmap frame, long nowMs) {
         Bitmap thumb = Bitmap.createScaledBitmap(frame, MOTION_THUMB, MOTION_THUMB, true);
         int[] pixels = new int[MOTION_THUMB * MOTION_THUMB];
         thumb.getPixels(pixels, 0, MOTION_THUMB, 0, 0, MOTION_THUMB, MOTION_THUMB);
         if (thumb != frame) thumb.recycle();
 
-        // Overwrite the colour thumbnail with luminance in place; only intensity matters.
         for (int i = 0; i < pixels.length; i++) {
             int p = pixels[i];
             pixels[i] = (((p >> 16) & 0xFF) * 77 + ((p >> 8) & 0xFF) * 151 + (p & 0xFF) * 28) >> 8;
@@ -426,19 +385,24 @@ public final class AlignmentGate {
 
         float motion = Float.NaN;
         if (previousThumb != null) {
-            long total = 0;
-            for (int i = 0; i < pixels.length; i++) {
-                total += Math.abs(pixels[i] - previousThumb[i]);
+            long elapsed = nowMs - previousThumbMs;
+            if (elapsed >= MIN_INTERVAL_MS && elapsed <= STALE_INTERVAL_MS) {
+                long total = 0;
+                for (int i = 0; i < pixels.length; i++) {
+                    total += Math.abs(pixels[i] - previousThumb[i]);
+                }
+                motion = (float) total / pixels.length * NOMINAL_INTERVAL_MS / elapsed;
             }
-            motion = (float) total / pixels.length;
         }
         previousThumb = pixels;
+        previousThumbMs = nowMs;
         return motion;
     }
 
     /** Forgets the motion history, so the next frame is not compared against a stale one. */
     public void resetMotion() {
         previousThumb = null;
+        previousThumbMs = 0L;
     }
 
     private static void normalise(float[] v) {
@@ -456,8 +420,9 @@ public final class AlignmentGate {
         return sum;
     }
 
-    /** Releases nothing native — the encoder is a shared singleton owned by FeatureEmbedder. */
+    /** Releases the reference gradients; the encoder is a shared singleton owned elsewhere. */
     public void release() {
-        previousThumb = null;
+        resetMotion();
+        if (referenceEdges != null) referenceEdges.release();
     }
 }

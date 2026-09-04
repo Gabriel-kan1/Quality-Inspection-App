@@ -24,7 +24,10 @@ public class SlotResult {
     private String expectedType;
     /** Display name of the type actually found, or null when the position was empty. */
     private String foundType;
-    /** {@code FeatureLocalisation.Status} name: PRESENT, MISSING or WRONG_TYPE. */
+    /**
+     * {@code FeatureLocalisation.Status} name: PRESENT, MISSING, DISPLACED, WRONG_TYPE or
+     * OUT_OF_FRAME. Stored by name rather than ordinal so a new status needs no migration.
+     */
     private String status;
     /** Position within the reference photo's frame, fractional (0-1). Kept as recorded. */
     private float x;

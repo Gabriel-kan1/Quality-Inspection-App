@@ -37,10 +37,15 @@ public class ActiveLearningPolicyTest {
         return lib;
     }
 
-    /** An unknown sitting at {@code score}, just under the threshold. */
-    private static ReferenceLibrary.Classification unknownAt(ReferenceLibrary lib, float score) {
+    /** A classification whose best cosine is {@code score}, with a wide runner-up gap. */
+    private static ReferenceLibrary.Classification scoringAt(ReferenceLibrary lib, float score) {
         float axis = (float) Math.sqrt(Math.max(0, 1 - score * score));
         return lib.classify(new float[]{score, axis * 0.05f, axis});
+    }
+
+    /** An unknown sitting at {@code score}, just under the threshold. */
+    private static ReferenceLibrary.Classification unknownAt(ReferenceLibrary lib, float score) {
+        return scoringAt(lib, score);
     }
 
     private static List<ReferenceLibrary.Classification> unknowns(ReferenceLibrary lib, int n) {
@@ -108,6 +113,36 @@ public class ActiveLearningPolicyTest {
                 ActiveLearningPolicy.select(all, lib, new Random(SEED));
 
         assertEquals("without these the tuner only ever sees the classifier's failures",
+                1, countOf(selected, ActiveLearningPolicy.Kind.SPOT_CHECK));
+    }
+
+    /**
+     * The band that used to be invisible to the sample.
+     *
+     * Spot-check eligibility was gated on {@code "high"} confidence, so any accepted
+     * prediction scoring between the similarity threshold and
+     * {@link ReferenceLibrary#DEFAULT_HIGH_CONFIDENCE} could never be drawn. Measured over
+     * this project's own inspection history that band held 88 of 141 accepted predictions
+     * and every one of the three known silent misclassifications — and it had received zero
+     * spot checks. The operator found all three by tapping boxes by hand.
+     *
+     * A sample that cannot reach the population where the errors are is not bias control,
+     * it is a second bias. The pool is now every accepted prediction, drawn uniformly.
+     */
+    @Test
+    public void aMediumConfidenceAcceptanceIsStillWorthSpotChecking() {
+        ReferenceLibrary lib = libraryWithTwoPrototypes();
+        ReferenceLibrary.Classification c = scoringAt(lib, 0.80f);
+        assertEquals("fixture must be accepted", "stud", c.type);
+        assertEquals("fixture must sit in the band that used to be exempt",
+                "medium", c.confidence);
+
+        List<ReferenceLibrary.Classification> all = new ArrayList<>();
+        all.add(c);
+        List<ActiveLearningPolicy.Candidate> selected =
+                ActiveLearningPolicy.select(all, lib, new Random(SEED));
+
+        assertEquals("a merely-accepted prediction must still be auditable",
                 1, countOf(selected, ActiveLearningPolicy.Kind.SPOT_CHECK));
     }
 

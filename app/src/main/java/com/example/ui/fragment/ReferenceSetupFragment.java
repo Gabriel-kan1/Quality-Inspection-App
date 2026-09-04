@@ -30,6 +30,7 @@ import com.example.ml.FeatureEmbedder;
 import com.example.ml.FeatureLayout;
 import com.example.ml.FeatureTypeRegistry;
 import com.example.ml.LayoutMatcher;
+import com.example.ml.PartFiles;
 import com.example.ml.ReferenceLibrary;
 import com.example.ml.ReferenceLibraryProvider;
 import com.example.ml.ThresholdTuner;
@@ -45,6 +46,9 @@ import java.util.Locale;
 public class ReferenceSetupFragment extends Fragment {
 
     private static final String TAG = "ReferenceSetupFragment";
+
+    /** Backing image for the "USE BUILT-IN PRESET" shortcut; not currently shipped in assets. */
+    private static final String PRESET_ASSET = "chassis_hardware_preset.jpg";
 
     private FragmentReferenceSetupBinding binding;
     private String partId = "";
@@ -122,9 +126,14 @@ public class ReferenceSetupFragment extends Fragment {
             }
         });
 
-        binding.btnUsePresetReference.setOnClickListener(v -> {
-            loadSelectedAsset("chassis_hardware_preset.jpg");
-        });
+        // The preset image is not in the repo. Offering a button that loads nothing looks like a
+        // working shortcut and ends in an empty reference, so only show it if the asset is
+        // actually there; the assets browser below already lists whatever is.
+        if (assetExists("chassis_images/" + PRESET_ASSET)) {
+            binding.btnUsePresetReference.setOnClickListener(v -> loadSelectedAsset(PRESET_ASSET));
+        } else {
+            binding.btnUsePresetReference.setVisibility(View.GONE);
+        }
 
         // Same flow as SAVE REFERENCE — labelling and library building were always one act,
         // and having them on two buttons let an operator save a reference whose crops had
@@ -899,7 +908,22 @@ public class ReferenceSetupFragment extends Fragment {
         }
     }
 
+    /** Whether a bundled asset is really present, so a missing one fails loudly instead of quietly. */
+    private boolean assetExists(String path) {
+        try (InputStream in = requireContext().getAssets().open(path)) {
+            return in != null;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
     private void loadSelectedAsset(String filename) {
+        if (!assetExists("chassis_images/" + filename)) {
+            // Without this the load runs on a non-existent file, the preview stays blank and
+            // analyseReference() reports zero detections as though the part were empty.
+            Toast.makeText(getContext(), "Missing bundled image: " + filename, Toast.LENGTH_LONG).show();
+            return;
+        }
         try {
             selectedImageExternalUri = Uri.parse("file:///android_asset/chassis_images/" + filename);
             // Preview only — analyseReference() re-loads the asset at its own resolution.
@@ -1116,7 +1140,7 @@ public class ReferenceSetupFragment extends Fragment {
             }
 
             String timeStamp = new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(new java.util.Date());
-            File photoFile = new File(outputDir, "REF_" + partId + "_" + timeStamp + ".jpg");
+            File photoFile = new File(outputDir, "REF_" + PartFiles.safeName(partId) + "_" + timeStamp + ".jpg");
 
             FileOutputStream outputStream = new FileOutputStream(photoFile);
             byte[] buffer = new byte[4096];

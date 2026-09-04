@@ -3,7 +3,6 @@ plugins {
   alias(libs.plugins.kotlin.compose)
   alias(libs.plugins.google.devtools.ksp)
   alias(libs.plugins.roborazzi)
-  alias(libs.plugins.secrets)
 }
 
 android {
@@ -62,18 +61,17 @@ android {
   testOptions { unitTests { isIncludeAndroidResources = true } }
 }
 
-// Configure the Secrets Gradle Plugin to use .env and .env.example files
-// to match the convention used in Web projects.
-secrets {
-  propertiesFileName = ".env"
-  defaultPropertiesFileName = ".env.example"
-}
-
 // Some unused dependencies are commented out below instead of being removed.
 // This makes it easy to add them back in the future if needed.
+//
+// Retrofit, OkHttp, Moshi, the Firebase BOM and ML Kit barcode scanning were removed outright
+// rather than commented out. None of them had a single call site, and this app holds no INTERNET
+// permission on purpose — shipping unused networking code in an offline app is attack surface and
+// install size for nothing. The Gemini scaffolding that came with the AI Studio template (the
+// secrets plugin, .env.example, metadata.json) went with them, so there is no longer a slot for an
+// API key to be dropped into by accident.
 dependencies {
   implementation(platform(libs.androidx.compose.bom))
-  implementation(platform(libs.firebase.bom))
   // implementation(libs.accompanist.permissions)
   implementation(libs.androidx.activity.compose)
   implementation(libs.androidx.camera.camera2)
@@ -82,8 +80,6 @@ dependencies {
   implementation(libs.androidx.camera.view)
   implementation(libs.androidx.navigation.fragment)
   implementation(libs.androidx.navigation.ui)
-  implementation(libs.google.mlkit.barcode.scanning)
-  implementation(libs.itextpdf)
   implementation(libs.google.material)
   implementation(libs.androidx.compose.material.icons.core)
   // implementation(libs.androidx.compose.material.icons.extended)
@@ -98,15 +94,9 @@ dependencies {
   implementation(libs.androidx.lifecycle.viewmodel.compose)
   // implementation(libs.androidx.navigation.compose)
   // implementation(libs.coil.compose)
-  implementation(libs.converter.moshi)
-  // implementation(libs.firebase.ai)
   implementation(libs.kotlinx.coroutines.android)
   implementation(libs.kotlinx.coroutines.core)
-  implementation(libs.logging.interceptor)
-  implementation(libs.moshi.kotlin)
-  implementation(libs.okhttp)
   // implementation(libs.play.services.location)
-  implementation(libs.retrofit)
   implementation(libs.opencv)
   implementation(libs.onnxruntime.android)
   // Camera JPEGs and gallery picks carry orientation in EXIF rather than in the pixels;
@@ -134,8 +124,4 @@ dependencies {
   implementation(libs.androidx.room.ktx)
   annotationProcessor(libs.androidx.room.compiler)
   ksp(libs.androidx.room.compiler)
-  
-  // Moshi
-  implementation(libs.moshi.kotlin)
-  ksp(libs.moshi.kotlin.codegen)
 }

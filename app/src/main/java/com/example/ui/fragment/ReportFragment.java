@@ -3,6 +3,7 @@ package com.example.ui.fragment;
 import android.content.Intent;
 import android.net.Uri;
 import android.os.Bundle;
+import android.util.Log;
 import android.view.Gravity;
 import android.view.LayoutInflater;
 import android.view.View;
@@ -25,17 +26,9 @@ import com.example.data.entity.InspectionRecord;
 import com.example.data.entity.SlotResult;
 import com.example.databinding.FragmentReportBinding;
 import com.example.ml.FeatureTypeRegistry;
+import com.example.ml.PartFiles;
 import com.example.report.AdvisoryNotes;
-
-import com.itextpdf.text.BaseColor;
-import com.itextpdf.text.Document;
-import com.itextpdf.text.Element;
-import com.itextpdf.text.Font;
-import com.itextpdf.text.Paragraph;
-import com.itextpdf.text.Phrase;
-import com.itextpdf.text.pdf.PdfPCell;
-import com.itextpdf.text.pdf.PdfPTable;
-import com.itextpdf.text.pdf.PdfWriter;
+import com.example.report.InspectionReportPdf;
 
 import java.io.File;
 import java.io.FileOutputStream;
@@ -45,6 +38,8 @@ import java.util.List;
 import java.util.Locale;
 
 public class ReportFragment extends Fragment {
+
+    private static final String TAG = "ReportFragment";
 
     private FragmentReportBinding binding;
     private long inspectionId = -1;
@@ -303,9 +298,17 @@ public class ReportFragment extends Fragment {
             } else if ("WRONG_TYPE".equals(s.getStatus())) {
                 tvStatus.setText("WRONG:\n" + s.getFoundType());
                 tvStatus.setTextColor(ContextCompat.getColor(requireContext(), R.color.orange_warn));
-            } else {
+            } else if ("OUT_OF_FRAME".equals(s.getStatus())) {
+                tvStatus.setText("NOT IN\nFRAME");
+                tvStatus.setTextColor(ContextCompat.getColor(requireContext(), R.color.orange_warn));
+            } else if ("PRESENT".equals(s.getStatus())) {
                 tvStatus.setText("PRESENT");
                 tvStatus.setTextColor(ContextCompat.getColor(requireContext(), R.color.green_pass));
+            } else {
+                // Never render an unrecognised status as a pass: the row would assert a
+                // verified position for a check this build does not know how to read.
+                tvStatus.setText(s.getStatus());
+                tvStatus.setTextColor(ContextCompat.getColor(requireContext(), R.color.gray_text_secondary));
             }
 
             row.addView(tvSlot);
@@ -377,213 +380,35 @@ public class ReportFragment extends Fragment {
             return;
         }
 
-        try {
-            File pdfFolder = requireContext().getExternalFilesDir("reports");
-            if (pdfFolder != null && !pdfFolder.exists()) {
-                pdfFolder.mkdirs();
-            }
+        File pdfFolder = requireContext().getExternalFilesDir("reports");
+        if (pdfFolder != null && !pdfFolder.exists()) {
+            pdfFolder.mkdirs();
+        }
 
-            generatedPdfFile = new File(pdfFolder, "QC_REPORT_" + record.getPartId() + "_" + record.getId() + ".pdf");
-            Document document = new Document();
-            PdfWriter.getInstance(document, new FileOutputStream(generatedPdfFile));
+        // The part ID is free text the operator typed, and this path is handed straight to
+        // FileProvider below. Without the sanitiser a separator or a ".." in the ID writes
+        // outside the reports folder, so use the same one the rest of the app already does.
+        File target = new File(pdfFolder,
+                "QC_REPORT_" + PartFiles.safeName(record.getPartId()) + "_" + record.getId() + ".pdf");
 
-            document.open();
-
-            // Font configurations
-            Font titleFont = new Font(Font.FontFamily.HELVETICA, 20, Font.BOLD, BaseColor.DARK_GRAY);
-            Font headerFont = new Font(Font.FontFamily.HELVETICA, 12, Font.BOLD, BaseColor.WHITE);
-            Font bodyFont = new Font(Font.FontFamily.HELVETICA, 10, Font.NORMAL, BaseColor.BLACK);
-            Font boldBodyFont = new Font(Font.FontFamily.HELVETICA, 10, Font.BOLD, BaseColor.BLACK);
-            Font passFont = new Font(Font.FontFamily.HELVETICA, 12, Font.BOLD, new BaseColor(38, 166, 154));
-
-            // Document Header
-            Paragraph title = new Paragraph("CHASSIS QUALITY CONTROL INSPECTION REPORT", titleFont);
-            title.setAlignment(Element.ALIGN_CENTER);
-            title.setSpacingAfter(24f);
-            document.add(title);
-
-            // Metadata info list
-            document.add(new Paragraph("INSPECTION METADATA", headerFont));
-            Paragraph metaPart = new Paragraph("PART SKU ID: " + record.getPartId(), boldBodyFont);
-            Paragraph metaDate = new Paragraph("TIMESTAMP: " + new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(new Date(record.getTimestamp())), bodyFont);
-            Paragraph metaStatus = new Paragraph("INSPECTION RESULT STATUS: " + record.getPassOrFail(), passFont);
-            Paragraph metaNotes = new Paragraph("OPERATOR NOTES: " + (record.getNotes() != null && !record.getNotes().isEmpty() ? record.getNotes() : "No supervision notes registered."), bodyFont);
-
-            metaPart.setSpacingBefore(10f);
-            metaNotes.setSpacingAfter(20f);
-
-            document.add(metaPart);
-            document.add(metaDate);
-            document.add(metaStatus);
-            document.add(metaNotes);
-
-            // Table breakdown
-            PdfPTable table = new PdfPTable(4);
-            table.setWidthPercentage(100);
-            table.setSpacingBefore(15f);
-
-            float[] columnWidths = {2f, 1f, 1f, 1.2f};
-            table.setWidths(columnWidths);
-
-            // Headers cells
-            PdfPCell cell1 = new PdfPCell(new Phrase("Feature Type", headerFont));
-            cell1.setBackgroundColor(BaseColor.GRAY);
-            cell1.setHorizontalAlignment(Element.ALIGN_CENTER);
-            cell1.setPadding(8f);
-
-            PdfPCell cell2 = new PdfPCell(new Phrase("Expected Count", headerFont));
-            cell2.setBackgroundColor(BaseColor.GRAY);
-            cell2.setHorizontalAlignment(Element.ALIGN_CENTER);
-            cell2.setPadding(8f);
-
-            PdfPCell cell3 = new PdfPCell(new Phrase("Detected Count", headerFont));
-            cell3.setBackgroundColor(BaseColor.GRAY);
-            cell3.setHorizontalAlignment(Element.ALIGN_CENTER);
-            cell3.setPadding(8f);
-
-            PdfPCell cell4 = new PdfPCell(new Phrase("Status", headerFont));
-            cell4.setBackgroundColor(BaseColor.GRAY);
-            cell4.setHorizontalAlignment(Element.ALIGN_CENTER);
-            cell4.setPadding(8f);
-
-            table.addCell(cell1);
-            table.addCell(cell2);
-            table.addCell(cell3);
-            table.addCell(cell4);
-
-            // Rows data
-            if (features != null) {
-                for (FeatureResult f : features) {
-                    PdfPCell c1 = new PdfPCell(new Phrase(f.getFeatureType(), boldBodyFont));
-                    c1.setPadding(6f);
-                    PdfPCell c2 = new PdfPCell(new Phrase(String.valueOf(f.getExpectedCount()), bodyFont));
-                    c2.setHorizontalAlignment(Element.ALIGN_CENTER);
-                    c2.setPadding(6f);
-                    PdfPCell c3 = new PdfPCell(new Phrase(String.valueOf(f.getDetectedCount()), bodyFont));
-                    c3.setHorizontalAlignment(Element.ALIGN_CENTER);
-                    c3.setPadding(6f);
-                    PdfPCell c4 = new PdfPCell(new Phrase(f.getStatus(), bodyFont));
-                    c4.setHorizontalAlignment(Element.ALIGN_CENTER);
-                    c4.setPadding(6f);
-
-                    table.addCell(c1);
-                    table.addCell(c2);
-                    table.addCell(c3);
-                    table.addCell(c4);
-                }
-            }
-
-            document.add(table);
-
-            // Localisation: which specific expected feature is where, and which one is missing.
-            // A separate table from the counts above because the grain differs — that one is per
-            // type, this one per physical position.
-            if (slotResults != null && !slotResults.isEmpty()) {
-                Font locHeaderFont = new Font(Font.FontFamily.HELVETICA, 12, Font.BOLD, BaseColor.DARK_GRAY);
-                Paragraph locHeading = new Paragraph("CRITICAL FEATURE LOCALISATION", locHeaderFont);
-                locHeading.setSpacingBefore(24f);
-                locHeading.setSpacingAfter(4f);
-                document.add(locHeading);
-
-                int missing = 0, wrong = 0, displaced = 0;
-                for (SlotResult s : slotResults) {
-                    if ("MISSING".equals(s.getStatus())) missing++;
-                    else if ("WRONG_TYPE".equals(s.getStatus())) wrong++;
-                    else if ("DISPLACED".equals(s.getStatus())) displaced++;
-                }
-                Paragraph locBlurb = new Paragraph(String.format(Locale.getDefault(),
-                        "%d of %d expected positions verified, %d missing, %d wrong type,"
-                                + " %d out of position. Positions are given as a region of the"
-                                + " part with coordinates relative to its own extent.",
-                        slotResults.size() - missing - wrong - displaced, slotResults.size(),
-                        missing, wrong, displaced),
-                        bodyFont);
-                locBlurb.setSpacingAfter(10f);
-                document.add(locBlurb);
-
-                PdfPTable locTable = new PdfPTable(4);
-                locTable.setWidthPercentage(100);
-                locTable.setWidths(new float[]{0.6f, 1.8f, 1.8f, 1.4f});
-                for (String header : new String[]{"Slot", "Expected Feature", "Position", "Result"}) {
-                    PdfPCell hc = new PdfPCell(new Phrase(header, headerFont));
-                    hc.setBackgroundColor(BaseColor.GRAY);
-                    hc.setHorizontalAlignment(Element.ALIGN_CENTER);
-                    hc.setPadding(8f);
-                    locTable.addCell(hc);
-                }
-                for (SlotResult s : slotResults) {
-                    boolean defect = !"PRESENT".equals(s.getStatus());
-                    PdfPCell c1 = new PdfPCell(new Phrase("#" + s.getSlotId(), bodyFont));
-                    c1.setHorizontalAlignment(Element.ALIGN_CENTER);
-                    c1.setPadding(6f);
-                    PdfPCell c2 = new PdfPCell(new Phrase(s.getExpectedType(), boldBodyFont));
-                    c2.setPadding(6f);
-                    PdfPCell c3 = new PdfPCell(new Phrase(String.format(Locale.getDefault(),
-                            "%s (%.0f%%, %.0f%%)", s.getZone(), s.getRelX() * 100, s.getRelY() * 100), bodyFont));
-                    c3.setPadding(6f);
-                    String resultText;
-                    if ("MISSING".equals(s.getStatus())) {
-                        resultText = "MISSING";
-                    } else if ("WRONG_TYPE".equals(s.getStatus())) {
-                        resultText = "WRONG TYPE: " + s.getFoundType();
-                    } else if ("DISPLACED".equals(s.getStatus())) {
-                        resultText = String.format(Locale.getDefault(), "%s, %.0f%% OUT OF POSITION",
-                                s.getFoundType(),
-                                s.getOffsetPct() == null ? 0f : s.getOffsetPct() * 100);
-                    } else {
-                        resultText = "PRESENT";
-                    }
-                    PdfPCell c4 = new PdfPCell(new Phrase(resultText, defect ? boldBodyFont : bodyFont));
-                    c4.setHorizontalAlignment(Element.ALIGN_CENTER);
-                    c4.setPadding(6f);
-
-                    locTable.addCell(c1);
-                    locTable.addCell(c2);
-                    locTable.addCell(c3);
-                    locTable.addCell(c4);
-                }
-                document.add(locTable);
-            }
-
-            // Warning notes: advisory findings, as prose rather than table rows. They are
-            // deliberately not columns in the table above — putting a scratch count beside an
-            // expected/detected bolt count invites reading it as a defect tally, which is the
-            // confusion the severity scale exists to remove.
-            if (warningNotes != null && !warningNotes.isEmpty()) {
-                Font warnHeaderFont = new Font(Font.FontFamily.HELVETICA, 12, Font.BOLD, BaseColor.DARK_GRAY);
-                Paragraph warnHeading = new Paragraph("WARNING NOTES (NON-CRITICAL)", warnHeaderFont);
-                warnHeading.setSpacingBefore(24f);
-                warnHeading.setSpacingAfter(4f);
-                document.add(warnHeading);
-
-                Paragraph warnBlurb = new Paragraph(
-                        "Tracked as trends against this part's inspection history. These findings do"
-                                + " not affect the pass/fail verdict above.", bodyFont);
-                warnBlurb.setSpacingAfter(10f);
-                document.add(warnBlurb);
-
-                List<AdvisoryNotes.Note> ordered = new java.util.ArrayList<>(warningNotes);
-                java.util.Collections.sort(ordered, (a, b) -> a.level.ordinal() - b.level.ordinal());
-                for (AdvisoryNotes.Note note : ordered) {
-                    Font f = note.level == AdvisoryNotes.Level.ELEVATED ? boldBodyFont : bodyFont;
-                    Paragraph p = new Paragraph("- " + note.text, f);
-                    p.setSpacingAfter(4f);
-                    document.add(p);
-                }
-            }
-
-            // Seal signature section
-            Paragraph seal = new Paragraph("\n\n\n\nOFFLINE AUTOMATION SYSTEM LOG GENERATOR SEAL\nFactory QC Manager digital signature valid.", bodyFont);
-            seal.setAlignment(Element.ALIGN_RIGHT);
-            document.add(seal);
-
-            document.close();
-
-            if (showToast) {
-                Toast.makeText(getContext(), "Report exported to: Internal Storage/reports/QC_REPORT_" + record.getId() + ".pdf", Toast.LENGTH_LONG).show();
-            }
+        try (FileOutputStream out = new FileOutputStream(target)) {
+            InspectionReportPdf.write(out, record, features, slotResults, warningNotes);
+            generatedPdfFile = target;
         } catch (Exception e) {
+            // A partially written file is worse than none: it is a valid-looking path that
+            // opens to a corrupt document, and sharePdfReport() would happily send it on.
+            Log.e(TAG, "PDF generation failed", e);
+            if (target.exists() && !target.delete()) {
+                Log.w(TAG, "Could not remove partial report at " + target);
+            }
+            generatedPdfFile = null;
             Toast.makeText(getContext(), "Error saving PDF: " + e.getMessage(), Toast.LENGTH_LONG).show();
+            return;
+        }
+
+        if (showToast) {
+            Toast.makeText(getContext(), "Report exported to: Internal Storage/reports/"
+                    + target.getName(), Toast.LENGTH_LONG).show();
         }
     }
 

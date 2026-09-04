@@ -1,17 +1,21 @@
 package com.example.ui.fragment;
 
 import android.Manifest;
+import android.content.Context;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
 import android.graphics.Color;
 import android.graphics.drawable.GradientDrawable;
+import android.hardware.display.DisplayManager;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
 import android.util.Log;
+import android.view.Display;
 import android.view.LayoutInflater;
+import android.view.Surface;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.ImageView;
@@ -38,6 +42,7 @@ import com.example.data.entity.ReferenceProfile;
 import com.example.ml.HardwareFeatureExtractor;
 import com.example.ml.AlignmentGate;
 import com.example.ml.HoldTimer;
+import com.example.ml.PartFiles;
 import com.example.ui.util.AssetBitmaps;
 import com.example.ui.view.TrafficLightView;
 import com.example.databinding.FragmentInspectionBinding;
@@ -94,6 +99,18 @@ public class InspectionFragment extends Fragment {
     private ExecutorService analysisExecutor;
     private ProcessCameraProvider cameraProvider;
     private ImageCapture imageCapture;
+    private ImageAnalysis imageAnalysis;
+
+    /**
+     * MainActivity declares configChanges="orientation|screenSize", so a rotation never
+     * recreates this fragment and {@link #bindCameraUseCases()} never runs again. Without
+     * this listener the target rotation captured at bind time would stay pinned to whichever
+     * way up the phone happened to be when the camera started, and every later capture would
+     * be handed to the encoder sideways. Both use cases accept a new rotation in place, so
+     * there is nothing to rebind.
+     */
+    @Nullable private DisplayManager.DisplayListener displayListener;
+    private int previewDisplayId = Display.INVALID_DISPLAY;
 
     /** Built off the reference photo once, then read from the analysis thread only. */
     private volatile AlignmentGate alignmentGate;
@@ -360,10 +377,9 @@ public class InspectionFragment extends Fragment {
         preview.setSurfaceProvider(binding.previewCamera.getSurfaceProvider());
 
         // Both use cases are pinned to the display's current rotation so the frame the gate
-        // approves and the still that gets analysed are oriented the same way.
-        int targetRotation = binding.previewCamera.getDisplay() != null
-                ? binding.previewCamera.getDisplay().getRotation()
-                : android.view.Surface.ROTATION_0;
+        // approves and the still that gets analysed are oriented the same way. The pinning has
+        // to be kept up to date as the phone turns — see registerDisplayListener().
+        int targetRotation = currentDisplayRotation();
 
         ImageAnalysis analysis = new ImageAnalysis.Builder()
                 // Alignment is about where the phone is right now, so a backlog of stale
@@ -388,6 +404,8 @@ public class InspectionFragment extends Fragment {
             cameraProvider.unbindAll();
             cameraProvider.bindToLifecycle(getViewLifecycleOwner(),
                     CameraSelector.DEFAULT_BACK_CAMERA, preview, analysis, imageCapture);
+            imageAnalysis = analysis;
+            registerDisplayListener();
             holdTimer.reset();
             AlignmentGate gate = alignmentGate;
             if (gate != null) gate.resetMotion();
@@ -400,6 +418,57 @@ public class InspectionFragment extends Fragment {
             Toast.makeText(getContext(), "Camera bind failed: " + e.getMessage(), Toast.LENGTH_LONG).show();
             switchToStillMode();
         }
+    }
+
+    /** The rotation the preview is currently being shown at, or ROTATION_0 before it attaches. */
+    private int currentDisplayRotation() {
+        if (binding == null) return Surface.ROTATION_0;
+        Display display = binding.previewCamera.getDisplay();
+        return display != null ? display.getRotation() : Surface.ROTATION_0;
+    }
+
+    /**
+     * Keeps the bound use cases pointed at the display's real rotation for as long as the
+     * camera is live. Idempotent, so a rebind does not stack listeners.
+     */
+    private void registerDisplayListener() {
+        if (displayListener != null || binding == null) return;
+
+        Display display = binding.previewCamera.getDisplay();
+        previewDisplayId = display != null ? display.getDisplayId() : Display.INVALID_DISPLAY;
+
+        displayListener = new DisplayManager.DisplayListener() {
+            @Override public void onDisplayAdded(int displayId) { }
+            @Override public void onDisplayRemoved(int displayId) { }
+
+            @Override
+            public void onDisplayChanged(int displayId) {
+                // Fires for brightness and refresh-rate changes too, so re-read rather than
+                // assume the orientation actually moved. Setting the same value is a no-op.
+                if (displayId != previewDisplayId || binding == null) return;
+                int rotation = currentDisplayRotation();
+                if (imageCapture != null) imageCapture.setTargetRotation(rotation);
+                if (imageAnalysis != null) imageAnalysis.setTargetRotation(rotation);
+            }
+        };
+
+        DisplayManager dm = (DisplayManager) requireContext().getSystemService(Context.DISPLAY_SERVICE);
+        if (dm != null) {
+            dm.registerDisplayListener(displayListener, mainHandler);
+        } else {
+            displayListener = null;
+        }
+    }
+
+    private void unregisterDisplayListener() {
+        if (displayListener == null) return;
+        Context context = getContext();
+        if (context != null) {
+            DisplayManager dm = (DisplayManager) context.getSystemService(Context.DISPLAY_SERVICE);
+            if (dm != null) dm.unregisterDisplayListener(displayListener);
+        }
+        displayListener = null;
+        previewDisplayId = Display.INVALID_DISPLAY;
     }
 
     /**
@@ -416,8 +485,10 @@ public class InspectionFragment extends Fragment {
             frame = image.toBitmap();
             upright = rotateToUpright(frame, image.getImageInfo().getRotationDegrees());
 
-            AlignmentGate.Reading reading = gate.evaluate(upright);
+            // Read before evaluate: it times the motion rate, which must not include
+            // the encoder passes evaluate is about to spend.
             long now = SystemClock.elapsedRealtime();
+            AlignmentGate.Reading reading = gate.evaluate(upright, now);
             float progress = holdTimer.update(reading.inTolerance, now);
             boolean passed = holdTimer.isSatisfied();
 
@@ -460,12 +531,10 @@ public class InspectionFragment extends Fragment {
                     String.format(Locale.US, "HOLD STILL — %.1fs", remaining / 1000f),
                     reading.debugLine());
         } else {
-            // Carrying the match strength on the red light gives the operator something to
-            // maximise; without directional hints it is the only feedback that framing is
-            // improving before the light actually flips.
-            setLight(TrafficLightView.State.RED, 0f,
-                    reading.hint + "  ·  " + reading.matchPercent() + "%",
-                    reading.debugLine());
+            // The hint already carries the figure belonging to its own fault. Appending the
+            // area score to every hint put "78% match" beside a rejection for being too
+            // close, which reads as a contradiction rather than as advice.
+            setLight(TrafficLightView.State.RED, 0f, reading.hint, reading.debugLine());
         }
     }
 
@@ -482,7 +551,7 @@ public class InspectionFragment extends Fragment {
         }
         String timeStamp = new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault())
                 .format(new java.util.Date());
-        File photoFile = new File(outputDir, "COMP_" + partId + "_" + timeStamp + ".jpg");
+        File photoFile = new File(outputDir, "COMP_" + PartFiles.safeName(partId) + "_" + timeStamp + ".jpg");
 
         ImageCapture.OutputFileOptions options =
                 new ImageCapture.OutputFileOptions.Builder(photoFile).build();
@@ -517,6 +586,11 @@ public class InspectionFragment extends Fragment {
         if (referenceMissing) return;
         mode = Mode.STILL;
         if (cameraProvider != null) cameraProvider.unbindAll();
+        // Nothing is bound to re-orient any more; bindCameraUseCases() registers again if the
+        // operator goes back to the live feed.
+        unregisterDisplayListener();
+        imageCapture = null;
+        imageAnalysis = null;
         holdTimer.reset();
         captureInFlight.set(false);
         applyModeChrome();
@@ -592,7 +666,7 @@ public class InspectionFragment extends Fragment {
                 // A still has no predecessor, so the motion estimate must not carry over
                 // from whatever was scored before it.
                 gate.resetMotion();
-                reading = gate.evaluate(bitmap);
+                reading = gate.evaluate(bitmap, SystemClock.elapsedRealtime());
             } catch (Exception e) {
                 Log.e(TAG, "Still scoring failed", e);
                 return;
@@ -603,23 +677,20 @@ public class InspectionFragment extends Fragment {
             final AlignmentGate.Reading result = reading;
             mainHandler.post(() -> {
                 if (!isAdded() || binding == null || mode != Mode.STILL) return;
-                String strength = result.matchPercent() + "% match";
                 if (result.inTolerance) {
                     setLight(TrafficLightView.State.GREEN, 1f,
-                            "SAME AREA — " + strength, result.debugLine());
-                    binding.tvOperatorTip.setText(
-                            "Saved image shows the reference area (" + strength + "). Ready to analyze.");
+                            "SAME AREA, FRAMED LIKE THE REFERENCE", result.debugLine());
+                    binding.tvOperatorTip.setText("Saved image matches the reference area and"
+                            + " framing (area " + result.matchPercent() + "%). Ready to analyze.");
                 } else {
-                    // The hint distinguishes the wrong area from the right area shot at the
-                    // wrong distance; a still that is merely too far is not "not the area".
-                    setLight(TrafficLightView.State.RED, 0f,
-                            result.hint + " — " + strength, result.debugLine());
-                    binding.tvOperatorTip.setText(
-                            "Saved image isn't framed like the reference (" + strength
-                                    + "). You can still analyze it, but detections may be unreliable.");
+                    // The hint names the one thing that is wrong and by how much, so it is
+                    // the whole message here too rather than a prefix to a second number.
+                    setLight(TrafficLightView.State.RED, 0f, result.hint, result.debugLine());
+                    binding.tvOperatorTip.setText(result.hint
+                            + ". You can still analyze it, but detections may be unreliable.");
                     // Carried to the results screen: analysis is still allowed here, so the
                     // warning has to travel with the image rather than stopping at this screen.
-                    stillGateWarning = result.hint + " (" + strength + ")";
+                    stillGateWarning = result.hint;
                 }
             });
         });
@@ -1000,7 +1071,7 @@ public class InspectionFragment extends Fragment {
             }
 
             String timeStamp = new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(new java.util.Date());
-            File photoFile = new File(outputDir, "COMP_" + partId + "_" + timeStamp + ".jpg");
+            File photoFile = new File(outputDir, "COMP_" + PartFiles.safeName(partId) + "_" + timeStamp + ".jpg");
 
             FileOutputStream outputStream = new FileOutputStream(photoFile);
             byte[] buffer = new byte[4096];
@@ -1068,6 +1139,7 @@ public class InspectionFragment extends Fragment {
     @Override
     public void onDestroyView() {
         super.onDestroyView();
+        unregisterDisplayListener();
         if (mainHandler != null) {
             mainHandler.removeCallbacksAndMessages(null);
         }
@@ -1075,6 +1147,8 @@ public class InspectionFragment extends Fragment {
             cameraProvider.unbindAll();
             cameraProvider = null;
         }
+        imageCapture = null;
+        imageAnalysis = null;
 
         // Order matters: the gate owns native OpenCV buffers the GC knows nothing about, and
         // freeing them under a frame that is still being scored is a native crash rather than
