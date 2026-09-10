@@ -132,4 +132,12 @@
             app:popUpTo="@id/navigation_report_scan"
             app:popUpToInclusive="true" />
     </fragment>
+
+    <!-- Top-level, reached from the bottom bar rather than from an action: it is not a step
+         in the inspection flow and nothing hands it an argument. -->
+    <fragment
+        android:id="@+id/navigation_edge_lab"
+        android:name="com.example.ui.fragment.EdgeLabFragment"
+        android:label="Edge Method Lab"
+        tools:layout="@layout/fragment_edge_lab" />
 </navigation>

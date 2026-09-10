@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    One operator's result. Inflated once per method by EdgeLabFragment.
+
+    The map is the point of the card, so it gets the width and the numbers sit above it: the
+    counts only mean something once you have looked at what produced them.
+-->
+<com.google.android.material.card.MaterialCardView
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:id="@+id/card_method"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_marginBottom="16dp"
+    app:cardBackgroundColor="@color/surface_card"
+    app:cardCornerRadius="16dp"
+    app:strokeWidth="0dp"
+    app:strokeColor="@color/blue_primary">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="16dp">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <TextView
+                android:id="@+id/tv_method_name"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:textColor="@color/white"
+                android:textSize="15sp"
+                android:textStyle="bold"
+                tools:text="Canny (Otsu-adaptive)" />
+
+            <!-- Only shown on the row that is the production pipeline, so the others are
+                 read as alternatives to something rather than as nine equal options. -->
+            <TextView
+                android:id="@+id/tv_method_badge"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:background="#3338BDF8"
+                android:paddingHorizontal="8dp"
+                android:paddingVertical="3dp"
+                android:text="SHIPPED"
+                android:textColor="@color/blue_primary"
+                android:textSize="10sp"
+                android:textStyle="bold"
+                android:visibility="gone"
+                tools:visibility="visible" />
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/tv_method_metrics"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:textColor="@color/blue_primary"
+            android:textSize="12sp"
+            android:textStyle="bold"
+            tools:text="14 candidates  ·  318 contours  ·  3.41% edge  ·  86 ms" />
+
+        <TextView
+            android:id="@+id/tv_method_summary"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:lineSpacingExtra="2dp"
+            android:textColor="@color/gray_text_secondary"
+            android:textSize="11sp"
+            tools:text="The same operator with its two thresholds derived per image from Otsu." />
+
+        <!-- Black plate: these are white-on-black binary maps, and the card colour behind a
+             letterboxed image would read as part of the map. -->
+        <ImageView
+            android:id="@+id/iv_method_edges"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:adjustViewBounds="true"
+            android:background="@color/black"
+            android:contentDescription="Edge map produced by this method"
+            android:scaleType="fitCenter"
+            tools:src="@android:drawable/ic_menu_gallery" />
+
+    </LinearLayout>
+
+</com.google.android.material.card.MaterialCardView>

@@ -58,25 +58,28 @@ public class HardwareFeatureExtractor {
     public static final int WORKING_MAX_DIM = 1280;
 
     // --- Edge detection (computeEdges) ---
+    // Package-visible: EdgeMethodLab's tuned hybrid variants must hold every one of these
+    // fixed while they vary the four knobs the study moved, so they read these rather than
+    // keeping copies that could drift away from what production actually uses.
     /** Fraction of near-white pixels above which the black-hat glare correction runs. */
-    private static final double GLARE_RATIO_THRESHOLD = 0.05;
+    static final double GLARE_RATIO_THRESHOLD = 0.05;
     /** Structuring element for the black-hat lighting correction, in WORKING_MAX_DIM pixels. */
-    private static final int GLARE_KERNEL_SIZE = 75;
+    static final int GLARE_KERNEL_SIZE = 75;
     /** CLAHE local-contrast boost. Higher = crisper edges but more texture noise. */
-    private static final double CLAHE_CLIP_LIMIT = 1.0;
+    static final double CLAHE_CLIP_LIMIT = 1.0;
     /** Bilateral filter diameter/sigmas — denoise while preserving edges. */
-    private static final double BILATERAL_SIGMA_COLOR = 60;
-    private static final double BILATERAL_SIGMA_SPACE = 20;
+    static final double BILATERAL_SIGMA_COLOR = 60;
+    static final double BILATERAL_SIGMA_SPACE = 20;
     /**
      * Canny thresholds are computed adaptively per-image via Otsu's method rather
      * than fixed, so lighting/exposure differences between photos don't require
      * re-tuning. These multipliers scale the Otsu threshold (low = ratio * high).
      */
-    private static final double CANNY_LOW_RATIO = 0.5;
+    static final double CANNY_LOW_RATIO = 0.5;
     private static final double CANNY_HIGH_CAP = 255.0;
     /** Morphology: dilate (rect) to bridge gaps, then close (ellipse) to seal contours. */
-    private static final int DILATE_KERNEL_SIZE = 5;
-    private static final int CLOSE_KERNEL_SIZE = 7;
+    static final int DILATE_KERNEL_SIZE = 5;
+    static final int CLOSE_KERNEL_SIZE = 7;
 
     // --- Geometry filtering (findFeatureBoxes) ---
     /**
@@ -301,8 +304,14 @@ public class HardwareFeatureExtractor {
         }
     }
 
-    /** Bundles the intermediate edge Mats produced by {@link #computeEdges}. */
-    private static final class Edges {
+    /**
+     * Bundles the intermediate edge Mats produced by {@link #computeEdges}.
+     *
+     * <p>Package-visible so {@link EdgeMethodLab} can show the shipped pipeline's own output
+     * beside the alternatives it is compared against. A debug screen that reimplemented this
+     * would drift from what actually runs and quietly stop being evidence.
+     */
+    static final class Edges {
         final Mat gray;
         /**
          * Raw Canny output, before any morphology.
@@ -584,8 +593,12 @@ public class HardwareFeatureExtractor {
      * Shared OpenCV geometry stage (Steps 3-4 of the Python script): finds contours,
      * applies the dimension/aspect/margin + dynamic-area filters, removes nested boxes
      * and merges nearby fragments. Returns the final feature bounding boxes.
+     *
+     * <p>Package-visible so {@link EdgeMethodLab} can score every candidate edge map through
+     * the same filter the detector uses. Counting raw contours instead would rank a method by
+     * how much noise it produces rather than by how much hardware it finds.
      */
-    private static List<Rect> findFeatureBoxes(Mat edges, float imgWidth, float imgHeight) {
+    static List<Rect> findFeatureBoxes(Mat edges, float imgWidth, float imgHeight) {
         List<MatOfPoint> contours = new ArrayList<>();
         Mat hierarchy = new Mat();
         Imgproc.findContours(edges, contours, hierarchy, Imgproc.RETR_EXTERNAL, Imgproc.CHAIN_APPROX_SIMPLE);
@@ -781,7 +794,7 @@ public class HardwareFeatureExtractor {
      * edges (for the diagnostic overlay) and the closed edges (for contour detection).
      * Intermediate Mats are released internally; the caller must release the returned Edges.
      */
-    private static Edges computeEdges(Mat src, Boolean forceGlareCorrection) {
+    static Edges computeEdges(Mat src, Boolean forceGlareCorrection) {
         Mat gray = new Mat();
         Mat preprocessed = null;
         Mat imgClahe = null;
