@@ -75,10 +75,11 @@ public class MainActivity extends AppCompatActivity {
             // back gesture, so both behave identically on every screen.
             binding.btnGlobalBack.setOnClickListener(v -> getOnBackPressedDispatcher().onBackPressed());
 
-            // Show bottom navigation only on Top-Level screens (Home & History)
+            // Show bottom navigation only on Top-Level screens (Home, History & Edge Lab)
             navController.addOnDestinationChangedListener((controller2, destination, arguments) -> {
                 int id = destination.getId();
-                if (id == R.id.navigation_home || id == R.id.navigation_history) {
+                if (id == R.id.navigation_home || id == R.id.navigation_history
+                        || id == R.id.navigation_edge_lab) {
                     binding.bottomNavigation.setVisibility(View.VISIBLE);
                     // A view that was GONE gets no insets dispatch when it returns, so
                     // BottomNavigationView comes back without the bottom padding that keeps it
@@ -112,9 +113,12 @@ public class MainActivity extends AppCompatActivity {
      * false rather than throwing, the tap produced no navigation, no crash and no log line.
      *
      * <p>It only bites because Home reaches History through a plain action, so the two sit in
-     * one stack rather than being independent tabs. This app has two top-level screens and no
+     * one stack rather than being independent tabs. This app has three top-level screens and no
      * per-tab history worth preserving, so the fix is to stop asking for machinery it does not
      * use: pop back to the start destination and go, with no state saved or restored.
+     *
+     * <p>Edge Lab is reachable the same way: it is a destination in the graph with no inbound
+     * action, so navigating to it by id from here is the only route in.
      */
     private void setupBottomNavigation() {
         binding.bottomNavigation.setOnItemSelectedListener(item -> {

@@ -101,7 +101,7 @@ Legend: ✅ done · 🟡 partial · ❌ not started
 | Localisation — *which* fastener is wrong and where | ✅ | Slot-level `PRESENT`/`MISSING`/`DISPLACED`/`WRONG_TYPE` |
 | Alignment checking | ✅ | Real, via the positional check + capture gate. *The 1.8s "ALIGNED (98%)" mock is gone.* |
 | Dimensions (pixel→mm) | 🟡 | Stage A only — see below |
-| Variable lighting robustness | 🟡 | Implemented adaptively, **never measured** |
+| Variable lighting robustness | 🟡 | Implemented adaptively; the `Edge Lab` tab now makes it *observable* per photograph, but still **never measured** across a lighting set |
 | Few-shot learning from rare examples | ✅ | 97.1% leave-one-out on 34 curated crops |
 | Automatic documentation | ✅ | PDF (platform `PdfDocument`, no third-party library), plus JSON + CSV export, all via share intent |
 | **Barcode → report linking** | ✅ | Reports carry a QR pointer and **History > SCAN reads one back** to open that inspection (ZXing, both directions). Linking a scanned code to a *part* is still not done — parts are chosen from the registry |
@@ -149,10 +149,71 @@ Legend: ✅ done · 🟡 partial · ❌ not started
   resolves the uuid against the local database and opens that inspection, warning first if the
   printout's digest no longer matches the filed record. A code from another device resolves to
   nothing and says so, because the code identifies a record rather than containing one.
-- **245 unit tests**, all passing.
+- **Edge Method Lab** (`Edge Lab` tab) — a debugging screen that runs one photograph through
+  nine edge/feature operators at the same working resolution and scores every map through the
+  detector's own geometry filter: Canny at fixed thresholds, Canny with Otsu-derived
+  thresholds, Sobel and Scharr gradient magnitude, Laplacian of Gaussian, morphological
+  gradient, adaptive Gaussian threshold, a CLAHE+bilateral+Canny partial, and the shipped
+  hybrid itself — called through `HardwareFeatureExtractor.computeEdges` rather than copied,
+  so the screen cannot drift from the code it is evidence about. The edge stage was previously
+  invisible: an inspection showed only the boxes that came out the far end, where a missed
+  fastener and one rejected on aspect ratio look identical.
+- **Hybrid v2/v3/v4** — three tuned replacements for the detector's edge stage, found by
+  `python/hybrid_v2_study.py` and shown in the Edge Lab beside the stack they would replace.
+  The shipped stack was exactly right on four calibration photographs and wildly over-
+  detecting on two (`stud1.jpg` 48 against a target of 4), because the adaptive bilateral step
+  buckets Laplacian variance and so gave the *least* smoothing to the two sharp,
+  full-resolution photographs that needed the most. All three variants hit all six calibration
+  counts exactly — confirmed on-device, not just in the study — and all three are **cheaper**
+  than the stack they replace, because pinning the bilateral diameter drops the full-image
+  CV_64F Laplacian probe that choosing one adaptively costs.
+
+  | | exact of 26 | misses | extras | group stability | edge cost |
+  |---|---|---|---|---|---|
+  | shipped | 9 | **0** | 254 | 0.638 | — |
+  | v2 bilateral 9, Otsu x1.1 | 12 | 5 | 32 | 0.261 | −15% |
+  | v3 bilateral 5, gauss 7, Otsu x1.2 | 12 | 3 | 33 | 0.178 | **−51%** |
+  | v4 bilateral 7, L2 gradient | 16 | 3 | 15 | **0.125** | −30% |
+  | v5 v3 + adaptiveThreshold mask | 12 | 4 | 33 | 0.156 | +35% |
+  | v6 bilateral 5, Otsu x1.1, L2 | **20** | 3 | **13** | 0.182 | −26% |
+
+  *exact / misses / extras* are scored against `python/detection_ground_truth.py` — a
+  hand-made count for every bundled photograph, which replaced the six calibration counts once
+  it became clear the proxies could not separate the variants. Three findings from making it:
+  `screws.jpg` has four screws, not the five the calibration target said (the fifth box is a
+  scratch); the shipped stack's worst failure is not a calibration image at all (`three.jpg`:
+  three rivets, twelve boxes); and the three misses no variant recovers are all low-contrast
+  heads barely darker than the plate — a limit of a global threshold, not a tuning gap.
+  **v4 was far ahead of v2/v3/v5 all along** and the proxies could not show it. v6 is exact on
+  all fourteen stud and screw photographs, at the cost of a narrower parameter plateau and worse
+  group stability than v4; the shipped stack never misses a fastener, it buries them.
+
+  *photo drift* is the calibration error under brightness, gamma, noise and JPEG variation;
+  *param drift* the same after nudging each parameter one step; *group stability* the
+  disagreement between photographs the alignment gate treats as interchangeable, which is what
+  actually causes a false FAIL. The clearest single finding: every one of the 149 exact
+  configurations sets Canny's low threshold to 0.4x the high one, not production's 0.5.
+
+  On **adaptive thresholding**, the study answers both senses of the phrase and they point
+  opposite ways. Deriving Canny's bounds adaptively — Triangle, median- or mean-anchored
+  auto-Canny, or Otsu computed per tile rather than globally — is *worse*: tiled Otsu can
+  reach photo drift 0, but every locally-adaptive derivation costs group stability badly
+  (0.48–0.57 against v3's 0.18), because a threshold that tracks local content makes the count
+  depend on what else is in the frame. Using `cv2.adaptiveThreshold` as a *mask* over the Canny
+  map is *better* — it is a poor edge detector alone (199 candidates where the shipped stack
+  finds 42) but an effective speckle filter, and that is what v5 is — on the proxies. Against
+  ground truth it is no better than v3. Three further discriminators tried against ground
+  truth — a component solidity filter, a morphological open, and Canny bounds from a gradient
+  percentile — were all inert; none appears in any top-ranked configuration.
+
+  **Not adopted** — they are candidates on a debug screen; the detector still runs the
+  original stack.
+- **254 unit tests**, all passing.
 - **Reproducible studies** in `python/` — localisation tolerance and transform model
   (`localisation_tolerance_study.py`), classifier margin fitted from real inspection history
-  (`margin_study.py`), encoder comparison, detector A/B harness, scale
+  (`margin_study.py`), the edge-stage tuning search behind Hybrid v2/v3/v4
+  (`hybrid_v2_study.py`) with its hand-made per-photograph ground truth
+  (`detection_ground_truth.py`), encoder comparison, detector A/B harness, scale
   probe study, and objective same-area pair ground truth.
 
 ### In progress / partial
@@ -279,7 +340,7 @@ app/src/main/assets/
   reference_crops/       bundled seed crops, one folder per type
   chassis_images/        test photographs
 python/                  offline studies and the ONNX export script
-app/src/test/            245 unit tests
+app/src/test/            254 unit tests
 ```
 
 Note: `HardwareFeatureExtractor` currently lives under `ui/fragment/` despite being pure
