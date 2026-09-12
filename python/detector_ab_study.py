@@ -26,7 +26,7 @@ Two guards on the metric:
     it holds detection counts up while bringing spread down.
 
 Run:  python python/detector_ab_study.py
-Note: desktop OpenCV (4.13 here) against the app's 4.5.3. The primitives used — Canny,
+Note: desktop OpenCV (4.13 here) against the app's 4.14.0 Android build. The primitives used — Canny,
 morphology, findContours, bilateralFilter — are stable across that gap, but treat small
 numeric differences as noise rather than signal.
 """

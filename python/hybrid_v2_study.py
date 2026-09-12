@@ -58,7 +58,7 @@ contact sheets (see detection_ground_truth.py, and the three findings in its doc
 Scored against all 26 reference-distance photographs, the ranking the proxies produced was
 wrong in one important way: v4 was far ahead of v2, v3 and v5 all along.
 
-                         desktop OpenCV 4.13         on-device OpenCV 4.5.3
+                         desktop OpenCV 4.13         on-device OpenCV 4.14
                       exact  misses  extras         exact  misses  extras
     shipped            9/26      0     254          9/26      0     260
     v2                12/26      5      32         12/26      5      29
@@ -68,8 +68,8 @@ wrong in one important way: v4 was far ahead of v2, v3 and v5 all along.
     v6                20/26      3      13         18/26      3      18
 
 The on-device column was scraped from the Edge Lab running on an emulator (the app's OpenCV
-is 4.5.3; the study runs 4.13). The two disagree by a count or two on several images — the
-version gap is real — but the ordering survives it: v6 is the most accurate on both, and the
+is 4.14; the study runs 4.13 from pip). The two disagree by a count or two on several images —
+the build gap is real — but the ordering survives it: v6 is the most accurate on both, and the
 shipped stack never misses a fastener on either, it buries them.
 
 v6 came from a 4,032-configuration search ranked on 2 x misses + extras, held to the six
@@ -117,7 +117,7 @@ Pinning the bilateral diameter also makes these cheaper than the stack they repl
 choosing d adaptively costs a full-image CV_64F Laplacian probe on every photograph.
 
 Run:  python python/hybrid_v2_study.py
-Note: desktop OpenCV (4.13 here) against the app's 4.5.3, and desktop timings are not device
+Note: desktop OpenCV (4.13 from pip) against the app's 4.14.0 Android build, and desktop timings are not device
 timings. The primitives used are stable across that gap; treat small numeric differences as
 noise. This module reuses detector_ab_study's port of the Java detector rather than making a
 second copy of it — the BASE config below is asserted to reproduce it on every asset.
