@@ -49,6 +49,48 @@ just in parameter value, and every one of them beats the shipped stack on stabil
   v3  bilateral 5, gauss 7, Otsu x1.2      best combined rank; stability 0.18; cheapest
   v4  bilateral 7, L2 gradient, 3/9 morph  best stability of anything tested (0.13)
   v5  v3 + adaptiveThreshold mask          stability 0.16, least fragile per nudge, ~2x cost
+  v6  bilateral 5, Otsu x1.1, L2, 5/9      best against real ground truth: 20/26 exact
+
+GROUND TRUTH
+------------
+Round 4 replaced the six calibration counts with a count for every asset, made by eye from
+contact sheets (see detection_ground_truth.py, and the three findings in its docstring).
+Scored against all 26 reference-distance photographs, the ranking the proxies produced was
+wrong in one important way: v4 was far ahead of v2, v3 and v5 all along.
+
+                         desktop OpenCV 4.13         on-device OpenCV 4.5.3
+                      exact  misses  extras         exact  misses  extras
+    shipped            9/26      0     254          9/26      0     260
+    v2                12/26      5      32         12/26      5      29
+    v3                12/26      3      33         14/26      3      25
+    v4                16/26      3      15         13/26      4      18
+    v5                12/26      4      33         11/26      4      29
+    v6                20/26      3      13         18/26      3      18
+
+The on-device column was scraped from the Edge Lab running on an emulator (the app's OpenCV
+is 4.5.3; the study runs 4.13). The two disagree by a count or two on several images — the
+version gap is real — but the ordering survives it: v6 is the most accurate on both, and the
+shipped stack never misses a fastener on either, it buries them.
+
+v6 came from a 4,032-configuration search ranked on 2 x misses + extras, held to the six
+supplied targets and forbidden from driving any image to zero detections. It beats v4 on 14 of
+20 random half-splits of the set, so it is not a search artefact, and it is EXACT ON ALL
+FOURTEEN STUD AND SCREW PHOTOGRAPHS. It pays for that with a narrower parameter plateau
+(drift 17 against v4's 9) and worse group stability (0.18 against 0.13): v4 remains the pick
+if agreement between interchangeable photographs matters more than absolute accuracy.
+
+Three discriminators were added to that search and all three were inert or harmful — none
+appears in any top-ranked configuration:
+  * a connected-component solidity filter (area / convex hull area), meant to reject grime
+    blobs that are not compact;
+  * a morphological OPEN after the close, meant to remove thin fragments;
+  * Canny bounds from a percentile of the Sobel gradient magnitude instead of Otsu on the
+    intensity histogram.
+The adaptive-threshold mask (v5) is also inert against ground truth; its earlier advantage
+was on the proxies only.
+
+The three misses no configuration recovers are all low-contrast heads barely darker than the
+plate (head3.jpg x2, one.jpg x1). They are a limit of a global threshold, not a tuning gap.
 
 ADAPTIVE THRESHOLDING
 ---------------------
@@ -88,6 +130,7 @@ import cv2
 import numpy as np
 
 import detector_ab_study as D
+import detection_ground_truth as GTRUTH
 
 TARGETS = {"defected.jpg": 4, "head1.jpg": 4, "reference.jpg": 4,
            "screws.jpg": 5, "stud1.jpg": 4, "zero.jpg": 3}
@@ -118,6 +161,8 @@ WINNERS = {
     "v5 v3 + adaptive mask": dict(bilat=5, median=5, gauss=7, high_scale=1.2, low_ratio=0.4,
                                   l2=False, dilate_k=5, close_k=7,
                                   mask_block=61, mask_c=2, mask_grow=5),
+    "v6 L2 accuracy":       dict(bilat=5, median=5, gauss=5, high_scale=1.1, low_ratio=0.4,
+                                 l2=True, dilate_k=5, close_k=9),
 }
 # The first-round picks, kept so the improvement is visible rather than asserted. All three
 # are exact on the six targets too; they were beaten once low_ratio entered the search.
@@ -392,6 +437,21 @@ def edge_cost(configs, repeats=9):
     return out
 
 
+def ground_truth(configs):
+    """Section 6: every config against every reference-distance photograph."""
+    print("\n6. GROUND TRUTH (26 reference-distance photographs; see detection_ground_truth.py)")
+    print(f"   {'method':<28}{'exact':>7}{'L1':>5}{'miss':>6}{'extra':>7}{'weighted':>10}")
+    out = {}
+    for label, p in configs.items():
+        counts = {n: count(D.load_working_image(D.ASSETS / n), p) for n in GTRUTH.GT}
+        w, fn, fp = GTRUTH.weighted(counts)
+        l1 = sum(GTRUTH.err(n, c) for n, c in counts.items())
+        exact = sum(1 for n, c in counts.items() if GTRUTH.err(n, c) == 0)
+        out[label] = dict(exact=exact, l1=l1, fn=fn, fp=fp, weighted=w, counts=counts)
+        print(f"   {label:<28}{exact:>4}/26{l1:>5}{fn:>6}{fp:>7}{w:>10}")
+    return out
+
+
 def main():
     verify_base()
 
@@ -404,6 +464,7 @@ def main():
     param_drift({k: v for k, v in list(WINNERS.items()) + list(ALSO_RAN.items())})
     stability_and_cost(configs)
     edge_cost(configs)
+    ground_truth(configs)
     search()
 
     print("\nCONCLUSION: v2/v3/v4 are the three kept. All eight exact configs beat the shipped")

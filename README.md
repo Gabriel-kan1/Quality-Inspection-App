@@ -168,13 +168,25 @@ Legend: ✅ done · 🟡 partial · ❌ not started
   than the stack they replace, because pinning the bilateral diameter drops the full-image
   CV_64F Laplacian probe that choosing one adaptively costs.
 
-  | | photo drift | param drift | group stability | edge cost |
-  |---|---|---|---|---|
-  | shipped | 325 | — | 0.638 | — |
-  | v2 bilateral 9, Otsu x1.1 | **0** | 6 | 0.261 | −15% |
-  | v3 bilateral 5, gauss 7, Otsu x1.2 | 2 | 8 | 0.178 | **−51%** |
-  | v4 bilateral 7, L2 gradient | 5 | 9 | **0.125** | −30% |
-  | v5 v3 + adaptiveThreshold mask | 1 | 7 | 0.156 | +35% |
+  | | exact of 26 | misses | extras | group stability | edge cost |
+  |---|---|---|---|---|---|
+  | shipped | 9 | **0** | 254 | 0.638 | — |
+  | v2 bilateral 9, Otsu x1.1 | 12 | 5 | 32 | 0.261 | −15% |
+  | v3 bilateral 5, gauss 7, Otsu x1.2 | 12 | 3 | 33 | 0.178 | **−51%** |
+  | v4 bilateral 7, L2 gradient | 16 | 3 | 15 | **0.125** | −30% |
+  | v5 v3 + adaptiveThreshold mask | 12 | 4 | 33 | 0.156 | +35% |
+  | v6 bilateral 5, Otsu x1.1, L2 | **20** | 3 | **13** | 0.182 | −26% |
+
+  *exact / misses / extras* are scored against `python/detection_ground_truth.py` — a
+  hand-made count for every bundled photograph, which replaced the six calibration counts once
+  it became clear the proxies could not separate the variants. Three findings from making it:
+  `screws.jpg` has four screws, not the five the calibration target said (the fifth box is a
+  scratch); the shipped stack's worst failure is not a calibration image at all (`three.jpg`:
+  three rivets, twelve boxes); and the three misses no variant recovers are all low-contrast
+  heads barely darker than the plate — a limit of a global threshold, not a tuning gap.
+  **v4 was far ahead of v2/v3/v5 all along** and the proxies could not show it. v6 is exact on
+  all fourteen stud and screw photographs, at the cost of a narrower parameter plateau and worse
+  group stability than v4; the shipped stack never misses a fastener, it buries them.
 
   *photo drift* is the calibration error under brightness, gamma, noise and JPEG variation;
   *param drift* the same after nudging each parameter one step; *group stability* the
@@ -189,7 +201,10 @@ Legend: ✅ done · 🟡 partial · ❌ not started
   (0.48–0.57 against v3's 0.18), because a threshold that tracks local content makes the count
   depend on what else is in the frame. Using `cv2.adaptiveThreshold` as a *mask* over the Canny
   map is *better* — it is a poor edge detector alone (199 candidates where the shipped stack
-  finds 42) but an effective speckle filter, and that is what v5 is.
+  finds 42) but an effective speckle filter, and that is what v5 is — on the proxies. Against
+  ground truth it is no better than v3. Three further discriminators tried against ground
+  truth — a component solidity filter, a morphological open, and Canny bounds from a gradient
+  percentile — were all inert; none appears in any top-ranked configuration.
 
   **Not adopted** — they are candidates on a debug screen; the detector still runs the
   original stack.
@@ -197,7 +212,8 @@ Legend: ✅ done · 🟡 partial · ❌ not started
 - **Reproducible studies** in `python/` — localisation tolerance and transform model
   (`localisation_tolerance_study.py`), classifier margin fitted from real inspection history
   (`margin_study.py`), the edge-stage tuning search behind Hybrid v2/v3/v4
-  (`hybrid_v2_study.py`), encoder comparison, detector A/B harness, scale
+  (`hybrid_v2_study.py`) with its hand-made per-photograph ground truth
+  (`detection_ground_truth.py`), encoder comparison, detector A/B harness, scale
   probe study, and objective same-area pair ground truth.
 
 ### In progress / partial

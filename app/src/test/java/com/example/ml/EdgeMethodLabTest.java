@@ -99,10 +99,11 @@ public class EdgeMethodLabTest {
         for (EdgeMethodLab.Method method : EdgeMethodLab.catalogue()) {
             if (method.name.startsWith("Hybrid v")) variants.add(method.name);
         }
-        // Four are kept, each with a study run behind it: v2/v3/v4 from the threshold and
-        // preprocessing search, v5 from the adaptive-threshold experiment. Adding a fifth
-        // without that evidence is the failure this guards against.
-        assertEquals("v2 through v5 are the tuned variants", 4, variants.size());
+        // Five are kept, each with a study run behind it: v2/v3/v4 from the threshold and
+        // preprocessing search, v5 from the adaptive-threshold experiment, v6 from the search
+        // against full ground truth. Adding a sixth without that evidence is the failure this
+        // guards against.
+        assertEquals("v2 through v6 are the tuned variants", 5, variants.size());
     }
 
     @Test

@@ -41,7 +41,7 @@ import java.util.Locale;
  *
  * <p>The shipped pipeline is included as one of the entries and is invoked through
  * {@link HardwareFeatureExtractor#computeEdges} rather than copied, so this screen cannot
- * drift away from the code it is supposed to be evidence about. Four tuned variants of it
+ * drift away from the code it is supposed to be evidence about. Five tuned variants of it
  * follow — see {@code python/hybrid_v2_study.py}, which is where they were found and where
  * the numbers quoted in their descriptions come from.
  *
@@ -351,8 +351,8 @@ public final class EdgeMethodLab {
                         + "dimming, brightening, gamma either way, two noise levels and JPEG "
                         + "recompression — and it barely moves when its own parameters are "
                         + "nudged. Group stability 0.26 against the shipped stack's 0.64, and "
-                        + "cheaper than it: pinning the diameter drops the full-image CV_64F "
-                        + "Laplacian probe that choosing one adaptively costs.",
+                        + "cheaper than it. Against the full ground truth it is exact on 12 "
+                        + "of 26 photographs, with 5 misses — the most of any variant.",
                 false,
                 (gray, srcRgba) -> hybridVariant(srcRgba, 9, 5, 5, 1.1, 0.4, false, 5, 7)));
 
@@ -361,8 +361,8 @@ public final class EdgeMethodLab {
                         + "low ratio. Best all-rounder in the search — it took the top combined "
                         + "rank across all three robustness tests without winning any of them "
                         + "outright: near-perfect under photographic variation, on a broad "
-                        + "parameter plateau, group stability 0.18, and the cheapest of the "
-                        + "three.",
+                        + "parameter plateau, group stability 0.18, and the cheapest. Against "
+                        + "the full ground truth: 12 of 26 exact, 3 misses, 33 extras.",
                 false,
                 (gray, srcRgba) -> hybridVariant(srcRgba, 5, 5, 7, 1.2, 0.4, false, 5, 7)));
 
@@ -371,7 +371,8 @@ public final class EdgeMethodLab {
                         + "than the |Gx|+|Gy| approximation, and lighter morphology — a 3px "
                         + "dilation closed with a 9px ellipse. Best group stability of any "
                         + "configuration tested (0.13), which is the number that predicts false "
-                        + "FAILs; it gives up a little ground under gamma shifts to get there.",
+                        + "FAILs. Against the full ground truth it was far ahead of v2, v3 and "
+                        + "v5 all along: 16 of 26 exact, 3 misses, 15 extras.",
                 false,
                 (gray, srcRgba) -> hybridVariant(srcRgba, 7, 5, 5, 1.0, 0.4, true, 3, 9)));
 
@@ -379,13 +380,27 @@ public final class EdgeMethodLab {
                 "v3's pipeline with an adaptive-threshold mask over the Canny map: only edges "
                         + "lying on or beside a locally dark region are kept, which is what a "
                         + "fastener is against a machined plate. The answer to whether adaptive "
-                        + "thresholding helps the hybrids — it does, as a mask and not as a "
-                        + "detector. Group stability 0.16 against v3's 0.18, less disturbed per "
-                        + "nudge than any variant here despite carrying three more parameters, "
-                        + "and it costs roughly twice v3's edge stage to get there.",
+                        + "thresholding helps the hybrids on the proxy tests — it does, as a "
+                        + "mask and not as a detector. Against the full ground truth it does "
+                        + "not: 12 of 26 exact, no better than v3, at twice the cost. Kept so "
+                        + "the negative result can be seen rather than taken on trust.",
                 false,
                 (gray, srcRgba) ->
                         hybridVariant(srcRgba, 5, 5, 7, 1.2, 0.4, false, 5, 7, 61, 2, 5)));
+
+        methods.add(new Method("Hybrid v6 (best against ground truth)",
+                "Bilateral 5, Canny at 1.1x Otsu with the L2 gradient, dilate 5 and close 9. "
+                        + "Found by searching 4,032 configurations against a hand-made count "
+                        + "for every bundled photograph rather than six of them, ranked on "
+                        + "misses twice over extras and forbidden from emptying any image. "
+                        + "Exact on 20 of 26 reference-distance photographs in the study and "
+                        + "18 of 26 on this device's OpenCV, and on every one of the fourteen "
+                        + "stud and screw shots in the study. Pays for it with a narrower "
+                        + "parameter plateau and worse group stability than v4 (0.18 against "
+                        + "0.13) — v4 remains the pick when agreement between interchangeable "
+                        + "photographs matters more than absolute accuracy.",
+                false,
+                (gray, srcRgba) -> hybridVariant(srcRgba, 5, 5, 5, 1.1, 0.4, true, 5, 9)));
 
         return Collections.unmodifiableList(methods);
     }
