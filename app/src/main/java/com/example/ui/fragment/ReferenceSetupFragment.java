@@ -22,6 +22,7 @@ import androidx.navigation.Navigation;
 
 import com.example.R;
 import com.example.data.AppDatabase;
+import com.example.data.entity.ClassificationEvent;
 import com.example.data.entity.ReferenceProfile;
 import com.example.ui.util.AssetBitmaps;
 import com.example.databinding.FragmentReferenceSetupBinding;
@@ -30,6 +31,7 @@ import com.example.ml.FeatureEmbedder;
 import com.example.ml.FeatureLayout;
 import com.example.ml.FeatureTypeRegistry;
 import com.example.ml.LayoutMatcher;
+import com.example.ml.LearningCropStore;
 import com.example.ml.PartFiles;
 import com.example.ml.ReferenceLibrary;
 import com.example.ml.ReferenceLibraryProvider;
@@ -62,6 +64,13 @@ public class ReferenceSetupFragment extends Fragment {
 
     /** Last analysed reference: its detections, and one crop per detection for labelling. */
     private HardwareFeatureExtractor.AnalysisResult pendingResult = null;
+    /**
+     * Thresholds the classifier was using when {@link #pendingResult} was produced. The
+     * library is reloaded at save time, so these have to be captured here or the logged
+     * events would carry the defaults rather than the values that actually decided them.
+     */
+    private float pendingSimilarityThreshold = ReferenceLibrary.DEFAULT_SIMILARITY_THRESHOLD;
+    private float pendingMarginThreshold = ReferenceLibrary.DEFAULT_MARGIN_THRESHOLD;
     /**
      * Crops kept alive for the labelling dialog, keyed by the extractor's 1-based box id.
      * Keyed rather than a list because a detection whose crop failed to decode still produces
@@ -182,11 +191,14 @@ public class ReferenceSetupFragment extends Fragment {
             if (library == null) library = new ReferenceLibrary();
             ThresholdTuner.applyTo(context, partId, library);
 
-            // The sink keeps a scaled copy of every crop instead of writing one: nothing here
-            // belongs in the learning store (these are not inspections the operator filed), but
-            // the labelling step needs the pixels, and the extractor frees each crop as soon as
-            // this returns.
+            // The sink keeps a scaled copy of every crop instead of writing one. Nothing is
+            // persisted until the operator has labelled it: an unlabelled reference crop is not
+            // evidence of anything, whereas a labelled one is written to the learning store at
+            // save time alongside its event row. The labelling step needs the pixels either
+            // way, and the extractor frees each crop as soon as this returns.
             final java.util.Map<Integer, Bitmap> crops = new java.util.LinkedHashMap<>();
+            final float simThreshold = library.getSimilarityThreshold();
+            final float marginThreshold = library.getMarginThreshold();
             HardwareFeatureExtractor.AnalysisResult result =
                     HardwareFeatureExtractor.extractFeatures(context, uriString, library,
                             (crop, index) -> {
@@ -203,6 +215,8 @@ public class ReferenceSetupFragment extends Fragment {
                 }
                 releasePendingCrops();
                 pendingResult = result;
+                pendingSimilarityThreshold = simThreshold;
+                pendingMarginThreshold = marginThreshold;
                 pendingCrops.putAll(crops);
                 showReferenceAnalysis(uriString, result);
             });
@@ -740,6 +754,8 @@ public class ReferenceSetupFragment extends Fragment {
         final List<Bitmap> crops = new ArrayList<>();
         for (int i = 0; i < chosen.length; i++) crops.add(pendingCrops.get(i + 1));
         final List<HardwareFeatureExtractor.ExtractedFeature> features = pendingResult.features;
+        final float simThreshold = pendingSimilarityThreshold;
+        final float marginThreshold = pendingMarginThreshold;
 
         Toast.makeText(getContext(), "Encoding labelled crops...", Toast.LENGTH_SHORT).show();
         new Thread(() -> {
@@ -799,6 +815,14 @@ public class ReferenceSetupFragment extends Fragment {
             db.referenceProfileDao().insertProfile(
                     new ReferenceProfile(partId, uri, System.currentTimeMillis()));
 
+            // Record every label as a reviewed classification event, exactly as an inspection
+            // review is recorded. These labels used to vanish into the prototypes: the operator
+            // would spend a reference setup naming sixteen crops, and NoiseGate and
+            // ThresholdTuner — which fit only from ClassificationEvent — never saw one of them.
+            // The classification stored is the one the operator was shown, made against the
+            // library *before* these examples were added, so a replay asks the right question.
+            logReferenceLabels(context, db, chosen, crops, features, simThreshold, marginThreshold);
+
             final int count = labelled;
             final int typeCount = lib.types().size();
             requireActivity().runOnUiThread(() -> {
@@ -808,6 +832,55 @@ public class ReferenceSetupFragment extends Fragment {
                 if (onSaved != null) onSaved.run();
             });
         }).start();
+    }
+
+    /**
+     * One reviewed {@link ClassificationEvent} per labelled crop, with the crop persisted to
+     * the learning store so the row is a complete record rather than a label with no pixels.
+     *
+     * Skipped crops are not logged. An inspection logs every detection because a later review
+     * may come back to it; nothing ever comes back to a reference crop the operator declined
+     * to name, and an unreviewed row that can never be reviewed would only inflate the
+     * "logged detections" count for no one's benefit.
+     *
+     * Best-effort: a failure here must not lose the reference the operator just saved.
+     */
+    private void logReferenceLabels(android.content.Context context, AppDatabase db,
+                                    String[] chosen, List<Bitmap> crops,
+                                    List<HardwareFeatureExtractor.ExtractedFeature> features,
+                                    float simThreshold, float marginThreshold) {
+        try {
+            long now = System.currentTimeMillis();
+            List<ClassificationEvent> pending = new ArrayList<>();
+            for (int i = 0; i < chosen.length; i++) {
+                if (chosen[i] == null || i >= features.size()) continue;
+                ReferenceLibrary.Classification c = features.get(i).classification;
+                Bitmap crop = i < crops.size() ? crops.get(i) : null;
+
+                ClassificationEvent e = new ClassificationEvent();
+                e.setPartId(partId);
+                e.setTimestamp(now);
+                // Box ids are 1-based in the extractor's labels; keep the same numbering.
+                e.setCropPath(LearningCropStore.save(context, partId, crop, i + 1));
+                e.setPredictedType(c != null ? c.closestMatch : ReferenceLibrary.UNKNOWN);
+                e.setPredictedScore(c != null ? c.score : 0f);
+                e.setRunnerUpType(c != null ? c.runnerUp : null);
+                e.setRunnerUpScore(c != null ? c.runnerUpScore : -1f);
+                e.setReason(c != null ? c.reason.name() : ReferenceLibrary.Reason.NO_LIBRARY.name());
+                e.setSimilarityThreshold(simThreshold);
+                e.setMarginThreshold(marginThreshold);
+                e.setEncoderId(FeatureEmbedder.ENCODER_ID);
+                e.setConfirmedType(chosen[i]);
+                e.setReviewed(true);
+                e.setReviewSource(ClassificationEvent.SOURCE_REFERENCE_SETUP);
+                pending.add(e);
+            }
+            db.runInTransaction(() -> {
+                for (ClassificationEvent e : pending) db.classificationEventDao().insert(e);
+            });
+        } catch (Exception ex) {
+            android.util.Log.e("ReferenceSetup", "Failed to log reference labels", ex);
+        }
     }
 
     private int dp(int value) {

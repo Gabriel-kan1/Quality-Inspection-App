@@ -162,6 +162,10 @@ def report_sampling(rows):
             note = "  <- the only unbiased source"
         elif src == "overlay_tap":
             note = "  <- operator chose it because it looked wrong"
+        elif src == "reference_setup":
+            note = "  <- many labels from one photo; correlated, not independent"
+        elif src == "noise_audit":
+            note = "  <- gate-suppressed crops put back for checking"
         print(f"    {src:<14s} {n:4d}{note}")
 
     band = [r for r in accepted if r[1] is not None and r[1] <= HIGH_CONFIDENCE]

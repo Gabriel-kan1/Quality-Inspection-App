@@ -64,6 +64,13 @@ public class ActiveLearningPolicyTest {
         return c;
     }
 
+    /** A detection the noise gate routed to its ignored type without asking. */
+    private static ReferenceLibrary.Classification suppressed(ReferenceLibrary lib) {
+        ReferenceLibrary.Classification raw = scoringAt(lib, 0.66f);
+        assertEquals("fixture must start as an unknown", ReferenceLibrary.UNKNOWN, raw.type);
+        return NoiseGate.asIgnored(raw);
+    }
+
     private static int countOf(List<ActiveLearningPolicy.Candidate> selected,
                                ActiveLearningPolicy.Kind kind) {
         int n = 0;
@@ -144,6 +151,58 @@ public class ActiveLearningPolicyTest {
 
         assertEquals("a merely-accepted prediction must still be auditable",
                 1, countOf(selected, ActiveLearningPolicy.Kind.SPOT_CHECK));
+    }
+
+    /**
+     * A suppressed detection is never queued as an unknown — that is the whole point — but
+     * it is not silently trusted either. One per run comes back as a noise audit, and it is
+     * drawn from its own pool so it cannot dilute the spot check on real hardware.
+     */
+    @Test
+    public void aSuppressedDetectionIsAuditedNotQueued() {
+        ReferenceLibrary lib = libraryWithTwoPrototypes();
+        List<ReferenceLibrary.Classification> all = new ArrayList<>();
+        for (int i = 0; i < 12; i++) all.add(suppressed(lib));
+        all.add(accepted(lib));
+
+        List<ActiveLearningPolicy.Candidate> selected =
+                ActiveLearningPolicy.select(all, lib, new Random(SEED));
+
+        assertEquals("nothing suppressed may reappear as an unknown prompt",
+                0, countOf(selected, ActiveLearningPolicy.Kind.UNKNOWN));
+        assertEquals(1, countOf(selected, ActiveLearningPolicy.Kind.NOISE_AUDIT));
+        assertEquals("twelve suppressed crops must not crowd out the hardware spot check",
+                1, countOf(selected, ActiveLearningPolicy.Kind.SPOT_CHECK));
+        assertEquals(2, selected.size());
+    }
+
+    @Test
+    public void noiseAuditsNeverDisplaceUnknownsOrSpotChecks() {
+        ReferenceLibrary lib = libraryWithTwoPrototypes();
+        List<ReferenceLibrary.Classification> all = new ArrayList<>(unknowns(lib, 20));
+        for (int i = 0; i < 5; i++) all.add(accepted(lib));
+        for (int i = 0; i < 5; i++) all.add(suppressed(lib));
+
+        List<ActiveLearningPolicy.Candidate> selected =
+                ActiveLearningPolicy.select(all, lib, new Random(SEED));
+
+        assertTrue(selected.size() <= ActiveLearningPolicy.MAX_REVIEWS_PER_INSPECTION);
+        assertTrue(countOf(selected, ActiveLearningPolicy.Kind.UNKNOWN) > 0);
+        assertEquals(1, countOf(selected, ActiveLearningPolicy.Kind.SPOT_CHECK));
+        assertEquals(1, countOf(selected, ActiveLearningPolicy.Kind.NOISE_AUDIT));
+    }
+
+    /** The audit exists to check the gate; with nothing suppressed there is nothing to check. */
+    @Test
+    public void noSuppressionMeansNoAudit() {
+        ReferenceLibrary lib = libraryWithTwoPrototypes();
+        List<ReferenceLibrary.Classification> all = new ArrayList<>(unknowns(lib, 3));
+        all.add(accepted(lib));
+
+        List<ActiveLearningPolicy.Candidate> selected =
+                ActiveLearningPolicy.select(all, lib, new Random(SEED));
+
+        assertEquals(0, countOf(selected, ActiveLearningPolicy.Kind.NOISE_AUDIT));
     }
 
     @Test

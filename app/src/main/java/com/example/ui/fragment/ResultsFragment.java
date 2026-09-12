@@ -37,6 +37,7 @@ import com.example.ml.FeatureTypeRegistry;
 import com.example.ml.PartFiles;
 import com.example.report.InspectionExport;
 import com.example.ml.LearningCropStore;
+import com.example.ml.NoiseGate;
 import com.example.ml.ReferenceLibrary;
 import com.example.report.AdvisoryNotes;
 import com.example.ml.ReferenceLibraryProvider;
@@ -126,6 +127,9 @@ public class ResultsFragment extends Fragment {
     // give most of these a happens-before edge, but the fields are cheap to publish properly
     // and the counter below is incremented off a thread that never posts before it is read.
     private volatile ThresholdTuner.Tuned appliedThresholds;
+    /** What the noise filter learned from this part's history, and how many it acted on. */
+    private volatile NoiseGate.Evidence noiseEvidence;
+    private volatile int noiseSuppressedThisRun;
     private final java.util.concurrent.atomic.AtomicInteger reviewsThisRun =
             new java.util.concurrent.atomic.AtomicInteger();
     /** Kept so overlay taps can correct a detection after the results screen is built. */
@@ -249,6 +253,17 @@ public class ResultsFragment extends Fragment {
             HardwareFeatureExtractor.AnalysisResult activeResult =
                     HardwareFeatureExtractor.extractFeatures(context, imageUri, activeLibrary,
                             (crop, index) -> LearningCropStore.save(context, partId, crop, index));
+
+            // Noise filter: detections that resemble an ignored type, on a part whose
+            // history has shown such crops are reliably not hardware, are carried as that
+            // type without a prompt. Applied before logging so the event row records the
+            // routing, and before the queue is built so they never compete for a slot.
+            NoiseGate gate = NoiseGate.fit(
+                    db.classificationEventDao().getReviewedForPart(partId),
+                    type -> FeatureTypeRegistry.severityOf(context, type),
+                    activeLibrary);
+            noiseEvidence = gate.evidence;
+            noiseSuppressedThisRun = gate.apply(activeResult.features);
 
             // Log every detection as a classification event — reviewed or not. Unreviewed
             // rows still carry the scores, so a later review or export can use them.
@@ -695,6 +710,17 @@ public class ResultsFragment extends Fragment {
                         reviewed, logged));
                 sb.append(String.format(Locale.US, "You reviewed %d this run.\n", reviewsThisRun.get()));
 
+                NoiseGate.Evidence noise = noiseEvidence;
+                if (noise != null) {
+                    sb.append(noise.describe());
+                    if (noiseSuppressedThisRun > 0) {
+                        sb.append(String.format(Locale.US,
+                                " %d detection%s treated as noise this run without asking.",
+                                noiseSuppressedThisRun, noiseSuppressedThisRun == 1 ? "" : "s"));
+                    }
+                    sb.append('\n');
+                }
+
                 if (appliedThresholds != null) {
                     sb.append(String.format(Locale.US,
                             "Thresholds auto-tuned from your history: similarity %.2f, margin %.3f "
@@ -764,10 +790,11 @@ public class ResultsFragment extends Fragment {
                                      ActiveLearningPolicy.Candidate candidate,
                                      int position, int total, Runnable onResolved) {
         boolean isSpotCheck = candidate.kind == ActiveLearningPolicy.Kind.SPOT_CHECK;
+        boolean isNoiseAudit = candidate.kind == ActiveLearningPolicy.Kind.NOISE_AUDIT;
         boolean isUserInitiated = candidate.kind == ActiveLearningPolicy.Kind.USER_INITIATED;
-        // Both of these start from the current label rather than a blank slate.
+        // All of these start from the current label rather than a blank slate.
         // Only affects the wording of the skip option now; nothing is pre-selected.
-        boolean preselectCurrent = isSpotCheck || isUserInitiated;
+        boolean preselectCurrent = isSpotCheck || isNoiseAudit || isUserInitiated;
 
         android.app.Dialog dialog = new android.app.Dialog(requireContext(),
                 android.R.style.Theme_DeviceDefault_NoActionBar_Fullscreen);
@@ -781,6 +808,9 @@ public class ResultsFragment extends Fragment {
         if (isUserInitiated) {
             title.setText("CORRECT FEATURE");
             title.setTextColor(Color.rgb(56, 189, 248));
+        } else if (isNoiseAudit) {
+            title.setText("NOISE CHECK (" + position + "/" + total + ")");
+            title.setTextColor(Color.rgb(148, 163, 184));
         } else {
             title.setText((isSpotCheck ? "SPOT CHECK (" : "IDENTIFY FEATURE (") + position + "/" + total + ")");
             title.setTextColor(isSpotCheck ? Color.rgb(250, 204, 21) : Color.rgb(74, 222, 128));
@@ -1205,6 +1235,8 @@ public class ResultsFragment extends Fragment {
                 String source;
                 if (candidate.kind == ActiveLearningPolicy.Kind.SPOT_CHECK) {
                     source = ClassificationEvent.SOURCE_SPOT_CHECK;
+                } else if (candidate.kind == ActiveLearningPolicy.Kind.NOISE_AUDIT) {
+                    source = ClassificationEvent.SOURCE_NOISE_AUDIT;
                 } else if (candidate.kind == ActiveLearningPolicy.Kind.USER_INITIATED) {
                     source = ClassificationEvent.SOURCE_OVERLAY_TAP;
                 } else {

@@ -44,6 +44,20 @@ public class ClassificationEvent {
      * errors relative to what the classifier actually produces.
      */
     public static final String SOURCE_OVERLAY_TAP = "overlay_tap";
+    /**
+     * A detection the {@link com.example.ml.NoiseGate} suppressed, put back in front of the
+     * operator to check the gate. Tracked separately so the gate's own error rate can be
+     * measured from the history rather than assumed.
+     */
+    public static final String SOURCE_NOISE_AUDIT = "noise_audit";
+    /**
+     * Labelled during reference setup, where the operator reviews every crop of the reference
+     * photo with the classifier's closest match pre-filled. These are the most carefully
+     * given labels in the system and were previously never recorded — the noise gate and the
+     * tuner saw only inspection reviews. Tracked separately because one photo yields many
+     * correlated labels at once: a study that wants independent samples can leave them out.
+     */
+    public static final String SOURCE_REFERENCE_SETUP = "reference_setup";
 
     @PrimaryKey(autoGenerate = true)
     private long id;

@@ -42,6 +42,18 @@ import java.util.Random;
  *    in that band, and every one was found by the operator tapping the box by hand — the
  *    review loop surfaced none of them. A sample that cannot reach the population where
  *    the errors are is not bias control. See {@code python/margin_study.py}.
+ *
+ * 3. NOISE AUDITS: one detection the {@link NoiseGate} suppressed without asking, put back
+ *    in front of the operator. Once the gate is mature the crops it filters are never
+ *    prompted as unknowns, so without this the gate's only remaining feedback would be an
+ *    operator noticing a hidden fastener by eye — the failure it exists to prevent. One per
+ *    inspection is the whole price of a gate that can find out it is wrong; it never displaces
+ *    a genuine unknown, and it never fires when nothing was suppressed.
+ *
+ *    Kept separate from the spot check rather than pooled with it. A noisy photo can carry
+ *    thirty suppressed contours against ten real fasteners, and a single uniform draw over
+ *    both would audit noise three times in four while the accepted hardware — where the
+ *    silent misclassifications actually live — went unsampled. Two pools, one draw each.
  */
 public final class ActiveLearningPolicy {
 
@@ -49,6 +61,8 @@ public final class ActiveLearningPolicy {
     public static int MAX_REVIEWS_PER_INSPECTION = 8;
     /** How many already-accepted predictions to sample for confirmation (bias control). */
     public static int SPOT_CHECKS_PER_INSPECTION = 1;
+    /** How many gate-suppressed detections to put back in front of the operator per run. */
+    public static int NOISE_AUDITS_PER_INSPECTION = 1;
     /**
      * Scores below this are treated as "resembles nothing in the library" rather than
      * "near the boundary", and are queued behind the genuinely borderline cases.
@@ -69,6 +83,8 @@ public final class ActiveLearningPolicy {
     public enum Kind {
         UNKNOWN,
         SPOT_CHECK,
+        /** Suppressed by {@link NoiseGate}; shown so the gate's own error rate is observable. */
+        NOISE_AUDIT,
         /** Operator tapped a detection on the overlay to correct it; never auto-selected. */
         USER_INITIATED
     }
@@ -103,11 +119,17 @@ public final class ActiveLearningPolicy {
                                          ReferenceLibrary library, Random seed) {
         List<Candidate> unknowns = new ArrayList<>();
         List<Integer> accepted = new ArrayList<>();
+        List<Integer> suppressed = new ArrayList<>();
 
         for (int i = 0; i < classifications.size(); i++) {
             ReferenceLibrary.Classification c = classifications.get(i);
             if (c == null) continue;
-            if (ReferenceLibrary.UNKNOWN.equals(c.type)) {
+            if (c.reason == ReferenceLibrary.Reason.AUTO_IGNORED) {
+                // The classifier did not accept this; the gate routed it. It must not count
+                // as an accepted prediction for the spot check, or the noise would dilute
+                // the one sample that keeps the tuner honest about real hardware.
+                suppressed.add(i);
+            } else if (ReferenceLibrary.UNKNOWN.equals(c.type)) {
                 unknowns.add(new Candidate(i, Kind.UNKNOWN, informativeness(c, library)));
             } else {
                 // Every accepted prediction, at any confidence. Filtering to "high" here made
@@ -121,18 +143,25 @@ public final class ActiveLearningPolicy {
         List<Candidate> selected = new ArrayList<>();
         int budget = Math.max(0, MAX_REVIEWS_PER_INSPECTION);
 
-        // Reserve room for spot checks, but never let them crowd out real unknowns entirely.
+        // Reserve room for the audits, but never let them crowd out real unknowns entirely.
         int spotCheckSlots = Math.min(SPOT_CHECKS_PER_INSPECTION, Math.max(0, budget - 1));
         if (accepted.isEmpty()) spotCheckSlots = 0;
+        int noiseAuditSlots = Math.min(NOISE_AUDITS_PER_INSPECTION,
+                Math.max(0, budget - 1 - spotCheckSlots));
+        if (suppressed.isEmpty()) noiseAuditSlots = 0;
 
         for (Candidate c : unknowns) {
-            if (selected.size() >= budget - spotCheckSlots) break;
+            if (selected.size() >= budget - spotCheckSlots - noiseAuditSlots) break;
             selected.add(c);
         }
 
         Collections.shuffle(accepted, seed);
         for (int i = 0; i < spotCheckSlots && i < accepted.size(); i++) {
             selected.add(new Candidate(accepted.get(i), Kind.SPOT_CHECK, 0f));
+        }
+        Collections.shuffle(suppressed, seed);
+        for (int i = 0; i < noiseAuditSlots && i < suppressed.size(); i++) {
+            selected.add(new Candidate(suppressed.get(i), Kind.NOISE_AUDIT, 0f));
         }
 
         return selected;

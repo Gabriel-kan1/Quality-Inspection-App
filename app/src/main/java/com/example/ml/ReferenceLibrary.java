@@ -108,7 +108,13 @@ public final class ReferenceLibrary {
         /** Score cleared the threshold but two types were too close to call. */
         AMBIGUOUS,
         /** No prototypes at all (no encoder model, or nothing labelled yet). */
-        NO_LIBRARY
+        NO_LIBRARY,
+        /**
+         * Rejected below threshold, but treated as its nearest ignored type without review
+         * because {@link NoiseGate} has learned from this part's history that crops like it
+         * are reliably noise. Never produced by {@link #classify}; assigned afterwards.
+         */
+        AUTO_IGNORED
     }
 
     public float getSimilarityThreshold() { return similarityThreshold; }
