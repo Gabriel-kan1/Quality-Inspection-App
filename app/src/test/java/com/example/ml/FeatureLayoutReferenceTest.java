@@ -88,4 +88,47 @@ public class FeatureLayoutReferenceTest {
     public void missingLayoutIsNotAnError() {
         assertNull(FeatureLayout.loadFor(ctx(), "PART-NEVER-SET-UP", REF));
     }
+
+    /**
+     * Box sizes and the frame they were measured in survive a save. They are what the size
+     * check compares against, so losing either silently turns it off for the part.
+     */
+    @Test
+    public void roundTripsSlotSizesAndTheFrameTheyWereMeasuredIn() {
+        FeatureLayout layout = new FeatureLayout();
+        layout.setReferenceUri(REF);
+        layout.setImageSize(1280, 960);
+        layout.addSlot("screw", 0.2f, 0.2f, 0.05f, 0.04f);
+        layout.addSlot("stud", 0.8f, 0.8f);
+        layout.save(ctx(), PART);
+
+        FeatureLayout loaded = FeatureLayout.loadFor(ctx(), PART, REF);
+        assertNotNull(loaded);
+        assertEquals(1280, loaded.imageWidth());
+        assertEquals(960, loaded.imageHeight());
+
+        FeatureLayout.Slot sized = loaded.slots().get(0);
+        assertEquals(0.05f, sized.w, 1e-6f);
+        assertEquals(0.04f, sized.h, 1e-6f);
+        assertEquals("shorter side in pixels: 0.04 x 960", 38.4f, loaded.shortSidePx(sized), 0.01f);
+
+        FeatureLayout.Slot unsized = loaded.slots().get(1);
+        assertEquals(0f, unsized.w, 0f);
+        assertEquals(0f, unsized.h, 0f);
+        assertEquals(Float.NaN, loaded.shortSidePx(unsized), 0f);
+    }
+
+    /** A layout written before sizes existed reads back as positioned but unsized. */
+    @Test
+    public void aLayoutSavedWithoutSizesLoadsAsUnsized() {
+        labelled(REF).save(ctx(), PART);
+
+        FeatureLayout loaded = FeatureLayout.loadFor(ctx(), PART, REF);
+        assertNotNull(loaded);
+        assertEquals(0, loaded.imageWidth());
+        for (FeatureLayout.Slot s : loaded.slots()) {
+            assertEquals(0f, s.w, 0f);
+            assertEquals(Float.NaN, loaded.shortSidePx(s), 0f);
+        }
+    }
 }

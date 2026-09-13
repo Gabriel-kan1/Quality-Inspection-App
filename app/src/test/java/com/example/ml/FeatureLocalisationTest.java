@@ -1112,4 +1112,227 @@ public class FeatureLocalisationTest {
                     result.findings.get(i).slotId > result.findings.get(i - 1).slotId);
         }
     }
+
+    // ── Size against the reference ───────────────────────────────────────────
+
+    /**
+     * The reference layout with a frame size, so every 0.04-fraction box in {@link #at} comes
+     * to 38 px on its shorter side — above {@link FeatureLocalisation#MIN_SIZE_JUDGED_PX}, as a
+     * labelled fastener at the working resolution is.
+     */
+    private static FeatureLayout sizedReferenceLayout() {
+        FeatureLayout layout = referenceLayout();
+        layout.setImageSize(1280, 960);
+        return layout;
+    }
+
+    /** A detection centred on (x, y) whose box is {@code factor} times the standard one. */
+    private static RectF atScaled(float x, float y, float factor) {
+        float h = 0.02f * factor;
+        return new RectF(x - h, y - h, x + h, y + h);
+    }
+
+    @Test
+    public void everyPositionIsSizeMatchedOnAnIdenticalShot() {
+        FeatureLayout layout = sizedReferenceLayout();
+        Detections d = shotOf(layout, null, null);
+
+        FeatureLocalisation.Result result = FeatureLocalisation.localise(layout, d.rects, d.types, null);
+        assertTrue(result.aligned);
+        assertEquals(5, result.countSizeJudged());
+        assertEquals(0, result.countSizeChanged());
+        for (FeatureLocalisation.SlotFinding f : result.findings) {
+            assertTrue(f.sizeJudged());
+            assertEquals(1f, f.sizeRatio, 0.02f);
+            assertFalse(f.sizeChanged());
+        }
+        assertFalse("nothing to say about size when nothing differs",
+                result.summary().contains("size"));
+    }
+
+    /**
+     * A detection half again as wide and tall as the reference recorded is reported, with the
+     * ratio, and named to its slot. It is a warning: the position is still PRESENT and the
+     * part does not fail on it, because the check's noise floor is the detector's own jitter.
+     */
+    @Test
+    public void aSwollenDetectionIsReportedAsASizeChangeWithoutFailingThePart() {
+        FeatureLayout layout = sizedReferenceLayout();
+        Detections d = shotOf(layout, null, null);
+        FeatureLayout.Slot two = layout.slotById(2);
+        d.rects.set(1, atScaled(two.x, two.y, 2f));
+
+        FeatureLocalisation.Result result = FeatureLocalisation.localise(layout, d.rects, d.types, null);
+        assertTrue(result.aligned);
+        FeatureLocalisation.SlotFinding f = findingFor(result, 2);
+        assertNotNull(f);
+        assertEquals(FeatureLocalisation.Status.PRESENT, f.status);
+        assertTrue(f.sizeChanged());
+        assertEquals(2f, f.sizeRatio, 0.1f);
+        assertEquals(100f, f.sizeChangePercent(), 10f);
+
+        assertEquals(1, result.countSizeChanged());
+        assertTrue(result.summary().contains("1 differing in size"));
+        assertFalse("size is reported, never failed on", result.hasPositionalDefect());
+        for (FeatureLocalisation.SlotFinding other : result.findings) {
+            if (other.slotId != 2) assertFalse(other.sizeChanged());
+        }
+    }
+
+    /**
+     * The tolerance is symmetric in log space: a box at 0.6x the reference is as far out as one
+     * at 1.67x and is flagged, while 0.8x sits inside 1/1.5 and is not. A plain percentage test
+     * would call 0.6x a 40% change and let it through.
+     */
+    @Test
+    public void shrinkageIsJudgedOnTheSameScaleAsGrowth() {
+        FeatureLayout layout = sizedReferenceLayout();
+        Detections d = shotOf(layout, null, null);
+        FeatureLayout.Slot one = layout.slotById(1);
+        FeatureLayout.Slot three = layout.slotById(3);
+        d.rects.set(0, atScaled(one.x, one.y, 0.6f));
+        d.rects.set(2, atScaled(three.x, three.y, 0.8f));
+
+        FeatureLocalisation.Result result = FeatureLocalisation.localise(layout, d.rects, d.types, null);
+        assertTrue(result.aligned);
+        assertTrue("0.6x is beyond 1/1.5", findingFor(result, 1).sizeChanged());
+        assertEquals(0.6f, findingFor(result, 1).sizeRatio, 0.05f);
+        assertFalse("0.8x is inside 1/1.5", findingFor(result, 3).sizeChanged());
+        assertEquals(1, result.countSizeChanged());
+    }
+
+    /**
+     * A part photographed closer than the reference has every box larger by the same factor.
+     * That is framing, not hardware, and it is exactly what the alignment's scale divides
+     * out: a raw pixel comparison would flag all five positions here.
+     */
+    @Test
+    public void aCloserShotIsNotASizeChange() {
+        FeatureLayout layout = sizedReferenceLayout();
+        float zoom = 1.3f;
+        List<RectF> rects = new ArrayList<>();
+        List<String> types = new ArrayList<>();
+        for (FeatureLayout.Slot s : layout.slots()) {
+            // Positions spread out about the frame centre by the same factor the boxes grow.
+            float x = 0.5f + (s.x - 0.5f) * zoom;
+            float y = 0.5f + (s.y - 0.5f) * zoom;
+            rects.add(atScaled(x, y, zoom));
+            types.add(s.type);
+        }
+
+        FeatureLocalisation.Result result = FeatureLocalisation.localise(layout, rects, types, null);
+        assertTrue(result.aligned);
+        assertEquals(5, result.countSizeJudged());
+        assertEquals(0, result.countSizeChanged());
+        for (FeatureLocalisation.SlotFinding f : result.findings) {
+            assertEquals("scale must be divided out", 1f, f.sizeRatio, 0.03f);
+        }
+    }
+
+    /**
+     * And a genuinely oversized fastener on that closer shot is still caught once the framing
+     * is divided out — the correction must not also absorb the defect.
+     */
+    @Test
+    public void aSizeChangeSurvivesTheFramingCorrection() {
+        FeatureLayout layout = sizedReferenceLayout();
+        float zoom = 0.8f;
+        List<RectF> rects = new ArrayList<>();
+        List<String> types = new ArrayList<>();
+        for (FeatureLayout.Slot s : layout.slots()) {
+            float x = 0.5f + (s.x - 0.5f) * zoom;
+            float y = 0.5f + (s.y - 0.5f) * zoom;
+            rects.add(atScaled(x, y, s.id == 4 ? zoom * 1.8f : zoom));
+            types.add(s.type);
+        }
+
+        FeatureLocalisation.Result result = FeatureLocalisation.localise(layout, rects, types, null);
+        assertTrue(result.aligned);
+        assertEquals(1, result.countSizeChanged());
+        assertTrue(findingFor(result, 4).sizeChanged());
+        assertEquals(1.8f, findingFor(result, 4).sizeRatio, 0.1f);
+    }
+
+    /**
+     * A layout labelled before box sizes were recorded has none to compare against. Such
+     * slots are positioned as before and simply not size-judged — NaN, not 1.0, so an old
+     * reference cannot read as "every size verified".
+     */
+    @Test
+    public void aLayoutWithoutRecordedSizesMakesNoSizeClaim() {
+        FeatureLayout layout = new FeatureLayout();
+        layout.setImageSize(1280, 960);
+        for (FeatureLayout.Slot s : referenceLayout().slots()) layout.addSlot(s.type, s.x, s.y);
+        Detections d = shotOf(layout, null, null);
+
+        FeatureLocalisation.Result result = FeatureLocalisation.localise(layout, d.rects, d.types, null);
+        assertTrue(result.aligned);
+        assertEquals(5, result.countWithStatus(FeatureLocalisation.Status.PRESENT));
+        assertEquals(0, result.countSizeJudged());
+        for (FeatureLocalisation.SlotFinding f : result.findings) {
+            assertFalse(f.sizeJudged());
+            assertTrue(Float.isNaN(f.sizeRatio));
+            assertTrue(Float.isNaN(f.sizeChangePercent()));
+        }
+    }
+
+    /**
+     * Below {@link FeatureLocalisation#MIN_SIZE_JUDGED_PX} the detector's boxes do not repeat
+     * between shots, so a slot that small is refused rather than judged. The same fractional
+     * boxes are 38 px on a 1280x960 frame and 18 px on a 600x450 one; only the first is
+     * judged. A layout that cannot say what frame it was measured in is refused too.
+     */
+    @Test
+    public void slotsTooSmallToRepeatAreNotJudged() {
+        FeatureLayout small = referenceLayout();
+        small.setImageSize(600, 450);
+        Detections d = shotOf(small, null, null);
+        FeatureLocalisation.Result result = FeatureLocalisation.localise(small, d.rects, d.types, null);
+        assertTrue(result.aligned);
+        assertEquals("18 px boxes must not be judged", 0, result.countSizeJudged());
+
+        FeatureLayout unknownFrame = referenceLayout();
+        result = FeatureLocalisation.localise(unknownFrame, d.rects, d.types, null);
+        assertTrue(result.aligned);
+        assertEquals("no frame size, no pixel floor, no claim", 0, result.countSizeJudged());
+
+        result = FeatureLocalisation.localise(sizedReferenceLayout(), d.rects, d.types, null);
+        assertEquals(5, result.countSizeJudged());
+    }
+
+    /**
+     * An empty slot has nothing to size. A displaced one does — the stray detection offered as
+     * the fastener is compared like any other, so "fitted off its position" and "fitted off its
+     * position and the wrong size" stay distinguishable.
+     *
+     * Two shots rather than one: a five-slot layout with one position empty and another
+     * displaced leaves three inliers, under the affine model's floor of four, so it would not
+     * register at all — see {@link #aFiveSlotLayoutMissingTwoPositionsCannotAffordTheAffineModel}.
+     */
+    @Test
+    public void onlyPositionsWithADetectionAreSizeJudged() {
+        FeatureLayout layout = sizedReferenceLayout();
+
+        Detections empty = shotOf(layout, java.util.Collections.singleton(3), null);
+        FeatureLocalisation.Result result =
+                FeatureLocalisation.localise(layout, empty.rects, empty.types, null);
+        assertTrue(result.aligned);
+        FeatureLocalisation.SlotFinding missing = findingFor(result, 3);
+        assertEquals(FeatureLocalisation.Status.MISSING, missing.status);
+        assertFalse(missing.sizeJudged());
+        assertEquals(4, result.countSizeJudged());
+
+        // Slot 4's fastener sits well outside matching tolerance, and is doubled in size.
+        Detections displaced = shotOf(layout, java.util.Collections.singleton(4), null);
+        FeatureLayout.Slot four = layout.slotById(4);
+        displaced.rects.add(atScaled(four.x - 0.10f, four.y - 0.10f, 2f));
+        displaced.types.add("bolt_head");
+        result = FeatureLocalisation.localise(layout, displaced.rects, displaced.types, null);
+        assertTrue(result.aligned);
+        FeatureLocalisation.SlotFinding off = findingFor(result, 4);
+        assertEquals(FeatureLocalisation.Status.DISPLACED, off.status);
+        assertTrue(off.sizeJudged());
+        assertTrue(off.sizeChanged());
+        assertEquals(2f, off.sizeRatio, 0.1f);
+    }
 }

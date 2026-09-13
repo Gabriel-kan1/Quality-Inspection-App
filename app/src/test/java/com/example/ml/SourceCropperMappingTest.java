@@ -3,6 +3,7 @@ package com.example.ml;
 import static org.junit.Assert.assertEquals;
 
 import android.graphics.Rect;
+import android.graphics.RectF;
 
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -83,5 +84,48 @@ public class SourceCropperMappingTest {
                 SourceCropper.toRawRect(upright, RAW_W, RAW_H, 450));
         assertEquals(SourceCropper.toRawRect(upright, RAW_W, RAW_H, 270),
                 SourceCropper.toRawRect(upright, RAW_W, RAW_H, -90));
+    }
+
+    // ── Where the box lands inside a decoded crop ────────────────────────────
+
+    /**
+     * The crop is the padded region sampled down by a power of two, so the box inside it is
+     * the box relative to the region's origin, scaled by the crop's size over the region's.
+     */
+    @Test
+    public void boxIsPlacedRelativeToTheRegionAndScaledToTheCrop() {
+        Rect region = new Rect(100, 200, 500, 600);   // 400x400 of the photo
+        Rect box = new Rect(200, 300, 400, 500);      // the middle 200x200
+        RectF within = SourceCropper.boxWithin(region, box, 200, 200);  // decoded at 1/2
+        assertEquals(50f, within.left, 1e-4f);
+        assertEquals(50f, within.top, 1e-4f);
+        assertEquals(150f, within.right, 1e-4f);
+        assertEquals(150f, within.bottom, 1e-4f);
+    }
+
+    /**
+     * Padding clipped at the photo's edge shifts the box towards that edge of the crop rather
+     * than leaving it centred — a box in the top-left corner sits at the crop's origin.
+     */
+    @Test
+    public void aBoxAtThePhotoEdgeSitsAtTheCropEdge() {
+        Rect region = new Rect(0, 0, 260, 260);       // padding above and left was clipped away
+        Rect box = new Rect(0, 0, 200, 200);
+        RectF within = SourceCropper.boxWithin(region, box, 260, 260);
+        assertEquals(0f, within.left, 1e-4f);
+        assertEquals(0f, within.top, 1e-4f);
+        assertEquals(200f, within.right, 1e-4f);
+    }
+
+    /** A region decode can come back a pixel off per axis; each axis scales on its own. */
+    @Test
+    public void axesScaleIndependently() {
+        Rect region = new Rect(0, 0, 400, 300);
+        Rect box = new Rect(100, 100, 300, 200);
+        RectF within = SourceCropper.boxWithin(region, box, 201, 150);
+        assertEquals(100 * 201f / 400f, within.left, 1e-3f);
+        assertEquals(100 * 150f / 300f, within.top, 1e-3f);
+        assertEquals(300 * 201f / 400f, within.right, 1e-3f);
+        assertEquals(200 * 150f / 300f, within.bottom, 1e-3f);
     }
 }

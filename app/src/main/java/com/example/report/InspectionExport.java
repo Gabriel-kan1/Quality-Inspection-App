@@ -71,6 +71,13 @@ public final class InspectionExport {
      * export/import round trip, which would make every restored record fail its own seal. The
      * uuid <em>is</em> included, so a digest binds content to identity and two records cannot
      * have their identities swapped without detection.
+     *
+     * <p>A slot's size ratio is written only when it is present. {@link #verify} recomputes the
+     * form under the current rules, so a field that every older record wrote as null would
+     * change the bytes of every seal already filed and mark all of them tampered. Writing it
+     * conditionally keeps those forms byte-identical while still sealing the value on records
+     * that have one: nulling a stored ratio removes its field and breaks the digest, and adding
+     * one to an old record inserts a field and does the same.
      */
     @NonNull
     public static String canonicalForm(@NonNull InspectionRecord record,
@@ -104,6 +111,7 @@ public final class InspectionExport {
             field(sb, "slotRelX", coord(s.getRelX()));
             field(sb, "slotRelY", coord(s.getRelY()));
             field(sb, "slotOffset", s.getOffsetPct() == null ? null : coord(s.getOffsetPct()));
+            if (s.getSizeRatio() != null) field(sb, "slotSize", coord(s.getSizeRatio()));
         }
         return sb.toString();
     }
@@ -197,6 +205,9 @@ public final class InspectionExport {
             o.put("zone", nullable(s.getZone()));
             o.put("offsetPct", s.getOffsetPct() == null
                     ? JSONObject.NULL : round(s.getOffsetPct()));
+            // Detected size over the reference's, corrected for framing; null when not judged.
+            o.put("sizeRatio", s.getSizeRatio() == null
+                    ? JSONObject.NULL : round(s.getSizeRatio()));
             slotArray.put(o);
         }
         root.put("slotResults", slotArray);

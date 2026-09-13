@@ -221,6 +221,18 @@ public class HardwareFeatureExtractor {
          * CropSink, Boolean)}.
          */
         public boolean glareCorrectionApplied;
+        /**
+         * Dimensions of the working image every {@link ExtractedFeature#rectFraction} is a
+         * fraction of, or 0 when the pipeline did not run.
+         *
+         * Fractions are what the rest of the app compares in, but a fraction cannot say how
+         * many pixels a feature spanned, and one thing does need to know: the size check
+         * refuses slots whose reference box is under {@code FeatureLocalisation.MIN_SIZE_JUDGED_PX}
+         * because boxes that small do not repeat between shots. That floor was measured in
+         * pixels at {@link #WORKING_MAX_DIM}, so these are what turn it back into one.
+         */
+        public int workingWidth;
+        public int workingHeight;
 
         public AnalysisResult(List<ExtractedFeature> features, Bitmap processedBitmap) {
             this(features, processedBitmap, null, false);
@@ -458,6 +470,11 @@ public class HardwareFeatureExtractor {
             return new AnalysisResult(features, null);
         }
 
+        // Captured before the bitmap is recycled below: the result reports them so callers
+        // can turn a fractional box back into pixels.
+        final int workingWidth = bitmap.getWidth();
+        final int workingHeight = bitmap.getHeight();
+
         Mat src = null;
         Edges e = null;
         Mat rgbaVisual = null;
@@ -507,7 +524,11 @@ public class HardwareFeatureExtractor {
             bitmap.recycle();
         }
 
-        return new AnalysisResult(features, diagnosticBitmap, calibration, glareApplied);
+        AnalysisResult result = new AnalysisResult(features, diagnosticBitmap, calibration,
+                glareApplied);
+        result.workingWidth = workingWidth;
+        result.workingHeight = workingHeight;
+        return result;
     }
 
     private static void performDynamicDetection(Mat src, Mat edges, Mat edgesRaw,

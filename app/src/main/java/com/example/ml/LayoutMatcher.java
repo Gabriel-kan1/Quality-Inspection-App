@@ -401,6 +401,22 @@ public final class LayoutMatcher {
                     (float) ((transform[0] * dy - transform[2] * dx) / det)};
         }
 
+        /**
+         * Factor by which the transform scales <em>area</em> from layout to photo — the
+         * absolute determinant of its linear part — or NaN when not aligned.
+         *
+         * This is what the size check divides by. A part photographed closer than the
+         * reference has every box larger by the same factor, and that is framing, not a
+         * change in the hardware; comparing raw pixels would report it. The determinant is the
+         * right single number under both models: for a similarity it is the scale squared,
+         * for an affine it is the product of the two stretches, which is what a box's area
+         * actually does under foreshortening.
+         */
+        public double areaScale() {
+            if (!aligned || transform == null) return Double.NaN;
+            return Math.abs(transform[0] * transform[3] - transform[1] * transform[2]);
+        }
+
         public String describe() {
             if (!aligned) return "could not align to reference layout";
             return String.format(Locale.US, "%d matched, %d missing, %d unexpected",

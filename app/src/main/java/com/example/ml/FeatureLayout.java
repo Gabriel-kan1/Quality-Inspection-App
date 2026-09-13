@@ -30,6 +30,16 @@ import java.util.Locale;
  * only meaningful once {@link LayoutMatcher} has aligned an inspection onto them — the part
  * is photographed freehand, so nothing can be compared in raw image space.
  *
+ * <h3>Reference size</h3>
+ * Each slot also carries the size of the box the reference detection was found in, as a
+ * fraction of the reference frame, together with the working-image dimensions that fraction
+ * was measured at. That is what lets an inspection compare a fastener's size against the
+ * reference <em>without a calibration marker</em>: the alignment fitted by {@link LayoutMatcher}
+ * recovers how much larger or smaller the part appears in this photo, so the box the reference
+ * predicts at this framing can be set against the box actually found. See
+ * {@code FeatureLocalisation.SIZE_TOLERANCE}. Layouts saved before sizes were recorded carry
+ * none, and such slots are simply not judged.
+ *
  * <h3>Dimension statistics</h3>
  * Each slot accumulates the sizes measured for it. Median and MAD are kept rather than mean
  * and standard deviation, deliberately: an occasional genuinely out-of-spec part would drag
@@ -65,14 +75,28 @@ public final class FeatureLayout {
         /** Position in the reference photo, fractional (0-1). */
         public final float x;
         public final float y;
+        /**
+         * Size of the reference detection's bounding box, as a fraction of the reference
+         * frame's width and height. Zero when unknown — a layout labelled before sizes were
+         * recorded — in which case the slot's size is never judged.
+         */
+        public final float w;
+        public final float h;
         /** Every size measured for this slot, in mm, across accepted inspections. */
         public final List<Double> samples = new ArrayList<>();
 
-        Slot(int id, String type, float x, float y) {
+        Slot(int id, String type, float x, float y, float w, float h) {
             this.id = id;
             this.type = type;
             this.x = x;
             this.y = y;
+            this.w = w > 0f ? w : 0f;
+            this.h = h > 0f ? h : 0f;
+        }
+
+        /** Whether the reference recorded a box size for this slot at all. */
+        public boolean hasSize() {
+            return w > 0f && h > 0f;
         }
 
         public boolean hasLimits() {
@@ -146,7 +170,15 @@ public final class FeatureLayout {
     }
 
     public Slot addSlot(String type, float x, float y) {
-        Slot s = new Slot(slots.size() + 1, type, x, y);
+        return addSlot(type, x, y, 0f, 0f);
+    }
+
+    /**
+     * Adds a slot with the size of the box it was detected in, fractional. Pass zero for
+     * either dimension when no box is available and the slot will not be size-checked.
+     */
+    public Slot addSlot(String type, float x, float y, float w, float h) {
+        Slot s = new Slot(slots.size() + 1, type, x, y, w, h);
         slots.add(s);
         return s;
     }
@@ -200,6 +232,40 @@ public final class FeatureLayout {
         this.referenceUri = uri;
     }
 
+    /**
+     * Working-image dimensions the slot fractions were measured against, or 0 when unknown.
+     *
+     * Needed for one thing: turning a slot's fractional box back into pixels, so the size
+     * check can refuse slots too small for the detector's boxes to be repeatable (see
+     * {@code FeatureLocalisation.MIN_SIZE_JUDGED_PX}). Fractions alone cannot say how many
+     * pixels a feature spanned, and the floor was measured in pixels.
+     */
+    private int imageWidth;
+    private int imageHeight;
+
+    public int imageWidth() {
+        return imageWidth;
+    }
+
+    public int imageHeight() {
+        return imageHeight;
+    }
+
+    public void setImageSize(int width, int height) {
+        this.imageWidth = Math.max(0, width);
+        this.imageHeight = Math.max(0, height);
+    }
+
+
+    /**
+     * The shorter side of a slot's reference box in working-image pixels, or NaN when either
+     * the box or the image size is unknown.
+     */
+    public float shortSidePx(Slot s) {
+        if (s == null || !s.hasSize() || imageWidth <= 0 || imageHeight <= 0) return Float.NaN;
+        return Math.min(s.w * imageWidth, s.h * imageHeight);
+    }
+
     /** Slot counts by type — the expected configuration this reference defines. */
     public java.util.Map<String, Integer> countsByType() {
         java.util.Map<String, Integer> counts = new java.util.LinkedHashMap<>();
@@ -237,6 +303,10 @@ public final class FeatureLayout {
                 o.put("type", s.type);
                 o.put("x", s.x);
                 o.put("y", s.y);
+                if (s.hasSize()) {
+                    o.put("w", s.w);
+                    o.put("h", s.h);
+                }
                 JSONArray samples = new JSONArray();
                 for (double d : s.samples) samples.put(d);
                 o.put("samples", samples);
@@ -245,6 +315,10 @@ public final class FeatureLayout {
             JSONObject root = new JSONObject();
             root.put("slots", arr);
             if (referenceUri != null) root.put("referenceUri", referenceUri);
+            if (imageWidth > 0 && imageHeight > 0) {
+                root.put("imageWidth", imageWidth);
+                root.put("imageHeight", imageHeight);
+            }
             try (FileOutputStream fos = new FileOutputStream(fileFor(context, partId))) {
                 fos.write(root.toString().getBytes(StandardCharsets.UTF_8));
             }
@@ -265,10 +339,14 @@ public final class FeatureLayout {
             JSONArray arr = root.getJSONArray("slots");
             FeatureLayout layout = new FeatureLayout();
             layout.referenceUri = root.optString("referenceUri", null);
+            layout.setImageSize(root.optInt("imageWidth", 0), root.optInt("imageHeight", 0));
             for (int i = 0; i < arr.length(); i++) {
                 JSONObject o = arr.getJSONObject(i);
+                // Sizes are optional: layouts written before they were recorded have none,
+                // and read back as slots that are positioned but never size-judged.
                 Slot s = new Slot(o.getInt("id"), o.getString("type"),
-                        (float) o.getDouble("x"), (float) o.getDouble("y"));
+                        (float) o.getDouble("x"), (float) o.getDouble("y"),
+                        (float) o.optDouble("w", 0), (float) o.optDouble("h", 0));
                 JSONArray samples = o.optJSONArray("samples");
                 if (samples != null) {
                     for (int j = 0; j < samples.length(); j++) s.samples.add(samples.getDouble(j));
