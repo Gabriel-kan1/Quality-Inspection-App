@@ -970,6 +970,135 @@ public class FeatureLocalisationTest {
         assertEquals(10, result.countWithStatus(FeatureLocalisation.Status.PRESENT));
     }
 
+    /**
+     * Applies a tilted view of the part: rotate into the tilt axis, foreshorten across it by
+     * {@code cos(tilt)}, rotate back, then rotate and translate freehand.
+     *
+     * This is what an off-axis camera does to a flat part, to first order. It is not a
+     * similarity transform at any parameter setting — the pairwise separations no longer share
+     * one common factor, which is exactly why growing a correspondence set on separations alone
+     * cannot reach it.
+     */
+    private static float[] tilted(float x, float y, double tiltDeg, double axisDeg,
+                                  double rollDeg, double scale, double dx, double dy) {
+        double a = Math.toRadians(axisDeg);
+        // Into the tilt frame.
+        double u = x * Math.cos(a) + y * Math.sin(a);
+        double v = -x * Math.sin(a) + y * Math.cos(a);
+        v *= Math.cos(Math.toRadians(tiltDeg));
+        // Back out of it.
+        double px = u * Math.cos(a) - v * Math.sin(a);
+        double py = u * Math.sin(a) + v * Math.cos(a);
+        double r = Math.toRadians(rollDeg);
+        return new float[]{
+                (float) (scale * (px * Math.cos(r) - py * Math.sin(r)) + dx),
+                (float) (scale * (px * Math.sin(r) + py * Math.cos(r)) + dy)};
+    }
+
+    /**
+     * A part photographed off-axis must still register.
+     *
+     * The correspondence set used to be grown on the {@link DistanceNetwork} alone and then
+     * fitted once. Separations are invariant to translation, rotation and <em>uniform</em>
+     * scale, and to nothing else: a tilt foreshortens them by different factors depending on
+     * their direction — measured at median x1.28 and up to x2.80 on real pairs. Growth runs at
+     * half of a 12% tolerance, so a moderate tilt stalls it well before the inlier floor.
+     *
+     * Registration now iterates fit-reassign-refit and lets the affine model propose from the
+     * three correspondences that determine it, rather than waiting for the four that make it
+     * evidence. Swept against the shipped constants on this layout, the limit moves from
+     * 30 degrees of tilt to 66 — where {@code MAX_ANISOTROPY} stops it, as
+     * {@link #aTiltTooSteepToModelIsRefusedRatherThanForced} pins.
+     *
+     * 35 degrees costs 18% across the tilt axis, comfortably past the 6% growth budget, and is
+     * where the old code first refused.
+     */
+    @Test
+    public void aPartPhotographedOffAxisStillRegisters() {
+        FeatureLayout layout = referenceLayout();
+        List<RectF> rects = new ArrayList<>();
+        List<String> types = new ArrayList<>();
+        for (FeatureLayout.Slot s : layout.slots()) {
+            float[] p = tilted(s.x, s.y, 35, 25, 10, 0.95, 0.06, 0.04);
+            rects.add(at(p[0], p[1]));
+            types.add(s.type);
+        }
+
+        FeatureLocalisation.Result result = FeatureLocalisation.localise(layout, rects, types, null);
+        assertTrue("an off-axis shot of an intact part must still align", result.aligned);
+        assertEquals(5, result.countWithStatus(FeatureLocalisation.Status.PRESENT));
+    }
+
+    /** The tilt tolerance must not cost the defect: the same shot with one fastener absent. */
+    @Test
+    public void anOffAxisShotStillNamesTheMissingPosition() {
+        FeatureLayout layout = referenceLayout();
+        List<RectF> rects = new ArrayList<>();
+        List<String> types = new ArrayList<>();
+        for (FeatureLayout.Slot s : layout.slots()) {
+            if (s.id == 2) continue;
+            float[] p = tilted(s.x, s.y, 30, 25, 10, 0.95, 0.06, 0.04);
+            rects.add(at(p[0], p[1]));
+            types.add(s.type);
+        }
+
+        FeatureLocalisation.Result result = FeatureLocalisation.localise(layout, rects, types, null);
+        assertTrue(result.aligned);
+        assertEquals(1, result.countWithStatus(FeatureLocalisation.Status.MISSING));
+        assertEquals(FeatureLocalisation.Status.MISSING, findingFor(result, 2).status);
+    }
+
+    /**
+     * Past the tilt an affine can model, the check refuses rather than forcing a fit.
+     *
+     * The extra freedom that absorbs foreshortening is also freedom to squash the layout onto a
+     * line and collect inliers along it, so {@code MAX_ANISOTROPY} caps the stretch at x2.5 —
+     * about 66 degrees. Beyond it the honest answer is no positional claim at all, and that is
+     * what has to happen: a forced fit would name specific slots, confidently and wrongly.
+     *
+     * 75 degrees stretches by x3.86, comfortably past the cap.
+     */
+    @Test
+    public void aTiltTooSteepToModelIsRefusedRatherThanForced() {
+        FeatureLayout layout = referenceLayout();
+        List<RectF> rects = new ArrayList<>();
+        List<String> types = new ArrayList<>();
+        for (FeatureLayout.Slot s : layout.slots()) {
+            float[] p = tilted(s.x, s.y, 75, 25, 10, 0.95, 0.06, 0.04);
+            rects.add(at(p[0], p[1]));
+            types.add(s.type);
+        }
+
+        FeatureLocalisation.Result result = FeatureLocalisation.localise(layout, rects, types, null);
+        assertFalse("a tilt past the anisotropy guard must not be forced into a fit",
+                result.aligned);
+        assertTrue("and no position may be claimed from it", result.findings.isEmpty());
+    }
+
+    /**
+     * Proposing an affine from three correspondences must not manufacture an alignment.
+     *
+     * Three points determine an affine exactly, so any three detections can be interpolated by
+     * one — which is precisely why the proposal is scored rather than believed. A photo of a
+     * different arrangement has to fail on the inlier count regardless of how well some triple
+     * inside it can be fitted.
+     */
+    @Test
+    public void threePointsCannotTalkTheirWayIntoAnAlignment() {
+        FeatureLayout layout = referenceLayout();
+        // Five detections in a wholly different arrangement: a tight line, which no similarity
+        // or affine view of the reference produces without collapsing it.
+        List<RectF> rects = new ArrayList<>();
+        List<String> types = new ArrayList<>();
+        for (int k = 0; k < 5; k++) {
+            rects.add(at(0.20f + 0.12f * k, 0.50f + 0.01f * k));
+            types.add("bolt_head");
+        }
+
+        FeatureLocalisation.Result result = FeatureLocalisation.localise(layout, rects, types, null);
+        assertFalse("a different arrangement must not register", result.aligned);
+    }
+
     @Test
     public void findingsAreOrderedBySlotNumber() {
         FeatureLayout layout = referenceLayout();

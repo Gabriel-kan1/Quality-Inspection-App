@@ -20,18 +20,38 @@ import java.util.Locale;
  * <h3>Approach</h3>
  * Correspondence first, transform second.
  *
- * A candidate correspondence set is grown on the {@link DistanceNetwork} — the matrix of every
- * feature's separation from every other feature, which is a property of the part rather than of
- * the photograph. Two provisional pairings fix a scale; a third feature joins only if its
- * separation from <em>both</em> already matches what the layout says, and each further member is
- * checked against every member already accepted. A proper similarity transform (uniform scale,
- * rotation, translation — never reflection) is then fitted by least squares over the whole
- * agreed set, and the fit is verified by counting how many slots it actually accounts for.
+ * A candidate correspondence set is bootstrapped on the {@link DistanceNetwork} — the matrix of
+ * every feature's separation from every other feature, which is a property of the part rather
+ * than of the photograph. Two provisional pairings fix a scale; a third feature joins only if
+ * its separation from <em>both</em> already matches what the layout says, and each further
+ * member is checked against every member already accepted. A proper similarity transform
+ * (uniform scale, rotation, translation — never reflection) is then fitted by least squares over
+ * the agreed set, and the fit is verified by counting how many slots it actually accounts for.
+ *
+ * That set is a starting point, not the answer. {@link #refine} then re-derives the
+ * correspondence from the transform's own residuals and re-fits, repeatedly, until neither
+ * changes — see below for why one pass was not enough.
  *
  * This is deliberately robust rather than exact: missing, extra and misplaced features are
  * precisely what the inspection is looking for, so the alignment must tolerate them instead
  * of being derailed by them. A least-squares fit over <em>all</em> points would be dragged by
  * the very defects being detected, which is why the fit is confined to the agreed set.
+ *
+ * <h3>Why correspondence is re-derived from residuals, not just from separations</h3>
+ * Separations are invariant to translation, rotation and <em>uniform</em> scale, and to nothing
+ * else. A camera that is not perpendicular to the part foreshortens it along one axis, so
+ * separations parallel to the tilt shrink while separations across it do not — measured at
+ * median x1.28 and up to x2.80 on real pairs (see {@link #AFFINE_MIN_SLOTS}). The network
+ * therefore cannot follow a tilt at any tolerance it can safely be run at, and growing on it
+ * alone stalled a moderately angled shot well short of the inlier floor. Distance change, by
+ * contrast, is the one thing separations divide out, which is why registration behaved so much
+ * better as the operator stepped back than as they leaned over.
+ *
+ * Re-deriving correspondence from residuals fixes that, because residuals are taken under the
+ * layout's own model — affine where the layout can afford it, and so able to express exactly
+ * the foreshortening the network cannot. Swept against the shipped constants on the five-slot
+ * layout in the tests, the tilt at which registration is lost moves from 30 degrees to 66,
+ * where {@link #MAX_ANISOTROPY} refuses the fit rather than the search failing to find it.
  *
  * <h3>Why the transform is fitted rather than taken from the seed</h3>
  * Two point pairs determine a similarity transform exactly, so it is tempting to use the seed's
@@ -215,6 +235,36 @@ public final class LayoutMatcher {
      * collapse.
      */
     private static final double MAX_ANISOTROPY = 2.5;
+
+    /**
+     * Passes of fit-reassign-refit before refinement gives up on converging.
+     *
+     * Each pass costs one least-squares fit and one inlier count over the whole layout, inside
+     * the seed loop, so this is the one constant here with a runtime price. In practice the
+     * assignment settles in two or three passes even from a two-point seed under a tilt; eight
+     * is headroom, not an expected cost, and the loop exits the moment nothing changes.
+     */
+    private static final int MAX_REFINEMENTS = 8;
+
+    /**
+     * Correspondences that may <em>propose</em> an affine transform, as opposed to the
+     * {@link #AFFINE_MIN_INLIERS} that must agree before one is believed.
+     *
+     * Three points determine an affine exactly, which is precisely why three is not evidence —
+     * and equally why it is a perfectly good hypothesis. The distinction is the one the seeding
+     * already makes one model down: two correspondences determine a similarity exactly and are
+     * allowed to seed one, while {@link #MIN_INLIERS} must agree before the result is believed.
+     * Refusing to fit an affine below its own evidence floor collapsed those two roles together,
+     * and that is what deadlocked the tilted case: measured on the five-slot layout in the tests
+     * under a 35-degree tilt, the best of all ten two-point seeds accounts for 3 slots, so the
+     * only model that could absorb the tilt could never be reached from any of them.
+     *
+     * Proposing from three is safe because nothing is taken on the proposal's word. The result
+     * is scored one-to-one at {@link #INLIER_TOLERANCE} like any other, it must still clear
+     * {@link #requiredInliers}, and {@link #MAX_ANISOTROPY} still rejects the near-collinear
+     * triples whose exact fit is a wild stretch — those fall back to a similarity.
+     */
+    private static final int AFFINE_MIN_PROPOSAL = 3;
 
     /** Whether a layout of this size can afford the richer transform. */
     private static boolean usesAffine(int slots) {
@@ -456,6 +506,7 @@ public final class LayoutMatcher {
         boolean affine = usesAffine(slots.size());
         boolean[] used = new boolean[features.size()];
         int[] assignment = new int[slots.size()];
+        int[] refineScratch = new int[slots.size()];
 
         double[] bestTransform = null;
         int bestInliers = 0;
@@ -488,31 +539,16 @@ public final class LayoutMatcher {
             if (consensus == null) continue;
             bestConsensus = Math.max(bestConsensus, consensus.size);
 
-            double[] t = fitSimilarity(slotPts, featPts, consensus.observedForNode);
-            if (t == null) continue;
+            double[] seedFit = fitSimilarity(slotPts, featPts, consensus.observedForNode);
+            if (seedFit == null) continue;
 
-            // Refine once against the transform's own inliers. Growth admits a member on its
-            // separations alone, which cannot distinguish a point from its mirror across the
-            // line through the members already accepted; the fitted transform can, so re-fitting
-            // on what it actually agrees with drops any such member back out.
-            //
-            // The refinement is also where the layout's own model is applied. The seed and the
-            // growth are always similarity-based — two correspondences cannot say anything
-            // about shear — so affine enters only once there is a correspondence set worth
-            // fitting it to, and only for layouts with the slots to make four inliers evidence
-            // rather than arithmetic.
-            int inliers = countInliers(t, slotPts, featPts, toleranceFor(t, spread), used,
-                    assignment);
-            double[] refined = affine ? fitAffine(slotPts, featPts, assignment) : null;
-            if (refined == null) refined = fitSimilarity(slotPts, featPts, assignment);
-            if (refined != null) {
-                int refinedInliers = countInliers(refined, slotPts, featPts,
-                        toleranceFor(refined, spread), used, null);
-                if (refinedInliers >= inliers) {
-                    t = refined;
-                    inliers = refinedInliers;
-                }
-            }
+            // The consensus is a starting point, not the answer. Refinement re-derives the
+            // correspondence from the transform's own residuals and re-fits, repeatedly — see
+            // refine() for why one pass was not enough.
+            Fit fit = refine(seedFit, slotPts, featPts, spread, affine, used, assignment,
+                    refineScratch);
+            double[] t = fit.transform;
+            int inliers = fit.inliers;
 
             if (inliers < bestInliers) continue;
             double rotation = rotationOf(t);
@@ -604,6 +640,123 @@ public final class LayoutMatcher {
         }
         logResiduals(bestTransform, slotPts, featPts);
         return result;
+    }
+
+    /** A transform and how many slots it accounts for, so refinement can return both. */
+    private static final class Fit {
+        final double[] transform;
+        final int inliers;
+
+        Fit(double[] transform, int inliers) {
+            this.transform = transform;
+            this.inliers = inliers;
+        }
+    }
+
+    /**
+     * Re-derives the correspondence from a transform's own residuals and re-fits, until neither
+     * changes.
+     *
+     * <h3>Why this is not one pass</h3>
+     * The correspondence handed in was grown on the {@link DistanceNetwork}, which compares
+     * pairwise separations. Those are invariant to translation, rotation and <em>uniform</em>
+     * scale — and to nothing else. An off-axis camera foreshortens the part along one axis, so
+     * separations parallel to the tilt shrink while separations across it do not; the measured
+     * spread of those ratios on real pairs is median x1.28 and reaches x2.80 (see
+     * {@link #AFFINE_MIN_SLOTS}). Growth runs at {@link #GROWTH_TOLERANCE_RATIO} of the
+     * positional tolerance, i.e. 6% of the part, which a tilt of much more than twenty degrees
+     * exceeds on its worst-oriented pairs.
+     *
+     * So the set stalled, and the affine model — the one thing that can absorb the tilt — was
+     * applied exactly once, to whatever the stalled set produced. It could not recruit the
+     * members that growth had refused, because there was no second look. Registration failed on
+     * angled shots while behaving perfectly on distant ones, which is the signature of a
+     * scale-invariant test doing the recruiting.
+     *
+     * Iterating closes that: each pass assigns detections to slots by residual under the current
+     * transform, re-fits over what it agreed with, and repeats. A tilt that growth could not
+     * follow is picked up two or three members at a time, each pass improving the model that
+     * recruits the next. Refinement is where the layout's own model enters — the seed and the
+     * growth are always similarity-based, since two correspondences say nothing about shear.
+     *
+     * <h3>Why the affine model proposes from three</h3>
+     * Iterating alone does not break the deadlock, and the reason is arithmetic rather than
+     * margin. Measured on the five-slot layout in the tests under a 35-degree tilt, the best of
+     * all ten two-point seeds accounts for 3 slots. {@link #fitAffine} used to refuse to fit
+     * below {@link #AFFINE_MIN_INLIERS}, so the one model that could absorb the tilt was
+     * unreachable from every available starting point: each pass re-fitted the same similarity
+     * over the same three, and converged immediately onto the failure.
+     *
+     * The fix is to separate what may <em>propose</em> a transform from what must agree before
+     * one is <em>believed</em> — see {@link #AFFINE_MIN_PROPOSAL}. Three correct
+     * correspondences under a genuine tilt determine the tilt exactly, so the pass that fits
+     * them places the remaining slots on top of their detections and the next pass has five.
+     *
+     * <h3>What stops it walking off</h3>
+     * Refitting on your own inliers can chase a self-consistent wrong answer, so:
+     *
+     * <ul>
+     *   <li><b>the radius is never widened.</b> Every pass proposes and scores at
+     *       {@link #INLIER_TOLERANCE}, one-to-one. A reaching proposal step was tried first and
+     *       is exactly what {@link #GROWTH_TOLERANCE_RATIO} warns about: allowed to fit over
+     *       correspondences beyond tolerance, least squares stretches to reach a stray, and the
+     *       stretched transform then scores it as fitted. Two tests caught it;</li>
+     *   <li><b>the best-scoring transform is kept</b>, not the last one, so a pass that trades
+     *       correct correspondences for a flatter fit cannot become the answer merely by being
+     *       the pass the loop stopped on;</li>
+     *   <li>{@link #fitAffine} still refuses anything past {@link #MAX_ANISOTROPY}, which rules
+     *       out squashing the layout onto a line to harvest inliers along it, and is what makes
+     *       proposing from an exactly-determined triple safe;</li>
+     *   <li>{@link #requiredInliers} is untouched, so a proposal from three still has to be
+     *       corroborated by four before anything is reported;</li>
+     *   <li>{@link #MAX_REFINEMENTS} bounds the work when the fit does not settle.</li>
+     * </ul>
+     *
+     * Nothing else is relaxed: growth stays at half tolerance and the seed still has to imply a
+     * plausible scale off a long enough baseline.
+     *
+     * @param assignment slot-sized scratch for the proposed correspondence
+     * @param scratch    second slot-sized scratch, for the strict count
+     */
+    private static Fit refine(double[] seedFit, float[][] slotPts, float[][] featPts,
+                              double spread, boolean affine, boolean[] used, int[] assignment,
+                              int[] scratch) {
+        double[] t = seedFit;
+        double[] best = seedFit;
+        int bestInliers = countInliers(t, slotPts, featPts, toleranceFor(t, spread), used,
+                assignment);
+
+        for (int pass = 0; pass < MAX_REFINEMENTS; pass++) {
+            // Propose from what the current transform agrees with, at the proposal floor rather
+            // than the evidence floor.
+            double[] next = affine
+                    ? fitAffine(slotPts, featPts, assignment, AFFINE_MIN_PROPOSAL) : null;
+            // Affine is refused when under-determined, degenerate, or stretched past the
+            // anisotropy guard; a similarity over the same correspondences is the honest
+            // fallback, not a failure.
+            if (next == null) next = fitSimilarity(slotPts, featPts, assignment);
+            if (next == null) break;
+
+            int inliers = countInliers(next, slotPts, featPts, toleranceFor(next, spread),
+                    used, scratch);
+            if (inliers > bestInliers) {
+                best = next;
+                bestInliers = inliers;
+            }
+            if (settled(t, next)) break;
+
+            t = next;
+            System.arraycopy(scratch, 0, assignment, 0, assignment.length);
+        }
+        return new Fit(best, bestInliers);
+    }
+
+    /** Whether two successive fits agree closely enough that another pass cannot change them. */
+    private static boolean settled(double[] a, double[] b) {
+        for (int i = 0; i < 6; i++) {
+            if (Math.abs(a[i] - b[i]) > 1e-9) return false;
+        }
+        return true;
     }
 
     private static double impliedScale(DistanceNetwork slotNet, DistanceNetwork featNet,
@@ -733,15 +886,17 @@ public final class LayoutMatcher {
      * dominated by the anisotropic foreshortening of a camera that is not square to the part,
      * which no rigid transform can express at any tolerance. It is also the risk, since an
      * affine can squash the layout onto a line and harvest inliers along it — hence the
-     * {@link #MAX_ANISOTROPY} guard, and hence requiring four assignments so the fit is never
-     * merely reproducing its own degrees of freedom.
+     * {@link #MAX_ANISOTROPY} guard.
      *
+     * @param minimum assignments required to attempt the fit. {@link #AFFINE_MIN_PROPOSAL} when
+     *                the result is a hypothesis still to be scored; {@link #AFFINE_MIN_INLIERS}
+     *                where the fit itself is being taken as evidence.
      * @return {@code [a11, a12, a21, a22, tx, ty]}, or null when under-determined, degenerate
      *         or stretched beyond what a photograph of a rigid part can produce.
      */
     private static double[] fitAffine(float[][] slotPts, float[][] featPts,
-                                      int[] observedForNode) {
-        double[] c = centroids(slotPts, featPts, observedForNode, AFFINE_MIN_INLIERS);
+                                      int[] observedForNode, int minimum) {
+        double[] c = centroids(slotPts, featPts, observedForNode, minimum);
         if (c == null) return null;
         double sx = c[0], sy = c[1], fx = c[2], fy = c[3];
 
