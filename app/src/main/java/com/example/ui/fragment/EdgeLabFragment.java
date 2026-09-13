@@ -37,10 +37,12 @@ import java.util.Locale;
  * shows the stage itself, and shows it for the alternatives at the same time, so "Canny is
  * struggling with this lighting" becomes something to look at rather than something to assert.
  *
- * <p>Deliberately outside the inspection flow: it writes nothing, files nothing and touches no
- * part record. It takes an image from the gallery or from the bundled test photographs, and
- * everything it produces lives until the screen is left. See {@link EdgeMethodLab} for the
- * methods and for why they are scored the way they are.
+ * <p>The comparison itself files nothing and touches no part record: it takes an image from
+ * the gallery or from the bundled test photographs, and everything it produces lives until the
+ * screen is left. The one thing it does change is the edge stage inspections run — each card
+ * offers USE FOR INSPECTIONS, which persists that method as the detector's edge operator for
+ * every inspection and reference setup that follows ({@link EdgeMethodLab#select}). See
+ * {@link EdgeMethodLab} for the methods and for why they are scored the way they are.
  */
 public class EdgeLabFragment extends Fragment {
 
@@ -71,6 +73,10 @@ public class EdgeLabFragment extends Fragment {
      */
     private int runGeneration = 0;
 
+    /** The cards on screen, so a choice on one can update the badges on all of them. */
+    private final List<ItemEdgeMethodBinding> cards = new ArrayList<>();
+    private final List<EdgeMethodLab.MethodResult> shownResults = new ArrayList<>();
+
     private final ActivityResultLauncher<String> pickImageLauncher =
             registerForActivityResult(new ActivityResultContracts.GetContent(), uri -> {
                 if (uri != null) compare(uri.toString(), fileNameOf(uri));
@@ -90,6 +96,7 @@ public class EdgeLabFragment extends Fragment {
 
         binding.btnPickImage.setOnClickListener(v -> pickImageLauncher.launch("image/*"));
         binding.btnPickAsset.setOnClickListener(v -> showAssetChooser());
+        showActiveMethod();
 
         if (!HardwareFeatureExtractor.isAvailable()) {
             // Every method on this screen is an OpenCV call, so without the native libraries
@@ -100,6 +107,43 @@ public class EdgeLabFragment extends Fragment {
             binding.btnPickImage.setEnabled(false);
             binding.btnPickAsset.setEnabled(false);
         }
+    }
+
+    /** The header line naming the method inspections currently run. */
+    private void showActiveMethod() {
+        if (binding == null) return;
+        String name = EdgeMethodLab.selectedName(requireContext());
+        binding.tvActiveMethod.setText(EdgeMethodLab.shippedSelected(requireContext())
+                ? "INSPECTIONS RUN: " + name + " (default)"
+                : "INSPECTIONS RUN: " + name);
+    }
+
+    /**
+     * Makes one method the edge stage for inspections and refreshes every card's badge and
+     * button, so the screen shows the new state without re-running the comparison.
+     */
+    private void useMethod(EdgeMethodLab.MethodResult result) {
+        EdgeMethodLab.select(requireContext(), result.id);
+        String active = EdgeMethodLab.selectedId(requireContext());
+        for (int i = 0; i < cards.size() && i < shownResults.size(); i++) {
+            markInUse(cards.get(i), shownResults.get(i), active);
+        }
+        showActiveMethod();
+        Toast.makeText(getContext(), "Inspections and reference setup now use: " + result.name
+                + ". Re-run reference setup for parts whose reference was made with another"
+                + " method.", Toast.LENGTH_LONG).show();
+    }
+
+    private static void markInUse(ItemEdgeMethodBinding card, EdgeMethodLab.MethodResult result,
+                                  String activeId) {
+        boolean inUse = result.id.equals(activeId);
+        card.tvMethodInUse.setVisibility(inUse ? View.VISIBLE : View.GONE);
+        card.btnUseMethod.setEnabled(!inUse && !result.failed());
+        card.btnUseMethod.setText(inUse ? "IN USE FOR INSPECTIONS"
+                : result.failed() ? "DID NOT RUN ON THIS PHOTO" : "USE FOR INSPECTIONS");
+        // In use outranks shipped for the stroke: the operator wants to find the card that is
+        // running, and the SHIPPED badge still says which one that would be by default.
+        card.cardMethod.setStrokeWidth(inUse ? 3 : (result.isShippedPipeline ? 2 : 0));
     }
 
     /** Offers the photographs bundled in assets, which are the images the studies were run on. */
@@ -190,6 +234,7 @@ public class EdgeLabFragment extends Fragment {
         binding.tvReadingNote.setVisibility(View.VISIBLE);
 
         LayoutInflater inflater = LayoutInflater.from(requireContext());
+        String active = EdgeMethodLab.selectedId(requireContext());
         for (EdgeMethodLab.MethodResult result : results) {
             ItemEdgeMethodBinding card =
                     ItemEdgeMethodBinding.inflate(inflater, binding.containerResults, false);
@@ -201,7 +246,10 @@ public class EdgeLabFragment extends Fragment {
                     result.isShippedPipeline ? View.VISIBLE : View.GONE);
             // A stroke rather than a different fill: the shipped row has to stand out without
             // reading as a verdict about which method won.
-            card.cardMethod.setStrokeWidth(result.isShippedPipeline ? 2 : 0);
+            markInUse(card, result, active);
+            card.btnUseMethod.setOnClickListener(v -> useMethod(result));
+            cards.add(card);
+            shownResults.add(result);
 
             if (result.edgeMap != null) {
                 card.ivMethodEdges.setImageBitmap(result.edgeMap);
@@ -216,6 +264,8 @@ public class EdgeLabFragment extends Fragment {
 
     private void clearResults() {
         binding.containerResults.removeAllViews();
+        cards.clear();
+        shownResults.clear();
         binding.ivSource.setImageDrawable(null);
         binding.tvReadingNote.setVisibility(View.GONE);
         for (Bitmap bitmap : displayedBitmaps) recycle(bitmap);
@@ -243,6 +293,8 @@ public class EdgeLabFragment extends Fragment {
         mainHandler.removeCallbacksAndMessages(null);
         for (Bitmap bitmap : displayedBitmaps) recycle(bitmap);
         displayedBitmaps.clear();
+        cards.clear();
+        shownResults.clear();
         binding = null;
     }
 }

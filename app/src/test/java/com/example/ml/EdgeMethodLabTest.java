@@ -2,7 +2,13 @@ package com.example.ml;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
+
+import android.content.Context;
+
+import androidx.test.core.app.ApplicationProvider;
 
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -33,8 +39,8 @@ public class EdgeMethodLabTest {
 
     private static EdgeMethodLab.MethodResult result(int candidates, int contours,
                                                      double density, long ms) {
-        return new EdgeMethodLab.MethodResult("Method", "Summary", null, density,
-                contours, candidates, ms, false, null);
+        return new EdgeMethodLab.MethodResult("method", "Method", "Summary", null, density,
+                contours, candidates, ms, false, false, null);
     }
 
     @Test
@@ -124,8 +130,8 @@ public class EdgeMethodLabTest {
 
     @Test
     public void aFailedMethodSaysSoInsteadOfReportingZeros() {
-        EdgeMethodLab.MethodResult failed = new EdgeMethodLab.MethodResult(
-                "Broken", "Summary", null, 0, 0, 0, 0, false, "kernel size must be odd");
+        EdgeMethodLab.MethodResult failed = new EdgeMethodLab.MethodResult("broken",
+                "Broken", "Summary", null, 0, 0, 0, 0, false, false, "kernel size must be odd");
 
         assertTrue(failed.failed());
         // Zeros here would read as "this method found nothing", which is a finding about the
@@ -139,5 +145,67 @@ public class EdgeMethodLabTest {
     @Test
     public void aSucceedingMethodIsNotMarkedFailed() {
         assertFalse(result(3, 40, 1.0, 12).failed());
+    }
+
+    // ── Choosing the method inspections run ──────────────────────────────────
+
+    private static Context ctx() {
+        return ApplicationProvider.getApplicationContext();
+    }
+
+    /**
+     * Ids are what the choice is persisted by, so they have to be present, distinct, and
+     * boring: a renamed id silently reverts every device that chose it to the shipped stack.
+     */
+    @Test
+    public void everyMethodHasAStableUniqueId() {
+        Set<String> seen = new HashSet<>();
+        for (EdgeMethodLab.Method method : EdgeMethodLab.catalogue()) {
+            assertNotNull(method.name + " needs an id", method.id);
+            assertTrue(method.name + " has an unsafe id: " + method.id,
+                    method.id.matches("[a-z0-9-]+"));
+            assertTrue("duplicate method id: " + method.id, seen.add(method.id));
+        }
+        assertTrue("the shipped id must be in the catalogue", seen.contains(EdgeMethodLab.SHIPPED_ID));
+    }
+
+    @Test
+    public void theShippedStackRunsUntilSomethingIsChosen() {
+        assertEquals(EdgeMethodLab.SHIPPED_ID, EdgeMethodLab.selectedId(ctx()));
+        assertTrue(EdgeMethodLab.shippedSelected(ctx()));
+        assertTrue(EdgeMethodLab.selected(ctx()).shipped);
+    }
+
+    @Test
+    public void aChoicePersistsAndNamesTheMethod() {
+        EdgeMethodLab.select(ctx(), "hybrid-v4");
+        assertEquals("hybrid-v4", EdgeMethodLab.selectedId(ctx()));
+        assertFalse(EdgeMethodLab.shippedSelected(ctx()));
+        assertEquals("hybrid-v4", EdgeMethodLab.selected(ctx()).id);
+        assertTrue(EdgeMethodLab.selectedName(ctx()).startsWith("Hybrid v4"));
+        assertEquals(EdgeMethodLab.selectedName(ctx()), EdgeMethodLab.nameOf("hybrid-v4"));
+
+        EdgeMethodLab.select(ctx(), EdgeMethodLab.SHIPPED_ID);
+        assertTrue(EdgeMethodLab.shippedSelected(ctx()));
+    }
+
+    /**
+     * An id this build does not know — from a newer build, or a typo in the preferences file —
+     * must fall back to the stack the detector was tuned with, never run something arbitrary
+     * and never crash an inspection.
+     */
+    @Test
+    public void anUnknownIdFallsBackToTheShippedStack() {
+        EdgeMethodLab.select(ctx(), "hybrid-v4");
+        EdgeMethodLab.select(ctx(), "no-such-method");
+        assertEquals("an unknown id must be ignored, not stored",
+                "hybrid-v4", EdgeMethodLab.selectedId(ctx()));
+
+        ctx().getSharedPreferences(EdgeMethodLab.PREFS, Context.MODE_PRIVATE).edit()
+                .putString(EdgeMethodLab.KEY_SELECTED, "from-a-future-build").apply();
+        assertEquals(EdgeMethodLab.SHIPPED_ID, EdgeMethodLab.selectedId(ctx()));
+        assertTrue(EdgeMethodLab.selected(ctx()).shipped);
+        assertNull(EdgeMethodLab.byId("from-a-future-build"));
+        assertEquals("from-a-future-build", EdgeMethodLab.nameOf("from-a-future-build"));
     }
 }

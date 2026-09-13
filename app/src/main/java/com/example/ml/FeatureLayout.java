@@ -256,6 +256,25 @@ public final class FeatureLayout {
         this.imageHeight = Math.max(0, height);
     }
 
+    /**
+     * Catalogue id of the edge method the reference was detected with
+     * ({@code EdgeMethodLab}), or null for a layout that predates the choice.
+     *
+     * Kept because a method change is a detector change: the same fastener can come out as
+     * one box under one method and two under another, and an inspection run under a different
+     * method from its reference would then report a count mismatch on a good part. The results
+     * screen compares the two and says so, rather than filing the difference as a defect.
+     */
+    private String edgeMethodId;
+
+    public String edgeMethodId() {
+        return edgeMethodId;
+    }
+
+    public void setEdgeMethodId(String id) {
+        this.edgeMethodId = id;
+    }
+
 
     /**
      * The shorter side of a slot's reference box in working-image pixels, or NaN when either
@@ -319,6 +338,7 @@ public final class FeatureLayout {
                 root.put("imageWidth", imageWidth);
                 root.put("imageHeight", imageHeight);
             }
+            if (edgeMethodId != null) root.put("edgeMethod", edgeMethodId);
             try (FileOutputStream fos = new FileOutputStream(fileFor(context, partId))) {
                 fos.write(root.toString().getBytes(StandardCharsets.UTF_8));
             }
@@ -340,6 +360,7 @@ public final class FeatureLayout {
             FeatureLayout layout = new FeatureLayout();
             layout.referenceUri = root.optString("referenceUri", null);
             layout.setImageSize(root.optInt("imageWidth", 0), root.optInt("imageHeight", 0));
+            layout.edgeMethodId = root.optString("edgeMethod", null);
             for (int i = 0; i < arr.length(); i++) {
                 JSONObject o = arr.getJSONObject(i);
                 // Sizes are optional: layouts written before they were recorded have none,

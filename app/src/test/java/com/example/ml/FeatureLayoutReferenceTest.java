@@ -131,4 +131,20 @@ public class FeatureLayoutReferenceTest {
             assertEquals(Float.NaN, loaded.shortSidePx(s), 0f);
         }
     }
+
+    /** The edge method a reference was detected with survives a save; its absence reads as null. */
+    @Test
+    public void roundTripsTheEdgeMethodItWasLabelledWith() {
+        FeatureLayout layout = labelled(REF);
+        layout.setEdgeMethodId("hybrid-v4");
+        layout.save(ctx(), PART);
+        FeatureLayout loaded = FeatureLayout.loadFor(ctx(), PART, REF);
+        assertNotNull(loaded);
+        assertEquals("hybrid-v4", loaded.edgeMethodId());
+
+        labelled(REF).save(ctx(), PART);
+        loaded = FeatureLayout.loadFor(ctx(), PART, REF);
+        assertNotNull(loaded);
+        assertNull("a layout that predates the choice must not claim one", loaded.edgeMethodId());
+    }
 }

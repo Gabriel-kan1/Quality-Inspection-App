@@ -32,6 +32,7 @@ import com.example.ui.util.ComparisonCrops;
 import com.example.ui.view.ChassisOverlayView;
 import com.example.ui.view.CropCompareView;
 import com.example.ml.ActiveLearningPolicy;
+import com.example.ml.EdgeMethodLab;
 import com.example.ml.FeatureEmbedder;
 import com.example.ml.FeatureLayout;
 import com.example.ml.FeatureLocalisation;
@@ -541,9 +542,33 @@ public class ResultsFragment extends Fragment {
         binding.layoutResultHeader.setBackgroundColor(
                 ContextCompat.getColor(requireContext(), color));
 
+        StringBuilder banner = new StringBuilder();
         if (alignmentWarning != null && !alignmentWarning.isEmpty()) {
-            binding.tvAlignmentWarning.setText("⚠ IMAGE FAILED ALIGNMENT CHECK — "
-                    + alignmentWarning + ". Detections may be unreliable.");
+            banner.append("⚠ IMAGE FAILED ALIGNMENT CHECK — ").append(alignmentWarning)
+                    .append(". Detections may be unreliable.");
+        }
+        // A method change is a detector change. The reference's boxes were drawn by one edge
+        // operator and this photo's by another, so a count or size difference between them is
+        // not evidence about the part until the reference is redone under the same method.
+        //
+        // A labelled layout with no method recorded predates the choice, and everything before
+        // the choice existed ran the shipped stack — so null reads as shipped rather than as
+        // unknown, and the first inspection after switching methods gets the warning too.
+        String referenceMethod = referenceLayout == null ? null
+                : referenceLayout.edgeMethodId() != null ? referenceLayout.edgeMethodId()
+                : EdgeMethodLab.SHIPPED_ID;
+        String thisMethod = analysisResult == null ? null : analysisResult.edgeMethodId;
+        if (referenceMethod != null && thisMethod != null && !referenceMethod.equals(thisMethod)) {
+            if (banner.length() > 0) banner.append("\n\n");
+            banner.append(String.format(Locale.US,
+                    "⚠ EDGE METHOD CHANGED — the reference was set up with \"%s\" but this"
+                            + " inspection ran \"%s\" (chosen in the Edge Lab). Counts and sizes"
+                            + " are not comparable across methods; re-run reference setup for"
+                            + " this part, or switch back.",
+                    EdgeMethodLab.nameOf(referenceMethod), EdgeMethodLab.nameOf(thisMethod)));
+        }
+        if (banner.length() > 0) {
+            binding.tvAlignmentWarning.setText(banner);
             binding.tvAlignmentWarning.setVisibility(View.VISIBLE);
         } else {
             binding.tvAlignmentWarning.setVisibility(View.GONE);
@@ -1604,6 +1629,7 @@ public class ResultsFragment extends Fragment {
         FeatureLayout kept = new FeatureLayout();
         kept.setReferenceUri(layout.referenceUri());
         kept.setImageSize(layout.imageWidth(), layout.imageHeight());
+        kept.setEdgeMethodId(layout.edgeMethodId());
         for (FeatureLayout.Slot s : layout.slots()) {
             if (FeatureTypeRegistry.severityOf(context, s.type)
                     != FeatureTypeRegistry.Severity.CRITICAL) continue;
@@ -1639,6 +1665,7 @@ public class ResultsFragment extends Fragment {
         FeatureLayout layout = FeatureLocalisation.layoutFrom(rects, types, registrationTypes);
         // The frame the slot fractions are in, so the size check can apply its pixel floor.
         layout.setImageSize(refResult.workingWidth, refResult.workingHeight);
+        layout.setEdgeMethodId(refResult.edgeMethodId);
         return layout.isEmpty() ? null : layout;
     }
 

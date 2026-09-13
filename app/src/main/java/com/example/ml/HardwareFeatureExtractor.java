@@ -233,6 +233,12 @@ public class HardwareFeatureExtractor {
          */
         public int workingWidth;
         public int workingHeight;
+        /**
+         * Catalogue id of the edge method this result was detected with, or null when the
+         * pipeline did not run. A reference layout stores it so an inspection run under a
+         * different method can be told apart from a genuinely different part.
+         */
+        public String edgeMethodId;
 
         public AnalysisResult(List<ExtractedFeature> features, Bitmap processedBitmap) {
             this(features, processedBitmap, null, false);
@@ -389,7 +395,8 @@ public class HardwareFeatureExtractor {
         try {
             src = new Mat();
             Utils.bitmapToMat(bitmap, src);
-            e = computeEdges(src, null);
+            e = computeEdges(context, src, null);
+            if (e == null) return crops;
 
             float w = src.width();
             float h = src.height();
@@ -495,8 +502,17 @@ public class HardwareFeatureExtractor {
             // the glare/CLAHE stage below is tuned for fastener detail, not for finding it.
             calibration = ScaleCalibration.detect(src);
 
-            // STEP 2 — preprocessing + edge detection (shared with extractCrops()).
-            e = computeEdges(src, forceGlareCorrection);
+            // STEP 2 — preprocessing + edge detection (shared with extractCrops()), by
+            // whichever method the operator chose in the Edge Lab.
+            e = computeEdges(context, src, forceGlareCorrection);
+            if (e == null) {
+                Log.e(TAG, "Edge stage produced nothing for " + filename + " — no detections.");
+                AnalysisResult empty = new AnalysisResult(features, null, null, false);
+                empty.workingWidth = workingWidth;
+                empty.workingHeight = workingHeight;
+                empty.edgeMethodId = EdgeMethodLab.selectedId(context);
+                return empty;
+            }
             glareApplied = e.glareCorrectionApplied;
 
             // --- GENERATE DIAGNOSTIC BITMAP (Green Edges on Gray Background) ---
@@ -528,6 +544,7 @@ public class HardwareFeatureExtractor {
                 glareApplied);
         result.workingWidth = workingWidth;
         result.workingHeight = workingHeight;
+        result.edgeMethodId = EdgeMethodLab.selectedId(context);
         return result;
     }
 
@@ -810,10 +827,53 @@ public class HardwareFeatureExtractor {
     }
 
     /**
+     * The edge stage as configured: the shipped stack unless the operator chose another
+     * method in the Edge Lab ({@link EdgeMethodLab#select}).
+     *
+     * <p>This is the overload the pipeline calls, for reference setup and inspection alike —
+     * both sides of a count comparison have to come through the same operator, so the choice
+     * is read here and nowhere else. Returns null when the chosen method throws, which the
+     * caller reports as no detections rather than quietly running a different method.
+     */
+    static Edges computeEdges(Context context, Mat src, Boolean forceGlareCorrection) {
+        EdgeMethodLab.Method method = EdgeMethodLab.selected(context);
+        if (!method.shipped) Log.d(TAG, "Edge stage: " + method.name + " (chosen in Edge Lab)");
+        return EdgeMethodLab.computeWith(method, src, forceGlareCorrection);
+    }
+
+    /**
+     * Whether the black-hat glare branch should run: the caller's pin when there is one,
+     * otherwise the per-image test against {@link #GLARE_RATIO_THRESHOLD}.
+     *
+     * <p>Shared with the tuned variants in {@link EdgeMethodLab}, so a variant chosen for
+     * inspections honours the same pinning between a reference and an inspection that the
+     * shipped stack does. The two branches produce structurally different edge maps, and a
+     * count comparison between two images has to know they agreed on which one ran.
+     */
+    static boolean decideGlareCorrection(Mat gray, Boolean forceGlareCorrection) {
+        if (forceGlareCorrection != null) {
+            Log.d(TAG, "Glare branch pinned by caller: " + forceGlareCorrection);
+            return forceGlareCorrection;
+        }
+        double totalPixels = gray.rows() * gray.cols();
+        Mat thresh = new Mat();
+        Imgproc.threshold(gray, thresh, 240, 255, Imgproc.THRESH_BINARY);
+        double glareRatio = (double) Core.countNonZero(thresh) / totalPixels;
+        thresh.release();
+        boolean apply = glareRatio > GLARE_RATIO_THRESHOLD;
+        Log.d(TAG, String.format(Locale.US, "Glare ratio %.4f (threshold %.2f) — %s",
+                glareRatio, GLARE_RATIO_THRESHOLD, apply ? "applying Black-Hat" : "no correction"));
+        return apply;
+    }
+
+    /**
      * STEP 2 of the Python script: grayscale, smart glare (black-hat), CLAHE, bilateral,
      * median + Gaussian blurs, Canny, dilate + close. Returns the gray image, the dilated
      * edges (for the diagnostic overlay) and the closed edges (for contour detection).
      * Intermediate Mats are released internally; the caller must release the returned Edges.
+     *
+     * <p>This is the shipped stack itself, regardless of what the operator chose; the pipeline
+     * goes through {@link #computeEdges(Context, Mat, Boolean)}.
      */
     static Edges computeEdges(Mat src, Boolean forceGlareCorrection) {
         Mat gray = new Mat();
@@ -837,21 +897,7 @@ public class HardwareFeatureExtractor {
             // branches produce structurally different edge maps, so two images compared by
             // detection count have to agree on which one ran. See the forceGlareCorrection
             // parameter on extractFeatures().
-            boolean applyGlareCorrection;
-            if (forceGlareCorrection != null) {
-                applyGlareCorrection = forceGlareCorrection;
-                Log.d(TAG, "Glare branch pinned by caller: " + applyGlareCorrection);
-            } else {
-                double totalPixels = gray.rows() * gray.cols();
-                Mat thresh = new Mat();
-                Imgproc.threshold(gray, thresh, 240, 255, Imgproc.THRESH_BINARY);
-                double glareRatio = (double) Core.countNonZero(thresh) / totalPixels;
-                thresh.release();
-                applyGlareCorrection = glareRatio > GLARE_RATIO_THRESHOLD;
-                Log.d(TAG, String.format(Locale.US, "Glare ratio %.4f (threshold %.2f) — %s",
-                        glareRatio, GLARE_RATIO_THRESHOLD,
-                        applyGlareCorrection ? "applying Black-Hat" : "no correction"));
-            }
+            boolean applyGlareCorrection = decideGlareCorrection(gray, forceGlareCorrection);
 
             preprocessed = new Mat();
             if (applyGlareCorrection) {

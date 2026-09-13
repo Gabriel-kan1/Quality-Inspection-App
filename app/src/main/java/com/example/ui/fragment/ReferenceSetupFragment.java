@@ -756,6 +756,7 @@ public class ReferenceSetupFragment extends Fragment {
         final List<HardwareFeatureExtractor.ExtractedFeature> features = pendingResult.features;
         final int workingWidth = pendingResult.workingWidth;
         final int workingHeight = pendingResult.workingHeight;
+        final String edgeMethodId = pendingResult.edgeMethodId;
         final float simThreshold = pendingSimilarityThreshold;
         final float marginThreshold = pendingMarginThreshold;
 
@@ -799,6 +800,9 @@ public class ReferenceSetupFragment extends Fragment {
             // The frame the slot fractions are measured in, so a box can be turned back into
             // pixels when an inspection asks whether a slot is big enough to size-check.
             layout.setImageSize(workingWidth, workingHeight);
+            // The edge method these boxes came out of. An inspection run under a different
+            // one is compared against boxes a different detector drew, and is told so.
+            layout.setEdgeMethodId(edgeMethodId);
             for (int i = 0; i < chosen.length; i++) {
                 if (chosen[i] == null) continue;
                 // Critical types only, matching what the inspection side puts forward as
