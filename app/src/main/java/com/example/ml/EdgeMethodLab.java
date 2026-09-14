@@ -400,9 +400,25 @@ public final class EdgeMethodLab {
                         + "0.13) — v4 remains the pick when agreement between interchangeable "
                         + "photographs matters more than absolute accuracy.",
                 false,
-                (gray, srcRgba) -> hybridVariant(srcRgba, 5, 5, 5, 1.1, 0.4, true, 5, 9)));
+                (gray, srcRgba) -> outlineEdges(srcRgba)));
 
         return Collections.unmodifiableList(methods);
+    }
+
+    /**
+     * The edge map the inspection screen draws as the reference ghost's outline.
+     *
+     * <p>This is Hybrid v6 — the configuration that was exact on every stud and screw
+     * photograph in the ground-truth set and the most accurate overall — and it is the one
+     * place v6's parameters are written down, so the Edge Lab card and the ghost outline
+     * cannot drift apart. It is used here as a picture, not a verdict: the detector still
+     * runs the shipped stack, and a cleaner map is simply a cleaner guide to frame against.
+     *
+     * @param srcRgba the reference photograph at working resolution, RGBA
+     * @return a fresh CV_8UC1 map of 0/255, which the caller releases
+     */
+    public static Mat outlineEdges(Mat srcRgba) {
+        return hybridVariant(srcRgba, 5, 5, 5, 1.1, 0.4, true, 5, 9);
     }
 
     /**

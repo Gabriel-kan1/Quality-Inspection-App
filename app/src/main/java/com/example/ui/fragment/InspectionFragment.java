@@ -5,6 +5,7 @@ import android.content.Context;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
 import android.graphics.Color;
+import android.graphics.PorterDuff;
 import android.graphics.drawable.GradientDrawable;
 import android.hardware.display.DisplayManager;
 import android.net.Uri;
@@ -39,7 +40,9 @@ import androidx.navigation.Navigation;
 import com.example.R;
 import com.example.data.AppDatabase;
 import com.example.data.entity.ReferenceProfile;
+import com.example.ml.GhostOutline;
 import com.example.ml.HardwareFeatureExtractor;
+import com.example.ui.GhostMode;
 import com.example.ml.AlignmentGate;
 import com.example.ml.HoldTimer;
 import com.example.ml.PartFiles;
@@ -82,7 +85,27 @@ public class InspectionFragment extends Fragment {
     private String partId = "";
     private ReferenceProfile referenceProfile = null;
     private Uri selectedImageExternalUri = null;
-    private boolean isGhostEnabled = true;
+    private GhostMode ghostMode = GhostMode.OUTLINE;
+
+    /** The reference photograph at working resolution, for {@link GhostMode#TINTED} and {@link GhostMode#PLAIN}. */
+    @Nullable private Bitmap ghostPhoto;
+    /** Its edges alone on a transparent ground, for {@link GhostMode#OUTLINE}; null if OpenCV is down. */
+    @Nullable private Bitmap ghostOutline;
+
+    /**
+     * Opacity of the photograph ghost. Was 0.35 untinted; the MULTIPLY tint multiplies every
+     * channel down toward one hue, so the same alpha read as a fainter shadow, and 0.45 is the
+     * lowest value at which its fastener heads stay readable over a bright plate.
+     */
+    private static final float TINTED_GHOST_ALPHA = 0.45f;
+    /** Opacity of the untinted photograph ghost: the value it shipped with before any of this. */
+    private static final float PLAIN_GHOST_ALPHA = 0.35f;
+    /**
+     * Opacity of the outline ghost. Near-opaque on purpose: it is a few pixels of line over an
+     * otherwise untouched live image, so there is nothing for it to obscure and no reason for
+     * it to be faint.
+     */
+    private static final float OUTLINE_GHOST_ALPHA = 0.9f;
 
     /** Written on the main thread, read by the analysis thread to drop stale frames. */
     private volatile Mode mode = Mode.LIVE;
@@ -184,6 +207,7 @@ public class InspectionFragment extends Fragment {
         });
 
         binding.btnToggleGhost.setOnClickListener(v -> toggleGhostOverlay());
+        renderGhost();
 
         binding.tvModeToggle.setOnClickListener(v -> {
             if (mode == Mode.LIVE) {
@@ -287,25 +311,105 @@ public class InspectionFragment extends Fragment {
         binding.btnToggleGhost.setEnabled(false);
     }
 
+    /**
+     * Loads the reference and prepares both ghost renderings of it.
+     *
+     * <p>Both are built here, once, rather than on each toggle: the outline is a full edge
+     * stage at working resolution, which is too slow to run on a button press and pointless
+     * to run twice. The photograph is loaded at {@link HardwareFeatureExtractor#WORKING_MAX_DIM}
+     * rather than the old 1080 so the outline's pixel-denominated kernels mean what the study
+     * tuned them to mean.
+     */
     private void applyGhostOverlay(@Nullable String imageUri) {
+        recycleGhosts();
         if (imageUri == null) {
+            renderGhost();
+            return;
+        }
+        ExecutorService executor = analysisExecutor;
+        if (executor == null || executor.isShutdown()) return;
+        final android.content.Context context = requireContext().getApplicationContext();
+        final int tint = ContextCompat.getColor(context, R.color.ghost_tint);
+        executor.execute(() -> {
+            Bitmap photo = HardwareFeatureExtractor.loadBitmap(
+                    context, imageUri, HardwareFeatureExtractor.WORKING_MAX_DIM);
+            if (photo == null) return;
+            Bitmap outline = GhostOutline.render(photo, tint);
+            mainHandler.post(() -> {
+                if (!isAdded() || binding == null) {
+                    photo.recycle();
+                    if (outline != null) outline.recycle();
+                    return;
+                }
+                recycleGhosts();
+                ghostPhoto = photo;
+                ghostOutline = outline;
+                renderGhost();
+            });
+        });
+    }
+
+    /**
+     * Puts the current mode on screen: the right bitmap, the right treatment, the right labels.
+     *
+     * <p>The renderings need different treatments. The tinted photograph uses MULTIPLY, which
+     * keeps its luminance detail while pushing every pixel toward one hue, and is shown
+     * translucent because it covers the whole frame; the plain photograph is the same bitmap
+     * with no filter at the opacity it always had. The outline is already painted in the
+     * accent hue on a transparent ground, so a colour filter would only darken it; it gets
+     * no filter and is shown near-opaque because there is nothing behind its lines to protect.
+     * Alignment state deliberately stays on the traffic light and the border; neither
+     * rendering's colour ever means pass or fail.
+     */
+    private void renderGhost() {
+        if (binding == null) return;
+        binding.btnToggleGhost.setText(ghostMode.buttonLabel());
+
+        if (ghostPhoto == null) {
             binding.ivGhostOverlay.setVisibility(View.GONE);
             binding.tvGhostStatusIndicator.setText("NO ACTIVE GHOST OVERLAY");
             return;
         }
-        if (imageUri.startsWith("file:///android_asset/")) {
-            String assetPath = imageUri.substring("file:///android_asset/".length());
-            Bitmap ghost = AssetBitmaps.decodeSampled(requireContext(), assetPath, 1080);
-            if (ghost != null) {
-                binding.ivGhostOverlay.setImageBitmap(ghost);
-            } else {
-                loadIntoAsync(binding.ivGhostOverlay, imageUri, 1080);
-            }
-        } else {
-            loadIntoAsync(binding.ivGhostOverlay, imageUri, 1080);
+        if (!ghostMode.showsOverlay()) {
+            binding.ivGhostOverlay.setVisibility(View.GONE);
+            binding.tvGhostStatusIndicator.setText(ghostMode.statusLabel());
+            return;
         }
-        binding.ivGhostOverlay.setVisibility(isGhostEnabled ? View.VISIBLE : View.GONE);
-        binding.tvGhostStatusIndicator.setText("GHOST OVERLAY ON (35%)");
+
+        // OUTLINE falls back to the photograph when OpenCV could not produce an outline, and
+        // says so: a silent fallback would leave the operator wondering why the wireframe
+        // they saw yesterday is a photograph today.
+        boolean outline = ghostMode == GhostMode.OUTLINE && ghostOutline != null;
+        if (outline) {
+            binding.ivGhostOverlay.clearColorFilter();
+            binding.ivGhostOverlay.setImageBitmap(ghostOutline);
+            binding.ivGhostOverlay.setAlpha(OUTLINE_GHOST_ALPHA);
+            binding.tvGhostStatusIndicator.setText(ghostMode.statusLabel());
+        } else if (ghostMode == GhostMode.PLAIN) {
+            binding.ivGhostOverlay.clearColorFilter();
+            binding.ivGhostOverlay.setImageBitmap(ghostPhoto);
+            binding.ivGhostOverlay.setAlpha(PLAIN_GHOST_ALPHA);
+            binding.tvGhostStatusIndicator.setText(ghostMode.statusLabel());
+        } else {
+            binding.ivGhostOverlay.setColorFilter(
+                    ContextCompat.getColor(requireContext(), R.color.ghost_tint),
+                    PorterDuff.Mode.MULTIPLY);
+            binding.ivGhostOverlay.setImageBitmap(ghostPhoto);
+            binding.ivGhostOverlay.setAlpha(TINTED_GHOST_ALPHA);
+            binding.tvGhostStatusIndicator.setText(ghostMode == GhostMode.OUTLINE
+                    ? "GHOST OVERLAY: TINTED (no outline - OpenCV unavailable)"
+                    : ghostMode.statusLabel());
+        }
+        binding.ivGhostOverlay.setVisibility(View.VISIBLE);
+    }
+
+    /** Frees both renderings. Two working-resolution bitmaps are ~10MB of native memory. */
+    private void recycleGhosts() {
+        if (binding != null) binding.ivGhostOverlay.setImageDrawable(null);
+        if (ghostPhoto != null && !ghostPhoto.isRecycled()) ghostPhoto.recycle();
+        if (ghostOutline != null && !ghostOutline.isRecycled()) ghostOutline.recycle();
+        ghostPhoto = null;
+        ghostOutline = null;
     }
 
     /**
@@ -1103,17 +1207,8 @@ public class InspectionFragment extends Fragment {
     }
 
     private void toggleGhostOverlay() {
-        isGhostEnabled = !isGhostEnabled;
-        boolean hasGhost = referenceProfile != null && referenceProfile.hasRealImage();
-        if (isGhostEnabled && hasGhost) {
-            binding.ivGhostOverlay.setVisibility(View.VISIBLE);
-            binding.btnToggleGhost.setText("GHOST OFF");
-            binding.tvGhostStatusIndicator.setText("GHOST OVERLAY ON (35%)");
-        } else {
-            binding.ivGhostOverlay.setVisibility(View.GONE);
-            binding.btnToggleGhost.setText("GHOST ON");
-            binding.tvGhostStatusIndicator.setText("GHOST OVERLAY INACTIVE");
-        }
+        ghostMode = ghostMode.next();
+        renderGhost();
     }
 
     private void analyzeAndNavigate() {
@@ -1165,6 +1260,7 @@ public class InspectionFragment extends Fragment {
             analysisExecutor = null;
         }
         if (gate != null) gate.release();
+        recycleGhosts();
         binding = null;
     }
 }

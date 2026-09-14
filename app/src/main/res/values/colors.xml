@@ -11,6 +11,10 @@
     <color name="blue_primary">#38BDF8</color>
     <color name="blue_secondary">#D0E4FF</color>
     <color name="blue_dark_accent">#00315C</color>
+    <!-- The ghost overlay's tint on the inspection screen. The accent blue rather than a
+         verdict colour, because the ghost must read as "the reference" and never as "pass"
+         or "fail" - those stay on the traffic light and the enclosure border. -->
+    <color name="ghost_tint">@color/blue_primary</color>
 
     <!-- Operational Indicators -->
     <color name="green_pass">#4ADE80</color>

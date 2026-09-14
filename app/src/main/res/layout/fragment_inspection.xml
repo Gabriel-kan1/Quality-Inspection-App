@@ -43,7 +43,7 @@
             android:layout_height="wrap_content"
             android:layout_alignParentEnd="true"
             android:layout_centerVertical="true"
-            android:text="GHOST OVERLAY ON (35%)"
+            android:text="GHOST OVERLAY ON"
             android:textColor="@color/gray_text_secondary"
             android:textSize="11sp" />
     </RelativeLayout>
@@ -153,13 +153,14 @@
                 android:visibility="gone"
                 android:contentDescription="Inspection target image preview" />
 
-            <!-- Ghost Overlay Image (35% Opacity) -->
+            <!-- Ghost overlay: the reference over the live image, as its edges alone (default),
+                 as the tinted photograph, or as the plain photograph. Bitmap, colour filter and alpha are all set per
+                 mode in InspectionFragment.renderGhost(); see GhostMode for the cycle. -->
             <ImageView
                 android:id="@+id/iv_ghost_overlay"
                 android:layout_width="match_parent"
                 android:layout_height="match_parent"
                 android:scaleType="fitCenter"
-                android:alpha="0.35"
                 android:contentDescription="Reference product ghost overlay"
                 android:visibility="gone" />
 
@@ -361,14 +362,14 @@
                 android:gravity="center"
                 android:weightSum="3">
 
-                <!-- Manual Toggle Ghost Overlay -->
+                <!-- Cycles the ghost: OUTLINE -> TINTED -> PLAIN -> OFF. Label names the current state. -->
                 <Button
                     android:id="@+id/btn_toggle_ghost"
                     style="@style/Widget.Material3.Button.OutlinedButton"
                     android:layout_width="0dp"
                     android:layout_height="64dp"
                     android:layout_weight="1"
-                    android:text="GHOST OFF"
+                    android:text="GHOST: OUTLINE"
                     android:textColor="@color/white"
                     android:textSize="12sp"
                     android:layout_marginEnd="8dp" />
