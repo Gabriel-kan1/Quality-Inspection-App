@@ -80,9 +80,16 @@
         <argument
             android:name="imageUri"
             app:argType="string" />
+        <!-- Pops the results screen once a record is filed. Left on the stack, BACK from the
+             report re-created it: a fresh analysis, a fresh spot-check prompt, and a SAVE
+             REPORT button that filed a second record for the same inspection. The record is
+             sealed the moment it is saved, so there is nothing on the results screen left to
+             go back for; BACK now lands on the camera, ready for the next part. -->
         <action
             android:id="@+id/action_results_to_report"
-            app:destination="@id/navigation_report" />
+            app:destination="@id/navigation_report"
+            app:popUpTo="@id/navigation_results"
+            app:popUpToInclusive="true" />
         <action
             android:id="@+id/action_results_to_home"
             app:popUpTo="@id/navigation_home"

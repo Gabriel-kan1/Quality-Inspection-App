@@ -140,8 +140,10 @@ public class BarcodeScanFragment extends Fragment {
         });
 
         binding.btnAddProduct.setOnClickListener(v -> promptForProduct());
-
-        loadProfiles();
+        // No loadProfiles() here: onResume follows immediately and does it. Calling it from
+        // both started two loader threads at once on every first show, and both raced to seed
+        // the empty registry - the loser threw on the unique product name, caught it with an
+        // empty list in hand, and could post that empty list over the winner's full one.
     }
 
     @Override
@@ -161,9 +163,17 @@ public class BarcodeScanFragment extends Fragment {
      * the current version, which never ran that migration, still opens with the presets and a
      * product to hold them.
      */
+    /**
+     * Bumped on every {@link #loadProfiles} call; a worker that finishes after a newer one has
+     * started drops its result rather than painting stale rows over fresh ones.
+     */
+    private int loadGeneration = 0;
+
     private void loadProfiles() {
+        final int generation = ++loadGeneration;
         new Thread(() -> {
             List<ProductGroup> groups = new ArrayList<>();
+            boolean loaded = false;
             try {
                 AppDatabase db = AppDatabase.getInstance(requireContext());
                 seedIfEmpty(db);
@@ -200,14 +210,20 @@ public class BarcodeScanFragment extends Fragment {
                         }
                     }
                 }
+                loaded = true;
             } catch (Exception e) {
                 android.util.Log.e("BarcodeScanFragment", "Failed to load profiles", e);
             }
 
+            // A load that failed part-way holds a partial list; rendering it would replace a
+            // full registry on screen with a fragment of one. Leave whatever is showing.
+            if (!loaded) return;
             final List<ProductGroup> finalGroups = groups;
             if (!isAdded()) return;
             requireActivity().runOnUiThread(() -> {
                 if (!isAdded() || binding == null) return;
+                // Superseded by a newer load: its result is the one that reflects the database.
+                if (generation != loadGeneration) return;
                 if (!expansionInitialised) {
                     expansionInitialised = true;
                     // Open the first product so the screen never opens as a wall of closed
@@ -219,14 +235,23 @@ public class BarcodeScanFragment extends Fragment {
         }).start();
     }
 
-    /** Creates the default product and the preset parts when the registry is still empty. */
+    /**
+     * Creates the default product and the preset parts when the registry is still empty.
+     *
+     * <p>Check and insert run in one transaction. SQLite serialises writers, so a second
+     * caller blocks until the first commits and then sees a non-empty registry, where two
+     * unsynchronised callers would both pass the emptiness check and the second would throw
+     * on the product name's unique index.
+     */
     private void seedIfEmpty(AppDatabase db) {
-        if (!db.productDao().getAllProducts().isEmpty()) return;
-        long now = System.currentTimeMillis();
-        long productId = db.productDao().insertProduct(new Product(Product.DEFAULT_NAME, now));
-        for (String partId : SEED_PART_IDS) {
-            db.partProfileDao().insertPartProfile(new PartProfile(productId, partId, null, now));
-        }
+        db.runInTransaction(() -> {
+            if (!db.productDao().getAllProducts().isEmpty()) return;
+            long now = System.currentTimeMillis();
+            long productId = db.productDao().insertProduct(new Product(Product.DEFAULT_NAME, now));
+            for (String partId : SEED_PART_IDS) {
+                db.partProfileDao().insertPartProfile(new PartProfile(productId, partId, null, now));
+            }
+        });
     }
 
     /** Files any part that has a reference photo but no registry row under the default product. */
@@ -241,12 +266,14 @@ public class BarcodeScanFragment extends Fragment {
     }
 
     private long defaultProductId(AppDatabase db) {
-        Product product = db.productDao().getProductByName(Product.DEFAULT_NAME);
-        if (product != null) return product.getId();
-        List<Product> all = db.productDao().getAllProducts();
-        if (!all.isEmpty()) return all.get(0).getId();
-        return db.productDao().insertProduct(
-                new Product(Product.DEFAULT_NAME, System.currentTimeMillis()));
+        return db.runInTransaction(() -> {
+            Product product = db.productDao().getProductByName(Product.DEFAULT_NAME);
+            if (product != null) return product.getId();
+            List<Product> all = db.productDao().getAllProducts();
+            if (!all.isEmpty()) return all.get(0).getId();
+            return db.productDao().insertProduct(
+                    new Product(Product.DEFAULT_NAME, System.currentTimeMillis()));
+        });
     }
 
     private void renderProducts(List<ProductGroup> groups) {
