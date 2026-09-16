@@ -28,8 +28,11 @@ import com.example.data.entity.ReferenceProfile;
 import com.example.data.entity.SlotResult;
 import com.example.databinding.FragmentResultsBinding;
 import com.example.ml.HardwareFeatureExtractor;
+import com.example.ui.util.ComparisonCrops;
 import com.example.ui.view.ChassisOverlayView;
+import com.example.ui.view.CropCompareView;
 import com.example.ml.ActiveLearningPolicy;
+import com.example.ml.EdgeMethodLab;
 import com.example.ml.FeatureEmbedder;
 import com.example.ml.FeatureLayout;
 import com.example.ml.FeatureLocalisation;
@@ -159,8 +162,24 @@ public class ResultsFragment extends Fragment {
      * than merely empty.
      */
     private FeatureLayout referenceLayout;
+    /**
+     * The reference photo the layout describes, kept so a size finding can show the operator
+     * the reference crop next to the inspection crop. Null without a real reference.
+     */
+    private String referenceImageUri;
     /** Latest positional findings. Recomputed after every live label correction. */
     private FeatureLocalisation.Result localisation;
+    /**
+     * For each detection handed to the positional check, its index in
+     * {@link #analysisResult}{@code .features}.
+     *
+     * The check only sees critical and unclassified detections, so a
+     * {@link FeatureLocalisation.SlotFinding#featureIndex} numbers that subset — not the full
+     * list. Indexing the full list with it lands on the wrong detection as soon as an advisory
+     * or ignored type precedes a critical one, which is exactly what showed a 76 px screw as
+     * "11 px vs 11 px" on the results screen. Every lookup goes through {@link #featureFor}.
+     */
+    private final List<Integer> localisedFeatureIndices = new ArrayList<>();
 
     @Override
     public void onCreate(@Nullable Bundle savedInstanceState) {
@@ -273,6 +292,7 @@ public class ResultsFragment extends Fragment {
             // (computed after live-labelling below, since labelling can change detected types).
             expectedCounts.clear();
             hasRealReference = ref != null && ref.hasRealImage();
+            referenceImageUri = hasRealReference ? ref.getImageUri() : null;
             if (hasRealReference) {
                 // Preferred source: the labels the operator gave every detection during
                 // reference setup. Those are a human statement of what this part should have,
@@ -307,7 +327,7 @@ public class ResultsFragment extends Fragment {
                         // Its diagnostic bitmap is a full-size ARGB_8888 nobody displays.
                         refResult.processedBitmap.recycle();
                     }
-                    referenceLayout = buildLayout(refResult.features);
+                    referenceLayout = buildLayout(refResult);
                 }
             }
 
@@ -522,9 +542,33 @@ public class ResultsFragment extends Fragment {
         binding.layoutResultHeader.setBackgroundColor(
                 ContextCompat.getColor(requireContext(), color));
 
+        StringBuilder banner = new StringBuilder();
         if (alignmentWarning != null && !alignmentWarning.isEmpty()) {
-            binding.tvAlignmentWarning.setText("⚠ IMAGE FAILED ALIGNMENT CHECK — "
-                    + alignmentWarning + ". Detections may be unreliable.");
+            banner.append("⚠ IMAGE FAILED ALIGNMENT CHECK — ").append(alignmentWarning)
+                    .append(". Detections may be unreliable.");
+        }
+        // A method change is a detector change. The reference's boxes were drawn by one edge
+        // operator and this photo's by another, so a count or size difference between them is
+        // not evidence about the part until the reference is redone under the same method.
+        //
+        // A labelled layout with no method recorded predates the choice, and everything before
+        // the choice existed ran the shipped stack — so null reads as shipped rather than as
+        // unknown, and the first inspection after switching methods gets the warning too.
+        String referenceMethod = referenceLayout == null ? null
+                : referenceLayout.edgeMethodId() != null ? referenceLayout.edgeMethodId()
+                : EdgeMethodLab.SHIPPED_ID;
+        String thisMethod = analysisResult == null ? null : analysisResult.edgeMethodId;
+        if (referenceMethod != null && thisMethod != null && !referenceMethod.equals(thisMethod)) {
+            if (banner.length() > 0) banner.append("\n\n");
+            banner.append(String.format(Locale.US,
+                    "⚠ EDGE METHOD CHANGED — the reference was set up with \"%s\" but this"
+                            + " inspection ran \"%s\" (chosen in the Edge Lab). Counts and sizes"
+                            + " are not comparable across methods; re-run reference setup for"
+                            + " this part, or switch back.",
+                    EdgeMethodLab.nameOf(referenceMethod), EdgeMethodLab.nameOf(thisMethod)));
+        }
+        if (banner.length() > 0) {
+            binding.tvAlignmentWarning.setText(banner);
             binding.tvAlignmentWarning.setVisibility(View.VISIBLE);
         } else {
             binding.tvAlignmentWarning.setVisibility(View.GONE);
@@ -628,20 +672,32 @@ public class ResultsFragment extends Fragment {
     }
 
     /**
-     * Reports physical sizes, or explains why there are none. A missing calibration marker
-     * must read as "not measured" rather than silently showing an empty section — an absent
-     * dimension is recoverable, a fabricated one is not.
+     * Reports sizes two ways, and says plainly which of them is available.
+     *
+     * <p><b>Relative to the reference</b> needs no marker: each expected position's detection
+     * is compared, in pixels, with the box the reference photo recorded there, scaled by the
+     * alignment. This is the check that runs on every aligned inspection. It is a ratio, not a
+     * dimension — see {@link FeatureLocalisation#SIZE_TOLERANCE} for what it can resolve — and
+     * a position outside tolerance is reported and logged but does not fail the part.
+     *
+     * <p><b>Millimetres</b> still need the printed marker. A missing marker must read as "not
+     * measured in mm" rather than silently showing nothing — an absent dimension is
+     * recoverable, a fabricated one is not.
      */
     private void buildMeasurements() {
         LinearLayout container = binding.layoutMeasurementRows;
         container.removeAllViews();
+        StringBuilder status = new StringBuilder();
+
+        buildRelativeSizes(container, status);
 
         ScaleCalibration cal = analysisResult != null ? analysisResult.calibration : null;
         if (cal == null) {
-            binding.tvCalibrationStatus.setText(String.format(Locale.US,
-                    "No calibration marker found — dimensions not measured.\n"
-                            + "Place a %.0f mm square marker flat beside the part, in frame.",
+            status.append(String.format(Locale.US,
+                    "\n\nNo calibration marker in frame, so no millimetre dimensions. Place a"
+                            + " %.0f mm square marker flat beside the part to measure absolute sizes.",
                     ScaleCalibration.MARKER_SIZE_MM));
+            binding.tvCalibrationStatus.setText(status);
             return;
         }
 
@@ -670,9 +726,10 @@ public class ResultsFragment extends Fragment {
             container.addView(row);
         }
 
-        binding.tvCalibrationStatus.setText(String.format(Locale.US,
-                "%d of %d detections measured.\n%s",
+        status.append(String.format(Locale.US,
+                "\n\n%d of %d detections measured in mm.\n%s",
                 measured, analysisResult.features.size(), cal.describe()));
+        binding.tvCalibrationStatus.setText(status);
 
         if (cal.squareness < 0.90) {
             TextView warn = new TextView(requireContext());
@@ -683,6 +740,247 @@ public class ResultsFragment extends Fragment {
             warn.setPadding(0, dp(8), 0, 0);
             container.addView(warn);
         }
+    }
+
+    /**
+     * One row per size-judged position: how much larger or smaller the detection is than the
+     * reference predicts, with the pixel extents behind the percentage. Positions outside
+     * {@link FeatureLocalisation#SIZE_TOLERANCE} are highlighted and written to the log.
+     *
+     * The pixel figure is the geometric mean of the box's sides at the working resolution —
+     * one number an operator can compare, where width and height separately would invite
+     * reading a rotated box as a shape change.
+     */
+    private void buildRelativeSizes(LinearLayout container, StringBuilder status) {
+        if (localisation == null || !localisation.aligned) {
+            status.append("Size check against the reference needs the positional check to align"
+                    + " first — see above.");
+            return;
+        }
+        int judged = localisation.countSizeJudged();
+        if (judged == 0) {
+            status.append("Positions aligned, but the reference layout carries no box sizes to"
+                    + " compare against. Re-run reference setup for this part to enable the"
+                    + " size check.");
+            return;
+        }
+        int changed = localisation.countSizeChanged();
+        int tolerancePct = Math.round(FeatureLocalisation.SIZE_TOLERANCE * 100);
+        status.append(String.format(Locale.US,
+                "%d of %d positions size-checked against the reference photo, in pixels, no"
+                        + " marker needed. %s. Positions differing by more than %d%% either way"
+                        + " are flagged; that is a coarse check and does not affect the verdict.",
+                judged, localisation.findings.size(),
+                changed == 0 ? "All within tolerance" : changed + " outside tolerance",
+                tolerancePct));
+
+        double framePx = analysisResult == null ? 0
+                : Math.sqrt((double) analysisResult.workingWidth * analysisResult.workingHeight);
+        for (FeatureLocalisation.SlotFinding f : localisation.findings) {
+            if (!f.sizeJudged()) continue;
+            String type = FeatureTypeRegistry.displayName(requireContext(), f.expectedType);
+            float pct = f.sizeChangePercent();
+
+            // Geometric-mean side of the found box, in working pixels, and what the reference
+            // box comes to at this framing — i.e. the same figure divided by the ratio.
+            String pixels = "";
+            HardwareFeatureExtractor.ExtractedFeature matched = featureFor(f);
+            if (framePx > 0 && matched != null) {
+                android.graphics.RectF r = matched.rectFraction;
+                if (r != null) {
+                    double foundPx = Math.sqrt((double) r.width() * r.height()) * framePx;
+                    pixels = String.format(Locale.US, "  %.0f px vs %.0f px", foundPx,
+                            foundPx / f.sizeRatio);
+                }
+            }
+
+            LinearLayout row = new LinearLayout(requireContext());
+            row.setOrientation(LinearLayout.HORIZONTAL);
+            row.setPadding(0, dp(4), 0, dp(4));
+
+            TextView name = new TextView(requireContext());
+            name.setLayoutParams(new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+            name.setText(String.format(Locale.US, "#%d %s", f.displayNumber, type));
+            name.setTextColor(ContextCompat.getColor(requireContext(), R.color.white));
+            name.setTextSize(13f);
+            row.addView(name);
+
+            TextView value = new TextView(requireContext());
+            value.setText(String.format(Locale.US, "%+.0f%%%s", pct, pixels));
+            value.setTypeface(android.graphics.Typeface.MONOSPACE);
+            value.setTextColor(ContextCompat.getColor(requireContext(),
+                    f.sizeChanged() ? R.color.orange_warn : R.color.white));
+            value.setTextSize(13f);
+            row.addView(value);
+
+            // Each row opens the two crops side by side. A percentage on its own asks the
+            // operator to take the detector's word for it; the crops let them see whether the
+            // box grew because the hardware did or because the detection swallowed a neighbour.
+            TextView chevron = new TextView(requireContext());
+            chevron.setText("  ›");
+            chevron.setTextColor(ContextCompat.getColor(requireContext(), R.color.gray_text_secondary));
+            chevron.setTextSize(16f);
+            row.addView(chevron);
+            android.util.TypedValue ripple = new android.util.TypedValue();
+            requireContext().getTheme().resolveAttribute(
+                    android.R.attr.selectableItemBackground, ripple, true);
+            row.setBackgroundResource(ripple.resourceId);
+            row.setClickable(true);
+            row.setOnClickListener(v -> showSizeComparison(f));
+            container.addView(row);
+
+            String line = String.format(Locale.US,
+                    "Size check %s: slot #%d %s is x%.2f the reference (%+.0f%%)%s [%s]",
+                    partId, f.displayNumber, f.expectedType, f.sizeRatio, pct, pixels,
+                    f.status.name());
+            if (f.sizeChanged()) {
+                android.util.Log.w("ResultsFragment", line + " — outside tolerance");
+            } else {
+                android.util.Log.d("ResultsFragment", line);
+            }
+        }
+    }
+
+    /**
+     * Shows the reference crop and this inspection's crop for one position, side by side at
+     * a common scale on the part, with the compared boxes outlined.
+     *
+     * Both crops are cut fresh from their photos on a worker thread — the reference from the
+     * layout's box, the inspection from the detection's — and released when the dialog closes.
+     * The dialog opens immediately with placeholders rather than waiting on the decode, so a
+     * slow content URI never makes a tap feel ignored.
+     */
+    private void showSizeComparison(FeatureLocalisation.SlotFinding f) {
+        if (referenceLayout == null || analysisResult == null || f == null) return;
+        FeatureLayout.Slot slot = referenceLayout.slotById(f.slotId);
+        HardwareFeatureExtractor.ExtractedFeature feature = featureFor(f);
+        if (slot == null || !slot.hasSize() || feature == null || feature.rectFraction == null) {
+            Toast.makeText(getContext(), "No crops to compare for this position.",
+                    Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        final String type = FeatureTypeRegistry.displayName(requireContext(), f.expectedType);
+        final android.graphics.RectF referenceBox = new android.graphics.RectF(
+                slot.x - slot.w / 2f, slot.y - slot.h / 2f, slot.x + slot.w / 2f, slot.y + slot.h / 2f);
+        final android.graphics.RectF inspectionBox = new android.graphics.RectF(feature.rectFraction);
+        final int referenceWidth = referenceLayout.imageWidth();
+        final int referenceHeight = referenceLayout.imageHeight();
+        final int inspectionWidth = analysisResult.workingWidth;
+        final int inspectionHeight = analysisResult.workingHeight;
+        final String referenceUri = referenceImageUri;
+        final String inspectionUri = imageUri;
+        final float ratio = f.sizeRatio;
+        final boolean changed = f.sizeChanged();
+        final int tolerancePct = Math.round(FeatureLocalisation.SIZE_TOLERANCE * 100);
+
+        android.app.Dialog dialog = new android.app.Dialog(requireContext(),
+                android.R.style.Theme_DeviceDefault_NoActionBar_Fullscreen);
+        LinearLayout root = new LinearLayout(getContext());
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setBackgroundColor(Color.rgb(20, 20, 25));
+        root.setPadding(dp(20), dp(28), dp(20), dp(20));
+
+        TextView title = new TextView(getContext());
+        title.setText(String.format(Locale.US, "#%d %s — SIZE VS REFERENCE",
+                f.displayNumber, type.toUpperCase(Locale.US)));
+        title.setTextColor(Color.rgb(56, 189, 248));
+        title.setTextSize(16f);
+        title.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        title.setGravity(Gravity.CENTER);
+        root.addView(title);
+
+        TextView verdict = new TextView(getContext());
+        verdict.setText(f.sizeJudged()
+                ? String.format(Locale.US, "%+.0f%% vs the reference, corrected for framing — %s the ±%d%% tolerance.",
+                        f.sizeChangePercent(), changed ? "outside" : "within", tolerancePct)
+                : "Size was not judged for this position.");
+        verdict.setTextColor(ContextCompat.getColor(requireContext(),
+                changed ? R.color.orange_warn : R.color.white));
+        verdict.setTextSize(12f);
+        verdict.setGravity(Gravity.CENTER);
+        verdict.setPadding(0, dp(6), 0, dp(14));
+        root.addView(verdict);
+
+        CropCompareView compare = new CropCompareView(getContext());
+        compare.setLayoutParams(new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, dp(300)));
+        root.addView(compare);
+
+        LinearLayout captions = new LinearLayout(getContext());
+        captions.setOrientation(LinearLayout.HORIZONTAL);
+        captions.setPadding(0, dp(8), 0, 0);
+        TextView referenceCaption = caption("REFERENCE\nloading…", Color.rgb(56, 189, 248));
+        TextView inspectionCaption = caption("THIS INSPECTION\nloading…",
+                ContextCompat.getColor(requireContext(),
+                        changed ? R.color.orange_warn : R.color.green_pass));
+        captions.addView(referenceCaption);
+        captions.addView(inspectionCaption);
+        root.addView(captions);
+
+        TextView note = new TextView(getContext());
+        note.setText("The outlines are the detection boxes that were compared, drawn to the"
+                + " same scale on the part — so equal outlines mean equal size, whatever the"
+                + " camera distance. Pixel sizes are each photo's own. A box that has swallowed"
+                + " a neighbour or cut a fastener short is a detection artefact, not a size change.");
+        note.setTextColor(ContextCompat.getColor(requireContext(), R.color.gray_text_secondary));
+        note.setTextSize(11f);
+        note.setPadding(0, dp(14), 0, dp(14));
+        root.addView(note);
+
+        android.widget.Button close = new android.widget.Button(getContext());
+        close.setText("CLOSE");
+        close.setTextColor(Color.WHITE);
+        close.setBackgroundColor(Color.rgb(26, 70, 128));
+        close.setOnClickListener(v -> dialog.dismiss());
+        root.addView(close);
+
+        final ComparisonCrops.Crop[] crops = new ComparisonCrops.Crop[2];
+        dialog.setOnDismissListener(d -> {
+            compare.clear();
+            for (ComparisonCrops.Crop c : crops) if (c != null) c.recycle();
+        });
+        dialog.setContentView(root);
+        dialog.setCancelable(true);
+        dialog.show();
+
+        final android.content.Context context = requireContext().getApplicationContext();
+        new Thread(() -> {
+            ComparisonCrops.Crop reference = ComparisonCrops.cut(context, referenceUri,
+                    referenceWidth, referenceHeight, referenceBox);
+            ComparisonCrops.Crop inspection = ComparisonCrops.cut(context, inspectionUri,
+                    inspectionWidth, inspectionHeight, inspectionBox);
+            postToUi(() -> {
+                if (!dialog.isShowing()) {
+                    // Closed before the decode finished: nothing to show, nothing to keep.
+                    if (reference != null) reference.recycle();
+                    if (inspection != null) inspection.recycle();
+                    return;
+                }
+                crops[0] = reference;
+                crops[1] = inspection;
+                compare.setComparison(reference, inspection, ratio, changed);
+                referenceCaption.setText(reference == null ? "REFERENCE\nnot available"
+                        : String.format(Locale.US, "REFERENCE\n%d × %d px",
+                                reference.boxWidthPx, reference.boxHeightPx));
+                inspectionCaption.setText(inspection == null ? "THIS INSPECTION\nnot available"
+                        : String.format(Locale.US, "THIS INSPECTION\n%d × %d px  (%+.0f%%)",
+                                inspection.boxWidthPx, inspection.boxHeightPx,
+                                f.sizeChangePercent()));
+            });
+        }).start();
+    }
+
+    /** One caption under a comparison panel: a coloured heading line and a detail line. */
+    private TextView caption(String text, int color) {
+        TextView tv = new TextView(getContext());
+        tv.setLayoutParams(new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        tv.setText(text);
+        tv.setTextColor(color);
+        tv.setTextSize(12f);
+        tv.setTypeface(android.graphics.Typeface.MONOSPACE);
+        tv.setGravity(Gravity.CENTER);
+        return tv;
     }
 
     /** Surfaces the state of the learning loop so it isn't an invisible black box. */
@@ -1330,10 +1628,12 @@ public class ResultsFragment extends Fragment {
         if (layout == null) return null;
         FeatureLayout kept = new FeatureLayout();
         kept.setReferenceUri(layout.referenceUri());
+        kept.setImageSize(layout.imageWidth(), layout.imageHeight());
+        kept.setEdgeMethodId(layout.edgeMethodId());
         for (FeatureLayout.Slot s : layout.slots()) {
             if (FeatureTypeRegistry.severityOf(context, s.type)
                     != FeatureTypeRegistry.Severity.CRITICAL) continue;
-            kept.addSlot(s.type, s.x, s.y);
+            kept.addSlot(s.type, s.x, s.y, s.w, s.h);
         }
         return kept.isEmpty() ? null : kept;
     }
@@ -1346,7 +1646,9 @@ public class ResultsFragment extends Fragment {
      * unavailable rather than guess. That is the intended trade: an alignment resting on
      * scratches is an alignment resting on things that move between shots.
      */
-    private FeatureLayout buildLayout(List<HardwareFeatureExtractor.ExtractedFeature> refFeatures) {
+    private FeatureLayout buildLayout(HardwareFeatureExtractor.AnalysisResult refResult) {
+        List<HardwareFeatureExtractor.ExtractedFeature> refFeatures =
+                refResult == null ? null : refResult.features;
         if (refFeatures == null || refFeatures.isEmpty()) return null;
         Set<String> registrationTypes = new LinkedHashSet<>();
         for (HardwareFeatureExtractor.ExtractedFeature f : refFeatures) {
@@ -1361,6 +1663,9 @@ public class ResultsFragment extends Fragment {
             types.add(f.type);
         }
         FeatureLayout layout = FeatureLocalisation.layoutFrom(rects, types, registrationTypes);
+        // The frame the slot fractions are in, so the size check can apply its pixel floor.
+        layout.setImageSize(refResult.workingWidth, refResult.workingHeight);
+        layout.setEdgeMethodId(refResult.edgeMethodId);
         return layout.isEmpty() ? null : layout;
     }
 
@@ -1373,13 +1678,15 @@ public class ResultsFragment extends Fragment {
      * physically-present hardware as missing, which is the more misleading of the two errors.
      */
     private FeatureLocalisation.Result runLocalisation() {
+        localisedFeatureIndices.clear();
         if (referenceLayout == null) {
             return FeatureLocalisation.localise(null, null, null, null);
         }
         List<android.graphics.RectF> rects = new ArrayList<>();
         List<String> types = new ArrayList<>();
         Set<String> criticalTypes = new LinkedHashSet<>();
-        for (HardwareFeatureExtractor.ExtractedFeature f : analysisResult.features) {
+        for (int i = 0; i < analysisResult.features.size(); i++) {
+            HardwareFeatureExtractor.ExtractedFeature f = analysisResult.features.get(i);
             if (f.type == null) continue;
             FeatureTypeRegistry.Severity severity =
                     FeatureTypeRegistry.severityOf(requireContext(), f.type);
@@ -1389,6 +1696,7 @@ public class ResultsFragment extends Fragment {
             if (!eligible) continue;
             rects.add(f.rectFraction);
             types.add(f.type);
+            localisedFeatureIndices.add(i);
         }
         // Critical types the reference expects, even if none was detected this run — otherwise
         // a slot whose feature is entirely absent would be filtered out of its own report.
@@ -1396,6 +1704,20 @@ public class ResultsFragment extends Fragment {
             if (FeatureTypeRegistry.isCritical(requireContext(), s.type)) criticalTypes.add(s.type);
         }
         return FeatureLocalisation.localise(referenceLayout, rects, types, criticalTypes);
+    }
+
+    /**
+     * The detection a finding refers to, or null when it has none — translating the finding's
+     * index in the positional check's subset back to the full feature list.
+     */
+    private HardwareFeatureExtractor.ExtractedFeature featureFor(FeatureLocalisation.SlotFinding f) {
+        if (f == null || analysisResult == null || f.featureIndex < 0
+                || f.featureIndex >= localisedFeatureIndices.size()) {
+            return null;
+        }
+        int index = localisedFeatureIndices.get(f.featureIndex);
+        return index >= 0 && index < analysisResult.features.size()
+                ? analysisResult.features.get(index) : null;
     }
 
     /**
@@ -1744,7 +2066,8 @@ public class ResultsFragment extends Fragment {
                                     : FeatureTypeRegistry.displayName(requireContext(), f.foundType),
                             f.status.name(), f.x, f.y, f.relX, f.relY,
                             f.status == FeatureLocalisation.Status.DISPLACED ? f.offset : null,
-                            FeatureLocalisation.zone(f.relX, f.relY)));
+                            FeatureLocalisation.zone(f.relX, f.relY),
+                            f.sizeJudged() ? f.sizeRatio : null));
                 }
                 if (!slotRows.isEmpty()) {
                     db.inspectionDao().insertSlotResults(slotRows);

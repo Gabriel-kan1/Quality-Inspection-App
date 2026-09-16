@@ -970,6 +970,135 @@ public class FeatureLocalisationTest {
         assertEquals(10, result.countWithStatus(FeatureLocalisation.Status.PRESENT));
     }
 
+    /**
+     * Applies a tilted view of the part: rotate into the tilt axis, foreshorten across it by
+     * {@code cos(tilt)}, rotate back, then rotate and translate freehand.
+     *
+     * This is what an off-axis camera does to a flat part, to first order. It is not a
+     * similarity transform at any parameter setting — the pairwise separations no longer share
+     * one common factor, which is exactly why growing a correspondence set on separations alone
+     * cannot reach it.
+     */
+    private static float[] tilted(float x, float y, double tiltDeg, double axisDeg,
+                                  double rollDeg, double scale, double dx, double dy) {
+        double a = Math.toRadians(axisDeg);
+        // Into the tilt frame.
+        double u = x * Math.cos(a) + y * Math.sin(a);
+        double v = -x * Math.sin(a) + y * Math.cos(a);
+        v *= Math.cos(Math.toRadians(tiltDeg));
+        // Back out of it.
+        double px = u * Math.cos(a) - v * Math.sin(a);
+        double py = u * Math.sin(a) + v * Math.cos(a);
+        double r = Math.toRadians(rollDeg);
+        return new float[]{
+                (float) (scale * (px * Math.cos(r) - py * Math.sin(r)) + dx),
+                (float) (scale * (px * Math.sin(r) + py * Math.cos(r)) + dy)};
+    }
+
+    /**
+     * A part photographed off-axis must still register.
+     *
+     * The correspondence set used to be grown on the {@link DistanceNetwork} alone and then
+     * fitted once. Separations are invariant to translation, rotation and <em>uniform</em>
+     * scale, and to nothing else: a tilt foreshortens them by different factors depending on
+     * their direction — measured at median x1.28 and up to x2.80 on real pairs. Growth runs at
+     * half of a 12% tolerance, so a moderate tilt stalls it well before the inlier floor.
+     *
+     * Registration now iterates fit-reassign-refit and lets the affine model propose from the
+     * three correspondences that determine it, rather than waiting for the four that make it
+     * evidence. Swept against the shipped constants on this layout, the limit moves from
+     * 30 degrees of tilt to 66 — where {@code MAX_ANISOTROPY} stops it, as
+     * {@link #aTiltTooSteepToModelIsRefusedRatherThanForced} pins.
+     *
+     * 35 degrees costs 18% across the tilt axis, comfortably past the 6% growth budget, and is
+     * where the old code first refused.
+     */
+    @Test
+    public void aPartPhotographedOffAxisStillRegisters() {
+        FeatureLayout layout = referenceLayout();
+        List<RectF> rects = new ArrayList<>();
+        List<String> types = new ArrayList<>();
+        for (FeatureLayout.Slot s : layout.slots()) {
+            float[] p = tilted(s.x, s.y, 35, 25, 10, 0.95, 0.06, 0.04);
+            rects.add(at(p[0], p[1]));
+            types.add(s.type);
+        }
+
+        FeatureLocalisation.Result result = FeatureLocalisation.localise(layout, rects, types, null);
+        assertTrue("an off-axis shot of an intact part must still align", result.aligned);
+        assertEquals(5, result.countWithStatus(FeatureLocalisation.Status.PRESENT));
+    }
+
+    /** The tilt tolerance must not cost the defect: the same shot with one fastener absent. */
+    @Test
+    public void anOffAxisShotStillNamesTheMissingPosition() {
+        FeatureLayout layout = referenceLayout();
+        List<RectF> rects = new ArrayList<>();
+        List<String> types = new ArrayList<>();
+        for (FeatureLayout.Slot s : layout.slots()) {
+            if (s.id == 2) continue;
+            float[] p = tilted(s.x, s.y, 30, 25, 10, 0.95, 0.06, 0.04);
+            rects.add(at(p[0], p[1]));
+            types.add(s.type);
+        }
+
+        FeatureLocalisation.Result result = FeatureLocalisation.localise(layout, rects, types, null);
+        assertTrue(result.aligned);
+        assertEquals(1, result.countWithStatus(FeatureLocalisation.Status.MISSING));
+        assertEquals(FeatureLocalisation.Status.MISSING, findingFor(result, 2).status);
+    }
+
+    /**
+     * Past the tilt an affine can model, the check refuses rather than forcing a fit.
+     *
+     * The extra freedom that absorbs foreshortening is also freedom to squash the layout onto a
+     * line and collect inliers along it, so {@code MAX_ANISOTROPY} caps the stretch at x2.5 —
+     * about 66 degrees. Beyond it the honest answer is no positional claim at all, and that is
+     * what has to happen: a forced fit would name specific slots, confidently and wrongly.
+     *
+     * 75 degrees stretches by x3.86, comfortably past the cap.
+     */
+    @Test
+    public void aTiltTooSteepToModelIsRefusedRatherThanForced() {
+        FeatureLayout layout = referenceLayout();
+        List<RectF> rects = new ArrayList<>();
+        List<String> types = new ArrayList<>();
+        for (FeatureLayout.Slot s : layout.slots()) {
+            float[] p = tilted(s.x, s.y, 75, 25, 10, 0.95, 0.06, 0.04);
+            rects.add(at(p[0], p[1]));
+            types.add(s.type);
+        }
+
+        FeatureLocalisation.Result result = FeatureLocalisation.localise(layout, rects, types, null);
+        assertFalse("a tilt past the anisotropy guard must not be forced into a fit",
+                result.aligned);
+        assertTrue("and no position may be claimed from it", result.findings.isEmpty());
+    }
+
+    /**
+     * Proposing an affine from three correspondences must not manufacture an alignment.
+     *
+     * Three points determine an affine exactly, so any three detections can be interpolated by
+     * one — which is precisely why the proposal is scored rather than believed. A photo of a
+     * different arrangement has to fail on the inlier count regardless of how well some triple
+     * inside it can be fitted.
+     */
+    @Test
+    public void threePointsCannotTalkTheirWayIntoAnAlignment() {
+        FeatureLayout layout = referenceLayout();
+        // Five detections in a wholly different arrangement: a tight line, which no similarity
+        // or affine view of the reference produces without collapsing it.
+        List<RectF> rects = new ArrayList<>();
+        List<String> types = new ArrayList<>();
+        for (int k = 0; k < 5; k++) {
+            rects.add(at(0.20f + 0.12f * k, 0.50f + 0.01f * k));
+            types.add("bolt_head");
+        }
+
+        FeatureLocalisation.Result result = FeatureLocalisation.localise(layout, rects, types, null);
+        assertFalse("a different arrangement must not register", result.aligned);
+    }
+
     @Test
     public void findingsAreOrderedBySlotNumber() {
         FeatureLayout layout = referenceLayout();
@@ -982,5 +1111,228 @@ public class FeatureLocalisationTest {
             assertTrue("findings must ascend by slot id",
                     result.findings.get(i).slotId > result.findings.get(i - 1).slotId);
         }
+    }
+
+    // ── Size against the reference ───────────────────────────────────────────
+
+    /**
+     * The reference layout with a frame size, so every 0.04-fraction box in {@link #at} comes
+     * to 38 px on its shorter side — above {@link FeatureLocalisation#MIN_SIZE_JUDGED_PX}, as a
+     * labelled fastener at the working resolution is.
+     */
+    private static FeatureLayout sizedReferenceLayout() {
+        FeatureLayout layout = referenceLayout();
+        layout.setImageSize(1280, 960);
+        return layout;
+    }
+
+    /** A detection centred on (x, y) whose box is {@code factor} times the standard one. */
+    private static RectF atScaled(float x, float y, float factor) {
+        float h = 0.02f * factor;
+        return new RectF(x - h, y - h, x + h, y + h);
+    }
+
+    @Test
+    public void everyPositionIsSizeMatchedOnAnIdenticalShot() {
+        FeatureLayout layout = sizedReferenceLayout();
+        Detections d = shotOf(layout, null, null);
+
+        FeatureLocalisation.Result result = FeatureLocalisation.localise(layout, d.rects, d.types, null);
+        assertTrue(result.aligned);
+        assertEquals(5, result.countSizeJudged());
+        assertEquals(0, result.countSizeChanged());
+        for (FeatureLocalisation.SlotFinding f : result.findings) {
+            assertTrue(f.sizeJudged());
+            assertEquals(1f, f.sizeRatio, 0.02f);
+            assertFalse(f.sizeChanged());
+        }
+        assertFalse("nothing to say about size when nothing differs",
+                result.summary().contains("size"));
+    }
+
+    /**
+     * A detection half again as wide and tall as the reference recorded is reported, with the
+     * ratio, and named to its slot. It is a warning: the position is still PRESENT and the
+     * part does not fail on it, because the check's noise floor is the detector's own jitter.
+     */
+    @Test
+    public void aSwollenDetectionIsReportedAsASizeChangeWithoutFailingThePart() {
+        FeatureLayout layout = sizedReferenceLayout();
+        Detections d = shotOf(layout, null, null);
+        FeatureLayout.Slot two = layout.slotById(2);
+        d.rects.set(1, atScaled(two.x, two.y, 2f));
+
+        FeatureLocalisation.Result result = FeatureLocalisation.localise(layout, d.rects, d.types, null);
+        assertTrue(result.aligned);
+        FeatureLocalisation.SlotFinding f = findingFor(result, 2);
+        assertNotNull(f);
+        assertEquals(FeatureLocalisation.Status.PRESENT, f.status);
+        assertTrue(f.sizeChanged());
+        assertEquals(2f, f.sizeRatio, 0.1f);
+        assertEquals(100f, f.sizeChangePercent(), 10f);
+
+        assertEquals(1, result.countSizeChanged());
+        assertTrue(result.summary().contains("1 differing in size"));
+        assertFalse("size is reported, never failed on", result.hasPositionalDefect());
+        for (FeatureLocalisation.SlotFinding other : result.findings) {
+            if (other.slotId != 2) assertFalse(other.sizeChanged());
+        }
+    }
+
+    /**
+     * The tolerance is symmetric in log space: a box at 0.6x the reference is as far out as one
+     * at 1.67x and is flagged, while 0.8x sits inside 1/1.5 and is not. A plain percentage test
+     * would call 0.6x a 40% change and let it through.
+     */
+    @Test
+    public void shrinkageIsJudgedOnTheSameScaleAsGrowth() {
+        FeatureLayout layout = sizedReferenceLayout();
+        Detections d = shotOf(layout, null, null);
+        FeatureLayout.Slot one = layout.slotById(1);
+        FeatureLayout.Slot three = layout.slotById(3);
+        d.rects.set(0, atScaled(one.x, one.y, 0.6f));
+        d.rects.set(2, atScaled(three.x, three.y, 0.8f));
+
+        FeatureLocalisation.Result result = FeatureLocalisation.localise(layout, d.rects, d.types, null);
+        assertTrue(result.aligned);
+        assertTrue("0.6x is beyond 1/1.5", findingFor(result, 1).sizeChanged());
+        assertEquals(0.6f, findingFor(result, 1).sizeRatio, 0.05f);
+        assertFalse("0.8x is inside 1/1.5", findingFor(result, 3).sizeChanged());
+        assertEquals(1, result.countSizeChanged());
+    }
+
+    /**
+     * A part photographed closer than the reference has every box larger by the same factor.
+     * That is framing, not hardware, and it is exactly what the alignment's scale divides
+     * out: a raw pixel comparison would flag all five positions here.
+     */
+    @Test
+    public void aCloserShotIsNotASizeChange() {
+        FeatureLayout layout = sizedReferenceLayout();
+        float zoom = 1.3f;
+        List<RectF> rects = new ArrayList<>();
+        List<String> types = new ArrayList<>();
+        for (FeatureLayout.Slot s : layout.slots()) {
+            // Positions spread out about the frame centre by the same factor the boxes grow.
+            float x = 0.5f + (s.x - 0.5f) * zoom;
+            float y = 0.5f + (s.y - 0.5f) * zoom;
+            rects.add(atScaled(x, y, zoom));
+            types.add(s.type);
+        }
+
+        FeatureLocalisation.Result result = FeatureLocalisation.localise(layout, rects, types, null);
+        assertTrue(result.aligned);
+        assertEquals(5, result.countSizeJudged());
+        assertEquals(0, result.countSizeChanged());
+        for (FeatureLocalisation.SlotFinding f : result.findings) {
+            assertEquals("scale must be divided out", 1f, f.sizeRatio, 0.03f);
+        }
+    }
+
+    /**
+     * And a genuinely oversized fastener on that closer shot is still caught once the framing
+     * is divided out — the correction must not also absorb the defect.
+     */
+    @Test
+    public void aSizeChangeSurvivesTheFramingCorrection() {
+        FeatureLayout layout = sizedReferenceLayout();
+        float zoom = 0.8f;
+        List<RectF> rects = new ArrayList<>();
+        List<String> types = new ArrayList<>();
+        for (FeatureLayout.Slot s : layout.slots()) {
+            float x = 0.5f + (s.x - 0.5f) * zoom;
+            float y = 0.5f + (s.y - 0.5f) * zoom;
+            rects.add(atScaled(x, y, s.id == 4 ? zoom * 1.8f : zoom));
+            types.add(s.type);
+        }
+
+        FeatureLocalisation.Result result = FeatureLocalisation.localise(layout, rects, types, null);
+        assertTrue(result.aligned);
+        assertEquals(1, result.countSizeChanged());
+        assertTrue(findingFor(result, 4).sizeChanged());
+        assertEquals(1.8f, findingFor(result, 4).sizeRatio, 0.1f);
+    }
+
+    /**
+     * A layout labelled before box sizes were recorded has none to compare against. Such
+     * slots are positioned as before and simply not size-judged — NaN, not 1.0, so an old
+     * reference cannot read as "every size verified".
+     */
+    @Test
+    public void aLayoutWithoutRecordedSizesMakesNoSizeClaim() {
+        FeatureLayout layout = new FeatureLayout();
+        layout.setImageSize(1280, 960);
+        for (FeatureLayout.Slot s : referenceLayout().slots()) layout.addSlot(s.type, s.x, s.y);
+        Detections d = shotOf(layout, null, null);
+
+        FeatureLocalisation.Result result = FeatureLocalisation.localise(layout, d.rects, d.types, null);
+        assertTrue(result.aligned);
+        assertEquals(5, result.countWithStatus(FeatureLocalisation.Status.PRESENT));
+        assertEquals(0, result.countSizeJudged());
+        for (FeatureLocalisation.SlotFinding f : result.findings) {
+            assertFalse(f.sizeJudged());
+            assertTrue(Float.isNaN(f.sizeRatio));
+            assertTrue(Float.isNaN(f.sizeChangePercent()));
+        }
+    }
+
+    /**
+     * Below {@link FeatureLocalisation#MIN_SIZE_JUDGED_PX} the detector's boxes do not repeat
+     * between shots, so a slot that small is refused rather than judged. The same fractional
+     * boxes are 38 px on a 1280x960 frame and 18 px on a 600x450 one; only the first is
+     * judged. A layout that cannot say what frame it was measured in is refused too.
+     */
+    @Test
+    public void slotsTooSmallToRepeatAreNotJudged() {
+        FeatureLayout small = referenceLayout();
+        small.setImageSize(600, 450);
+        Detections d = shotOf(small, null, null);
+        FeatureLocalisation.Result result = FeatureLocalisation.localise(small, d.rects, d.types, null);
+        assertTrue(result.aligned);
+        assertEquals("18 px boxes must not be judged", 0, result.countSizeJudged());
+
+        FeatureLayout unknownFrame = referenceLayout();
+        result = FeatureLocalisation.localise(unknownFrame, d.rects, d.types, null);
+        assertTrue(result.aligned);
+        assertEquals("no frame size, no pixel floor, no claim", 0, result.countSizeJudged());
+
+        result = FeatureLocalisation.localise(sizedReferenceLayout(), d.rects, d.types, null);
+        assertEquals(5, result.countSizeJudged());
+    }
+
+    /**
+     * An empty slot has nothing to size. A displaced one does — the stray detection offered as
+     * the fastener is compared like any other, so "fitted off its position" and "fitted off its
+     * position and the wrong size" stay distinguishable.
+     *
+     * Two shots rather than one: a five-slot layout with one position empty and another
+     * displaced leaves three inliers, under the affine model's floor of four, so it would not
+     * register at all — see {@link #aFiveSlotLayoutMissingTwoPositionsCannotAffordTheAffineModel}.
+     */
+    @Test
+    public void onlyPositionsWithADetectionAreSizeJudged() {
+        FeatureLayout layout = sizedReferenceLayout();
+
+        Detections empty = shotOf(layout, java.util.Collections.singleton(3), null);
+        FeatureLocalisation.Result result =
+                FeatureLocalisation.localise(layout, empty.rects, empty.types, null);
+        assertTrue(result.aligned);
+        FeatureLocalisation.SlotFinding missing = findingFor(result, 3);
+        assertEquals(FeatureLocalisation.Status.MISSING, missing.status);
+        assertFalse(missing.sizeJudged());
+        assertEquals(4, result.countSizeJudged());
+
+        // Slot 4's fastener sits well outside matching tolerance, and is doubled in size.
+        Detections displaced = shotOf(layout, java.util.Collections.singleton(4), null);
+        FeatureLayout.Slot four = layout.slotById(4);
+        displaced.rects.add(atScaled(four.x - 0.10f, four.y - 0.10f, 2f));
+        displaced.types.add("bolt_head");
+        result = FeatureLocalisation.localise(layout, displaced.rects, displaced.types, null);
+        assertTrue(result.aligned);
+        FeatureLocalisation.SlotFinding off = findingFor(result, 4);
+        assertEquals(FeatureLocalisation.Status.DISPLACED, off.status);
+        assertTrue(off.sizeJudged());
+        assertTrue(off.sizeChanged());
+        assertEquals(2f, off.sizeRatio, 0.1f);
     }
 }

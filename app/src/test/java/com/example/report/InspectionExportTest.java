@@ -260,4 +260,42 @@ public class InspectionExportTest {
         assertEquals(InspectionExport.csvHeader().split(",", -1).length,
                 row.split(",", -1).length);
     }
+
+    // ── Size ratio ──────────────────────────────────────────────────────────
+
+    /**
+     * A ratio is sealed when present and absent from the form when null. The absence matters:
+     * every record filed before the column existed has null there, and its stored digest was
+     * computed over a form with no such field — so the field must not appear for null, or
+     * every one of those seals would now read as tampered.
+     */
+    @Test
+    public void sizeRatioIsSealedOnlyWhenPresent() {
+        String withoutField = InspectionExport.canonicalForm(record(), features(), slots());
+        assertFalse(withoutField.contains("slotSize"));
+
+        List<SlotResult> judged = slots();
+        judged.get(0).setSizeRatio(1.42f);
+        String withField = InspectionExport.canonicalForm(record(), features(), judged);
+        assertTrue(withField.contains("slotSize:8:1.420000"));
+        assertNotEquals(InspectionExport.digest(record(), features(), slots()),
+                InspectionExport.digest(record(), features(), judged));
+
+        InspectionRecord sealed = record();
+        sealed.setDigest(InspectionExport.digest(sealed, features(), judged));
+        assertTrue(InspectionExport.verify(sealed, features(), judged));
+        judged.get(0).setSizeRatio(null);
+        assertFalse("nulling a sealed ratio must break the seal",
+                InspectionExport.verify(sealed, features(), judged));
+    }
+
+    @Test
+    public void jsonCarriesTheSizeRatioAndItsAbsence() throws Exception {
+        List<SlotResult> judged = slots();
+        judged.get(0).setSizeRatio(1.42f);
+        JSONObject root = new JSONObject(InspectionExport.toJson(record(), features(), judged));
+        JSONArray slotArray = root.getJSONArray("slotResults");
+        assertEquals(1.42, slotArray.getJSONObject(0).getDouble("sizeRatio"), 1e-6);
+        assertTrue(slotArray.getJSONObject(1).isNull("sizeRatio"));
+    }
 }

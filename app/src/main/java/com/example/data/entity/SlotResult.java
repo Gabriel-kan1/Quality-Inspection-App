@@ -57,6 +57,17 @@ public class SlotResult {
     private Float offsetPct;
     /** Human-readable region, e.g. "upper right" — denormalised so the report needs no geometry. */
     private String zone;
+    /**
+     * Linear size of the detection found here over the size the reference predicts at this
+     * photo's framing — 1 is a match, 1.5 is half again as wide and tall. Null when no size
+     * claim was possible: nothing matched, the reference layout recorded no box for this
+     * slot, or the box was too small to judge. Boxed for the same reason as
+     * {@link #offsetPct}: nullable column, no rebuild, and "not judged" distinct from "1.0".
+     *
+     * A ratio against the reference photo, not a dimension — see
+     * {@code FeatureLocalisation.SIZE_TOLERANCE} for what it can and cannot resolve.
+     */
+    private Float sizeRatio;
 
     public SlotResult() {
     }
@@ -64,6 +75,13 @@ public class SlotResult {
     public SlotResult(long inspectionId, int slotId, String expectedType, String foundType,
                       String status, float x, float y, float relX, float relY,
                       Float offsetPct, String zone) {
+        this(inspectionId, slotId, expectedType, foundType, status, x, y, relX, relY,
+                offsetPct, zone, null);
+    }
+
+    public SlotResult(long inspectionId, int slotId, String expectedType, String foundType,
+                      String status, float x, float y, float relX, float relY,
+                      Float offsetPct, String zone, Float sizeRatio) {
         this.inspectionId = inspectionId;
         this.slotId = slotId;
         this.expectedType = expectedType;
@@ -75,6 +93,7 @@ public class SlotResult {
         this.relY = relY;
         this.offsetPct = offsetPct;
         this.zone = zone;
+        this.sizeRatio = sizeRatio;
     }
 
     public long getId() { return id; }
@@ -112,4 +131,7 @@ public class SlotResult {
 
     public String getZone() { return zone; }
     public void setZone(String zone) { this.zone = zone; }
+
+    public Float getSizeRatio() { return sizeRatio; }
+    public void setSizeRatio(Float sizeRatio) { this.sizeRatio = sizeRatio; }
 }

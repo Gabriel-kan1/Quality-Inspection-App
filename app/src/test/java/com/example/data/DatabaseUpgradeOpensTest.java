@@ -15,6 +15,7 @@ import androidx.sqlite.db.framework.FrameworkSQLiteOpenHelperFactory;
 import androidx.test.core.app.ApplicationProvider;
 
 import com.example.data.entity.ClassificationEvent;
+import com.example.data.entity.SlotResult;
 
 import org.junit.After;
 import org.junit.Before;
@@ -22,6 +23,7 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.robolectric.RobolectricTestRunner;
 
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -246,5 +248,31 @@ public class DatabaseUpgradeOpensTest {
             assertTrue(c.moveToNext());
             assertEquals("Room should have enforcement switched on", 1, c.getInt(0));
         }
+    }
+
+    /**
+     * v13 added {@code sizeRatio} to SlotResult. The pre-existing row must read as unjudged —
+     * null, not 0 or 1 — and a row filed after the upgrade must keep the value it was given.
+     */
+    @Test
+    public void slotSizeRatioIsNullOnOldRowsAndKeptOnNewOnes() {
+        seedV10();
+        AppDatabase db = openThroughRoom();
+
+        List<SlotResult> before = db.inspectionDao().getSlotResultsForInspection(1);
+        assertEquals(1, before.size());
+        assertNull("nothing was size-checked before the column existed", before.get(0).getSizeRatio());
+
+        List<SlotResult> rows = new ArrayList<>();
+        rows.add(new SlotResult(1, 2, "Bolt", "Bolt", "PRESENT", 0.5f, 0.5f, 0.5f, 0.5f,
+                null, "centre", 1.42f));
+        db.inspectionDao().insertSlotResults(rows);
+
+        Float stored = null;
+        for (SlotResult s : db.inspectionDao().getSlotResultsForInspection(1)) {
+            if (s.getSlotId() == 2) stored = s.getSizeRatio();
+        }
+        assertNotNull(stored);
+        assertEquals(1.42f, stored, 1e-6f);
     }
 }

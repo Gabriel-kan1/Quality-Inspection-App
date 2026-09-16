@@ -60,6 +60,28 @@ import java.util.Locale;
  * <p>So this answers "how should the camera move from roughly here", not "is this the right
  * part". {@link AlignmentGate} keeps the encoder for the second question and uses this for
  * the first. Do not promote the score to an area test without re-running that measurement.
+ *
+ * <h3>Why the peak is not taken at face value</h3>
+ *
+ * Correlation peaks at different template sizes are not comparable. A template shrunk to 30%
+ * is a hundred-pixel blob of plate texture that correlates ~0.48 with <em>something</em> in any
+ * textured scene — a photograph matched against itself scores ~0.54 at that scale — while at
+ * the true scale a few degrees of camera angle, which the search does not model, can drop the
+ * correlation below that floor. {@code whole screws1.jpg} against {@code whole screws2.jpg},
+ * the same plate from the same distance, peaked at 0.48 for scale 0.30 and 0.31 for scale
+ * 1.00, and the gate told the operator they were 3.3x too far away.
+ *
+ * <p>{@link #SCALE_PRIOR} settles it: each scale's peak is charged {@code SCALE_PRIOR *
+ * |ln scale|} before the best is chosen, so a small template's chance-level peak has to beat
+ * the unchanged-framing reading by a margin that grows with how much of a change it claims,
+ * while a genuine strong peak — the exact crop cases score 0.6 and up — still wins outright.
+ * Measured in {@code python/framing_robustness_study.py} over the ten exact ground-truth
+ * crops and every same-scene pair in the catalogue: 0.08–0.12 is a plateau that recovers one
+ * more exact crop (9/10 from 8/10), turns two more gate verdicts right (117/129 from 115) and
+ * breaks none; 0.15 starts to over-pull toward 1.0. Blurring the gradient maps, flooring the
+ * sweep and subtracting a rotated-scene chance level were all measured too and all cost
+ * verdicts. The {@link Match#score} reported is still the raw peak, which is what
+ * {@code AlignmentGate.MIN_TEMPLATE_SCORE} is fitted against.
  */
 public final class TemplateMatcher {
 
@@ -74,6 +96,13 @@ public final class TemplateMatcher {
 
     /** Smallest template edge worth correlating; below this the peak is noise. */
     private static final int MIN_TEMPLATE_EDGE = 16;
+
+    /**
+     * Penalty per unit of {@code |ln scale|} charged to a scale's peak before scales are
+     * compared. Middle of the 0.08–0.12 plateau found in
+     * {@code python/framing_robustness_study.py}; see the class notes for what it buys.
+     */
+    static final double SCALE_PRIOR = 0.10;
 
     /** One search result. Immutable so it can cross to the UI thread. */
     public static final class Match {
@@ -168,27 +197,38 @@ public final class TemplateMatcher {
         double[] wider = searchIn(frame, reference);    // reference is part of the frame
         if (closer == null && wider == null) return null;
 
+        // Compared on the ranked score, so the prior decides between the two directions the
+        // same way it decides between scales within one; the Match reports the raw peak.
         boolean useCloser = wider == null || (closer != null && closer[0] >= wider[0]);
         double[] best = useCloser ? closer : wider;
 
         if (useCloser) {
             // Frame occupies best[1] of the reference, centred at (best[2], best[3]) in
             // reference coordinates. Aiming at the reference's middle means moving toward it.
-            return new Match((float) best[0], (float) best[1],
+            return new Match((float) best[4], (float) best[1],
                     (float) (0.5 - best[2]), (float) (0.5 - best[3]));
         }
         // The reference occupies best[1] of the frame, so the frame covers 1/best[1] of it,
         // and the reference sits at (best[2], best[3]) in the operator's view — move toward it.
         float scale = best[1] > 0 ? (float) (1.0 / best[1]) : Float.NaN;
-        return new Match((float) best[0], scale,
+        return new Match((float) best[4], scale,
                 (float) (best[2] - 0.5), (float) (best[3] - 0.5));
     }
 
     /**
-     * Slides {@code templ} over {@code scene} at every scale in the sweep.
+     * A scale's peak with the prior charged: what scales are ranked by. Pure, so the rule
+     * that decides between "unchanged" and "a third of the size" can be tested on its own.
+     */
+    static double ranked(double peak, double scale) {
+        return peak - SCALE_PRIOR * Math.abs(Math.log(scale));
+    }
+
+    /**
+     * Slides {@code templ} over {@code scene} at every scale in the sweep and keeps the scale
+     * with the best {@link #ranked} score.
      *
-     * @return {peak, scale, centreX, centreY} with the centre as a fraction of the scene,
-     *         or null when no scale produced a usable template.
+     * @return {ranked score, scale, centreX, centreY, raw peak} with the centre as a fraction
+     *         of the scene, or null when no scale produced a usable template.
      */
     private static double[] searchIn(Mat scene, Mat templ) {
         double[] best = null;
@@ -208,12 +248,14 @@ public final class TemplateMatcher {
                 Imgproc.resize(templ, resized, new Size(tw, th), 0, 0, Imgproc.INTER_AREA);
                 Imgproc.matchTemplate(scene, resized, result, Imgproc.TM_CCOEFF_NORMED);
                 Core.MinMaxLocResult mm = Core.minMaxLoc(result);
-                if (best == null || mm.maxVal > best[0]) {
+                double score = ranked(mm.maxVal, s);
+                if (best == null || score > best[0]) {
                     best = new double[]{
-                            mm.maxVal,
+                            score,
                             s,
                             (mm.maxLoc.x + tw / 2.0) / scene.cols(),
-                            (mm.maxLoc.y + th / 2.0) / scene.rows()};
+                            (mm.maxLoc.y + th / 2.0) / scene.rows(),
+                            mm.maxVal};
                 }
             } catch (Throwable t) {
                 Log.w(TAG, "matchTemplate failed at scale " + s, t);

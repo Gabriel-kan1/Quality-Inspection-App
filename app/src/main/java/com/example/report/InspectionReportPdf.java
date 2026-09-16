@@ -9,6 +9,7 @@ import androidx.annotation.Nullable;
 import com.example.data.entity.FeatureResult;
 import com.example.data.entity.InspectionRecord;
 import com.example.data.entity.SlotResult;
+import com.example.ml.FeatureLocalisation;
 
 import android.text.Layout;
 
@@ -111,36 +112,61 @@ public final class InspectionReportPdf {
         if (slotResults != null && !slotResults.isEmpty()) {
             w.text("CRITICAL FEATURE LOCALISATION", PdfReportWriter.SECTION, 24f, 4f);
 
-            int missing = 0, wrong = 0, displaced = 0;
+            int missing = 0, wrong = 0, displaced = 0, sized = 0, sizeChanged = 0;
             for (SlotResult s : slotResults) {
                 if ("MISSING".equals(s.getStatus())) missing++;
                 else if ("WRONG_TYPE".equals(s.getStatus())) wrong++;
                 else if ("DISPLACED".equals(s.getStatus())) displaced++;
+                if (s.getSizeRatio() != null) {
+                    sized++;
+                    if (sizeChanged(s.getSizeRatio())) sizeChanged++;
+                }
             }
             w.text(String.format(Locale.getDefault(),
                     "%d of %d expected positions verified, %d missing, %d wrong type,"
                             + " %d out of position. Positions are given as a region of the"
                             + " part with coordinates relative to its own extent.",
                     slotResults.size() - missing - wrong - displaced, slotResults.size(),
-                    missing, wrong, displaced), PdfReportWriter.BODY, 0f, 10f);
+                    missing, wrong, displaced), PdfReportWriter.BODY, 0f, 4f);
+            // The size column is a comparison with the reference photograph, not a
+            // measurement, and the report has to say so: a reader who takes "+48%" for a
+            // dimension will look for the millimetres and not find them.
+            if (sized > 0) {
+                w.text(String.format(Locale.getDefault(),
+                        "Size is the detected feature's extent relative to the reference"
+                                + " photograph, corrected for framing: %d of %d positions"
+                                + " compared, %d beyond the %d%% tolerance. It is a pixel"
+                                + " comparison, not a dimension, and does not affect the"
+                                + " verdict.",
+                        sized, slotResults.size(), sizeChanged,
+                        Math.round(FeatureLocalisation.SIZE_TOLERANCE * 100)),
+                        PdfReportWriter.BODY, 0f, 10f);
+            } else {
+                w.text("Size against the reference was not compared for this inspection.",
+                        PdfReportWriter.BODY, 0f, 10f);
+            }
 
             List<PdfReportWriter.Row> slotRows = new ArrayList<>();
             for (SlotResult s : slotResults) {
                 boolean defect = !"PRESENT".equals(s.getStatus());
+                boolean sizeOut = s.getSizeRatio() != null && sizeChanged(s.getSizeRatio());
                 slotRows.add(new PdfReportWriter.Row(new String[]{
                         "#" + s.getSlotId(),
                         s.getExpectedType(),
                         String.format(Locale.getDefault(), "%s (%.0f%%, %.0f%%)",
                                 s.getZone(), s.getRelX() * 100, s.getRelY() * 100),
-                        slotResultText(s)
+                        slotResultText(s),
+                        sizeText(s)
                 }, PdfReportWriter.BODY)
                         .align(0, Layout.Alignment.ALIGN_CENTER)
                         .style(1, PdfReportWriter.BODY_BOLD)
                         .style(3, defect ? PdfReportWriter.BODY_BOLD : PdfReportWriter.BODY)
-                        .align(3, Layout.Alignment.ALIGN_CENTER));
+                        .align(3, Layout.Alignment.ALIGN_CENTER)
+                        .style(4, sizeOut ? PdfReportWriter.BODY_BOLD : PdfReportWriter.BODY)
+                        .align(4, Layout.Alignment.ALIGN_CENTER));
             }
-            w.table(new String[]{"Slot", "Expected Feature", "Position", "Result"},
-                    new float[]{0.6f, 1.8f, 1.8f, 1.4f}, slotRows, 0f);
+            w.table(new String[]{"Slot", "Expected Feature", "Position", "Result", "Size vs Ref"},
+                    new float[]{0.6f, 1.6f, 1.7f, 1.3f, 0.9f}, slotRows, 0f);
         }
 
         // ── Advisory notes ──────────────────────────────────────────────────
@@ -221,6 +247,19 @@ public final class InspectionReportPdf {
                         + " again. The code carries the record id, the verdict and the first"
                         + " eight bytes of the digest — not the findings themselves.",
                 PdfReportWriter.CAPTION, 0f, 0f);
+    }
+
+    /** Whether a stored ratio is outside {@link FeatureLocalisation#SIZE_TOLERANCE}, either way. */
+    private static boolean sizeChanged(float ratio) {
+        return ratio > 0 && Math.abs(Math.log(ratio))
+                > Math.log1p(FeatureLocalisation.SIZE_TOLERANCE);
+    }
+
+    /** The size column: a signed percentage against the reference, or a dash when unjudged. */
+    private static String sizeText(SlotResult s) {
+        Float ratio = s.getSizeRatio();
+        if (ratio == null || !(ratio > 0)) return "—";
+        return String.format(Locale.getDefault(), "%+.0f%%", (ratio - 1f) * 100f);
     }
 
     private static String slotResultText(SlotResult s) {

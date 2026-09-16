@@ -771,6 +771,11 @@ public class InspectionFragment extends Fragment {
                 // from whatever was scored before it.
                 gate.resetMotion();
                 reading = gate.evaluate(bitmap, SystemClock.elapsedRealtime());
+                // The reading otherwise exists only on the traffic light. A wrong TOO FAR on
+                // two near-identical photographs took a study to diagnose because nothing
+                // recorded the framing ratio the gate had actually read.
+                Log.d(TAG, "Still gate for " + uriString + ": " + reading.hint + " ["
+                        + reading.debugLine() + "]");
             } catch (Exception e) {
                 Log.e(TAG, "Still scoring failed", e);
                 return;
