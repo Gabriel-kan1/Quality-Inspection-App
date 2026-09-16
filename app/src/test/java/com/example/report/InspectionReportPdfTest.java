@@ -327,4 +327,24 @@ public class InspectionReportPdfTest {
             return null;
         }
     }
+
+    /**
+     * The localisation table gained a size column. A judged row inside tolerance, one outside
+     * it and one never judged all have to lay out on the page together.
+     */
+    @Test
+    public void laysOutTheSizeColumnForJudgedAndUnjudgedSlots() {
+        SlotResult inside = slot(1, "bolt_head", "bolt_head", "PRESENT");
+        inside.setSizeRatio(1.08f);
+        SlotResult outside = slot(2, "bolt_head", "bolt_head", "PRESENT");
+        outside.setSizeRatio(1.9f);
+        SlotResult unjudged = slot(3, "stud", null, "MISSING");
+        List<SlotResult> slots = Arrays.asList(inside, outside, unjudged);
+
+        BitmapSink sink = render(Collections.<FeatureResult>emptyList(), slots,
+                Collections.<AdvisoryNotes.Note>emptyList());
+
+        assertEquals(1, sink.pages.size());
+        assertTrue("nothing was drawn on the page", sink.inkedPixels(0) > 500);
+    }
 }

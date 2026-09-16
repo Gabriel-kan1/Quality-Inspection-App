@@ -38,6 +38,25 @@ import java.util.Locale;
  * uninteresting; it is a crop the classifier could not name, and it may well be the critical
  * fastener a slot is asking about.
  *
+ * <h3>Size, without a calibration marker</h3>
+ * Every matched slot is also compared for <em>size</em>: the box the reference detection was
+ * found in, scaled by the alignment, against the box found at the slot now. The result is a
+ * ratio in pixels, not a dimension in millimetres — a photograph carries no scale, and the
+ * printed marker that supplies one ({@code ScaleCalibration}) is rarely in frame. What the app
+ * does have is a reference photograph of the same part, an alignment gate that holds the
+ * operator to its framing, and {@link LayoutMatcher}, which recovers the residual scale
+ * exactly. Given those, "is this fastener the size the reference says" is answerable with no
+ * marker at all.
+ *
+ * It is a coarse answer. Measured across genuine same-hardware pairs of the bundled photos
+ * ({@code python/size_ratio_study.py}), the detector's boxes for the same fastener differ by a
+ * median of x1.06 and a 95th percentile of x1.41 between shots, so {@link #SIZE_TOLERANCE} sits
+ * above that and adjacent metric sizes (x1.14-1.25 apart) are inside the noise. What it does
+ * catch is the wrong fastener family, a head that has swallowed a neighbour in the merge, or a
+ * detection that is only a fragment of the hardware. Boxes under {@link #MIN_SIZE_JUDGED_PX}
+ * do not repeat at all (p90 x2.1) and are refused rather than judged. A size change is reported
+ * and logged; it does not fail the part — see {@link Result#hasPositionalDefect()}.
+ *
  * <h3>Coordinates</h3>
  * Everything here is in the reference photo's fractional (0-1) space. Positions are reported
  * to the operator as a named zone plus percentages, because a raw fraction pair is not
@@ -63,6 +82,29 @@ public final class FeatureLocalisation {
      */
     private static final float LOWER_THIRD = 1f / 3f;
     private static final float UPPER_THIRD = 2f / 3f;
+
+    /**
+     * How far a matched detection's linear size may differ from what the reference box
+     * predicts, either way, before it is reported as a size change. 0.5 means a box more than
+     * x1.5 larger <em>or</em> smaller (the test is symmetric in log space, so "smaller" is
+     * 1/1.5, not 0.5).
+     *
+     * From {@code python/size_ratio_study.py}, over the photo pairs the alignment gate treats as
+     * interchangeable and boxes at or above {@link #MIN_SIZE_JUDGED_PX}: the same physical
+     * detection differs between shots by median x1.06, p90 x1.21, p95 x1.41. At x1.5 the check
+     * flags 3% of genuine boxes, every one a merge artefact; at x1.4 it is 6%, at x1.3 8%.
+     * Tighter than this reports detector jitter as a finding on a good part.
+     */
+    public static final float SIZE_TOLERANCE = 0.5f;
+
+    /**
+     * Shorter side, in working-image pixels, a slot's reference box must reach before its size
+     * is judged. Below it the detector's boxes are fragments and merge chains more often than
+     * hardware and do not repeat between shots (same study: p50 x1.19, p90 x2.12, 27% beyond
+     * x1.5), so any tolerance would be either useless or meaningless there. Such slots are
+     * still positioned; only the size claim is withheld.
+     */
+    public static final float MIN_SIZE_JUDGED_PX = 30f;
 
     /** What the positional check concluded about one expected position. */
     public enum Status {
@@ -151,11 +193,23 @@ public final class FeatureLocalisation {
          * tie a finding back to the box the operator can see and tap.
          */
         public final int featureIndex;
+        /**
+         * Linear size of the detection found here over the size the reference box predicts
+         * at this photo's framing — 1 is a perfect match, 2 is twice as wide and tall. NaN
+         * when no size claim was possible: nothing matched, the layout recorded no box for
+         * this slot, or the reference box is under {@link #MIN_SIZE_JUDGED_PX}.
+         *
+         * Computed from bounding-box areas, not from the feature's contour: measured on the
+         * bundled pairs the box is the most repeatable size the pipeline produces (median
+         * x1.06 between shots against x1.29 for the enclosing circle of the largest contour
+         * inside it, which is as often a fragment as the hardware).
+         */
+        public final float sizeRatio;
 
         SlotFinding(int slotId, int displayNumber, String expectedType, String foundType,
                     float x, float y, float relX, float relY,
                     float projectedX, float projectedY, Status status, float offset,
-                    int featureIndex) {
+                    int featureIndex, float sizeRatio) {
             this.slotId = slotId;
             this.displayNumber = displayNumber;
             this.expectedType = expectedType;
@@ -169,12 +223,35 @@ public final class FeatureLocalisation {
             this.status = status;
             this.offset = offset;
             this.featureIndex = featureIndex;
+            this.sizeRatio = sizeRatio;
         }
 
         /** Copy with a display number assigned, once the reported set is known and sorted. */
         SlotFinding numbered(int n) {
             return new SlotFinding(slotId, n, expectedType, foundType, x, y, relX, relY,
-                    projectedX, projectedY, status, offset, featureIndex);
+                    projectedX, projectedY, status, offset, featureIndex, sizeRatio);
+        }
+
+        /** Whether a size comparison was possible for this position at all. */
+        public boolean sizeJudged() {
+            return !Float.isNaN(sizeRatio) && sizeRatio > 0f;
+        }
+
+        /**
+         * Whether the detection here is outside {@link #SIZE_TOLERANCE} of the reference's
+         * size, in either direction. Always false when {@link #sizeJudged()} is false — an
+         * unjudged slot is not evidence of anything.
+         */
+        public boolean sizeChanged() {
+            return sizeJudged() && Math.abs(Math.log(sizeRatio)) > Math.log1p(SIZE_TOLERANCE);
+        }
+
+        /**
+         * The size difference as a signed percentage of the reference size, e.g. +48 for a
+         * detection half again as wide, -33 for one two-thirds the size. NaN when unjudged.
+         */
+        public float sizeChangePercent() {
+            return sizeJudged() ? (sizeRatio - 1f) * 100f : Float.NaN;
         }
 
         /**
@@ -220,6 +297,28 @@ public final class FeatureLocalisation {
             return n;
         }
 
+        /** Positions where a size comparison against the reference was possible. */
+        public int countSizeJudged() {
+            int n = 0;
+            for (SlotFinding f : findings) if (f.sizeJudged()) n++;
+            return n;
+        }
+
+        /**
+         * Positions whose detection is outside {@link #SIZE_TOLERANCE} of the reference size.
+         *
+         * Reported, not failed: the check's noise floor is the detector's own box jitter, and
+         * at the shipping tolerance it still flags about one genuine fastener in thirty. That
+         * is a fine rate for "look at this one" and a poor one for "reject the part", so the
+         * count feeds the warning notes and the report and {@link #hasPositionalDefect()}
+         * deliberately does not consult it.
+         */
+        public int countSizeChanged() {
+            int n = 0;
+            for (SlotFinding f : findings) if (f.sizeChanged()) n++;
+            return n;
+        }
+
         /**
          * True when any expected position is unaccounted for or holds the wrong hardware.
          *
@@ -253,6 +352,10 @@ public final class FeatureLocalisation {
             if (offImage > 0) {
                 sb.append(", ").append(offImage).append(" outside the photo and not checked");
             }
+            int sized = countSizeChanged();
+            if (sized > 0) {
+                sb.append(", ").append(sized).append(" differing in size from the reference");
+            }
             return sb.append('.').toString();
         }
     }
@@ -264,13 +367,44 @@ public final class FeatureLocalisation {
     }
 
     /** Builds one finding, with the display number left to be assigned after sorting. */
-    private static SlotFinding finding(FeatureLayout.Slot slot, String foundType, float[] env,
+    private static SlotFinding finding(FeatureLayout layout, FeatureLayout.Slot slot,
+                                       String foundType, float[] env,
                                        LayoutMatcher.Result match, Status status, float offset,
-                                       int featureIndex) {
+                                       int featureIndex, RectF found) {
         float[] p = match.project(slot.x, slot.y);
         return new SlotFinding(slot.id, 0, slot.type, foundType, slot.x, slot.y,
                 relative(slot.x, env[0], env[2]), relative(slot.y, env[1], env[3]),
-                p == null ? -1f : p[0], p == null ? -1f : p[1], status, offset, featureIndex);
+                p == null ? -1f : p[0], p == null ? -1f : p[1], status, offset, featureIndex,
+                sizeRatio(layout, slot, found, match));
+    }
+
+    /**
+     * Linear size of {@code found} over the size the slot's reference box predicts under the
+     * alignment, or NaN when no claim can be made.
+     *
+     * Both boxes are in fractional units of their own photo, and the alignment maps the
+     * reference frame onto this one, so the reference box's area lands in this photo's units
+     * once multiplied by {@link LayoutMatcher.Result#areaScale()}. That is the whole of the
+     * scale correction: a part photographed closer than the reference has every box larger by
+     * that factor, which is framing and not hardware. The square root turns an area ratio into
+     * the linear one an operator can read as "half again as wide".
+     *
+     * Refused, as NaN, when the layout recorded no box for the slot or cannot say how many
+     * pixels it spanned, and when it spanned fewer than {@link #MIN_SIZE_JUDGED_PX} — the study
+     * behind that constant found boxes that small do not repeat between shots, so a ratio
+     * there would be jitter reported as a finding.
+     */
+    static float sizeRatio(FeatureLayout layout, FeatureLayout.Slot slot, RectF found,
+                           LayoutMatcher.Result match) {
+        if (layout == null || slot == null || found == null || !slot.hasSize()) return Float.NaN;
+        float shortSide = layout.shortSidePx(slot);
+        if (Float.isNaN(shortSide) || shortSide < MIN_SIZE_JUDGED_PX) return Float.NaN;
+        double areaScale = match.areaScale();
+        if (!(areaScale > 1e-12)) return Float.NaN;
+        double expected = (double) slot.w * slot.h * areaScale;
+        double actual = (double) found.width() * found.height();
+        if (!(expected > 0) || !(actual > 0)) return Float.NaN;
+        return (float) Math.sqrt(actual / expected);
     }
 
     /**
@@ -382,7 +516,8 @@ public final class FeatureLocalisation {
             if (registrationTypes != null && !registrationTypes.contains(type)) continue;
             RectF r = referenceRects.get(i);
             if (r == null) continue;
-            layout.addSlot(type, (r.left + r.right) / 2f, (r.top + r.bottom) / 2f);
+            layout.addSlot(type, (r.left + r.right) / 2f, (r.top + r.bottom) / 2f,
+                    r.width(), r.height());
         }
         return layout;
     }
@@ -431,8 +566,11 @@ public final class FeatureLocalisation {
             FeatureLayout.Slot slot = layout.slotById(m.slotId);
             if (slot == null || !reported(slot.type, reportTypes)) continue;
             String found = m.featureIndex < featureTypes.size() ? featureTypes.get(m.featureIndex) : null;
-            result.findings.add(finding(slot, found, env, match,
-                    m.typeMismatch ? Status.WRONG_TYPE : Status.PRESENT, -1f, m.featureIndex));
+            RectF rect = m.featureIndex >= 0 && m.featureIndex < featureRects.size()
+                    ? featureRects.get(m.featureIndex) : null;
+            result.findings.add(finding(layout, slot, found, env, match,
+                    m.typeMismatch ? Status.WRONG_TYPE : Status.PRESENT, -1f, m.featureIndex,
+                    rect));
         }
         // Detections that matched no slot, still available to explain an empty position.
         // Claimed at most once, so two empty slots cannot both blame the same stray feature.
@@ -444,7 +582,8 @@ public final class FeatureLocalisation {
             // Nothing can be concluded about a position the photo does not cover. Decided
             // before the displacement search below, because attributing a stray detection to
             // a slot that sits off-image is a guess rather than a measurement.
-            SlotFinding offImage = finding(slot, null, env, match, Status.OUT_OF_FRAME, -1f, -1);
+            SlotFinding offImage = finding(layout, slot, null, env, match, Status.OUT_OF_FRAME,
+                    -1f, -1, null);
             if (!offImage.hasProjection()) {
                 result.findings.add(offImage);
                 continue;
@@ -463,10 +602,11 @@ public final class FeatureLocalisation {
             if (nearest >= 0 && nearestOffset <= DISPLACEMENT_LIMIT) {
                 spare.remove(Integer.valueOf(nearest));
                 String found = nearest < featureTypes.size() ? featureTypes.get(nearest) : null;
-                result.findings.add(finding(slot, found, env, match,
-                        Status.DISPLACED, nearestOffset, nearest));
+                result.findings.add(finding(layout, slot, found, env, match,
+                        Status.DISPLACED, nearestOffset, nearest, featureRects.get(nearest)));
             } else {
-                result.findings.add(finding(slot, null, env, match, Status.MISSING, -1f, -1));
+                result.findings.add(finding(layout, slot, null, env, match, Status.MISSING,
+                        -1f, -1, null));
             }
         }
 

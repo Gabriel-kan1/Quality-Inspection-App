@@ -27,7 +27,7 @@ import java.util.UUID;
 
 @Database(entities = {InspectionRecord.class, FeatureResult.class, ReferenceProfile.class,
         ClassificationEvent.class, SlotResult.class, Product.class, PartProfile.class},
-        version = 12, exportSchema = false)
+        version = 13, exportSchema = false)
 public abstract class AppDatabase extends RoomDatabase {
     private static volatile AppDatabase INSTANCE;
 
@@ -465,6 +465,24 @@ public abstract class AppDatabase extends RoomDatabase {
     };
 
     /**
+     * Records, per expected position, how the detection's size compared with the reference.
+     *
+     * A nullable REAL added by plain ALTER, exactly as {@link #MIGRATION_8_9} added
+     * {@code offsetPct}: the entity field is a boxed Float with no
+     * {@code @ColumnInfo(defaultValue = ...)}, so no SQL DEFAULT here either — Room compares
+     * the two on open and refuses the database when they disagree. Existing rows read as null,
+     * which is the truth about them: nothing was ever size-checked for an inspection filed
+     * before the check existed, and null is what the report renders as "not judged" rather
+     * than as a match.
+     */
+    static final Migration MIGRATION_12_13 = new Migration(12, 13) {
+        @Override
+        public void migrate(@NonNull SupportSQLiteDatabase db) {
+            db.execSQL("ALTER TABLE SlotResult ADD COLUMN sizeRatio REAL");
+        }
+    };
+
+    /**
      * Every migration, in one place so that opening the database in a test goes through exactly
      * the list a device does. A test that hand-copied this would keep passing after someone
      * added a migration and forgot it, which is the case worth catching.
@@ -472,7 +490,7 @@ public abstract class AppDatabase extends RoomDatabase {
     static final Migration[] MIGRATIONS = {
             MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7,
             MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11,
-            MIGRATION_11_12
+            MIGRATION_11_12, MIGRATION_12_13
     };
 
     public static AppDatabase getInstance(final Context context) {

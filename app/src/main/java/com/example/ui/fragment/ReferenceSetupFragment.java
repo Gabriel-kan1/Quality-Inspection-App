@@ -754,6 +754,9 @@ public class ReferenceSetupFragment extends Fragment {
         final List<Bitmap> crops = new ArrayList<>();
         for (int i = 0; i < chosen.length; i++) crops.add(pendingCrops.get(i + 1));
         final List<HardwareFeatureExtractor.ExtractedFeature> features = pendingResult.features;
+        final int workingWidth = pendingResult.workingWidth;
+        final int workingHeight = pendingResult.workingHeight;
+        final String edgeMethodId = pendingResult.edgeMethodId;
         final float simThreshold = pendingSimilarityThreshold;
         final float marginThreshold = pendingMarginThreshold;
 
@@ -794,6 +797,12 @@ public class ReferenceSetupFragment extends Fragment {
             // without the photo changing at all.
             FeatureLayout layout = new FeatureLayout();
             layout.setReferenceUri(uri);
+            // The frame the slot fractions are measured in, so a box can be turned back into
+            // pixels when an inspection asks whether a slot is big enough to size-check.
+            layout.setImageSize(workingWidth, workingHeight);
+            // The edge method these boxes came out of. An inspection run under a different
+            // one is compared against boxes a different detector drew, and is told so.
+            layout.setEdgeMethodId(edgeMethodId);
             for (int i = 0; i < chosen.length; i++) {
                 if (chosen[i] == null) continue;
                 // Critical types only, matching what the inspection side puts forward as
@@ -807,7 +816,11 @@ public class ReferenceSetupFragment extends Fragment {
                         != FeatureTypeRegistry.Severity.CRITICAL) continue;
                 android.graphics.RectF r = features.get(i).rectFraction;
                 if (r == null) continue;
-                layout.addSlot(chosen[i], (r.left + r.right) / 2f, (r.top + r.bottom) / 2f);
+                // The box size goes in with the position. It is what an inspection compares the
+                // detection at this slot against, scaled by the alignment, so the part's
+                // hardware can be size-checked without a calibration marker in frame.
+                layout.addSlot(chosen[i], (r.left + r.right) / 2f, (r.top + r.bottom) / 2f,
+                        r.width(), r.height());
             }
             layout.save(context, partId);
 

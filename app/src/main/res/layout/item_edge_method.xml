@@ -56,6 +56,24 @@
                 android:textStyle="bold"
                 android:visibility="gone"
                 tools:visibility="visible" />
+
+            <!-- The method inspections currently run. Independent of SHIPPED: the shipped
+                 stack is what runs until somebody chooses otherwise, and after that it is
+                 still the shipped stack, just not the one in use. -->
+            <TextView
+                android:id="@+id/tv_method_in_use"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:background="#334ADE80"
+                android:paddingHorizontal="8dp"
+                android:paddingVertical="3dp"
+                android:text="IN USE"
+                android:textColor="@color/green_pass"
+                android:textSize="10sp"
+                android:textStyle="bold"
+                android:visibility="gone"
+                tools:visibility="visible" />
         </LinearLayout>
 
         <TextView
@@ -90,6 +108,21 @@
             android:contentDescription="Edge map produced by this method"
             android:scaleType="fitCenter"
             tools:src="@android:drawable/ic_menu_gallery" />
+
+        <!-- Makes this method the edge stage for every inspection and reference setup that
+             follows. Disabled on the card already in use, so the state reads from the button
+             as well as the badge. -->
+        <Button
+            android:id="@+id/btn_use_method"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:layout_marginTop="12dp"
+            android:backgroundTint="@color/blue_primary"
+            android:text="USE FOR INSPECTIONS"
+            android:textColor="@color/white"
+            android:textSize="12sp"
+            android:textStyle="bold"
+            app:cornerRadius="10dp" />
 
     </LinearLayout>
 

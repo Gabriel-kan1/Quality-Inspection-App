@@ -6,6 +6,7 @@ import android.graphics.BitmapFactory;
 import android.graphics.BitmapRegionDecoder;
 import android.graphics.Matrix;
 import android.graphics.Rect;
+import android.graphics.RectF;
 import android.util.Log;
 
 import com.example.ui.util.AssetBitmaps;
@@ -74,6 +75,27 @@ public final class SourceCropper implements Closeable {
     }
 
     /**
+     * A decoded crop together with where the requested box sits inside it, in the crop's own
+     * pixels.
+     *
+     * The classifier only ever needs the pixels. The size comparison on the results screen
+     * needs the box as well: it draws the reference and inspection crops at a common scale
+     * and outlines exactly the extents that were compared, and it cannot recover those from
+     * the bitmap alone — padding is clipped at the photo's edges, and the region is sampled
+     * down by a power of two the caller never sees.
+     */
+    public static final class Region {
+        public final Bitmap bitmap;
+        /** The requested box within {@link #bitmap}, in bitmap pixels. */
+        public final RectF box;
+
+        Region(Bitmap bitmap, RectF box) {
+            this.bitmap = bitmap;
+            this.box = box;
+        }
+    }
+
+    /**
      * Opens a cropper for {@code uriString}, or returns null when the source cannot be region
      * decoded or offers no more detail than the working image already has.
      *
@@ -134,16 +156,27 @@ public final class SourceCropper implements Closeable {
      * the caller treats as "fall back to the working-image crop".
      */
     public Bitmap crop(Rect workingBox, int workingPadding) {
+        Region region = cropRegion(workingBox, workingPadding);
+        return region == null ? null : region.bitmap;
+    }
+
+    /**
+     * As {@link #crop}, but also reports where the box landed inside the crop. Null under the
+     * same conditions.
+     */
+    public Region cropRegion(Rect workingBox, int workingPadding) {
         if (workingBox == null) return null;
         try {
             int uprightW = Math.round(workingBox.width() * scale);
             int uprightH = Math.round(workingBox.height() * scale);
             int pad = Math.round(workingPadding * scale);
-            Rect upright = new Rect(
-                    Math.round(workingBox.left * scale) - pad,
-                    Math.round(workingBox.top * scale) - pad,
-                    Math.round(workingBox.left * scale) + uprightW + pad,
-                    Math.round(workingBox.top * scale) + uprightH + pad);
+            Rect boxUpright = new Rect(
+                    Math.round(workingBox.left * scale),
+                    Math.round(workingBox.top * scale),
+                    Math.round(workingBox.left * scale) + uprightW,
+                    Math.round(workingBox.top * scale) + uprightH);
+            Rect upright = new Rect(boxUpright.left - pad, boxUpright.top - pad,
+                    boxUpright.right + pad, boxUpright.bottom + pad);
 
             boolean quarterTurn = rotation == 90 || rotation == 270;
             int fullUprightW = quarterTurn ? rawHeight : rawWidth;
@@ -159,11 +192,30 @@ public final class SourceCropper implements Closeable {
             opts.inSampleSize = AssetBitmaps.sampleSizeFor(raw.width(), raw.height(), CROP_MAX_DIM);
             Bitmap decoded = decoder.decodeRegion(raw, opts);
             if (decoded == null) return null;
-            return rotate(decoded, rotation);
+            Bitmap bitmap = rotate(decoded, rotation);
+            return new Region(bitmap, boxWithin(upright, boxUpright,
+                    bitmap.getWidth(), bitmap.getHeight()));
         } catch (Throwable t) {
             Log.d(TAG, "Region decode failed", t);
             return null;
         }
+    }
+
+    /**
+     * Where a box sits inside the crop decoded for {@code region}, in the crop's pixels.
+     *
+     * The crop covers {@code region} of the upright photo but is sampled down by a power of
+     * two, so its pixel size is not the region's. The box is placed relative to the region's
+     * origin and scaled by the ratio between the two, per axis — which also absorbs the
+     * one-pixel rounding a region decode can introduce. A box partly outside the region (its
+     * padding was clipped at the photo's edge, or the box itself was) simply maps partly
+     * outside the crop; callers clip when drawing. Pure, so it can be tested without a decoder.
+     */
+    static RectF boxWithin(Rect region, Rect box, int cropWidth, int cropHeight) {
+        float fx = region.width() > 0 ? (float) cropWidth / region.width() : 1f;
+        float fy = region.height() > 0 ? (float) cropHeight / region.height() : 1f;
+        return new RectF((box.left - region.left) * fx, (box.top - region.top) * fy,
+                (box.right - region.left) * fx, (box.bottom - region.top) * fy);
     }
 
     /**
