@@ -700,6 +700,105 @@ public final class EdgeMethodLab {
         }
     }
 
+    // ── Choosing a method from how many features the operator expects ────────
+
+    /**
+     * The methods worth choosing between when the operator states a count: the shipped stack
+     * and the tuned hybrids. The bare operators are in the catalogue to be looked at, not
+     * run — Scharr found 215 candidates in a photograph of four — and offering them here
+     * would let a lucky count elect a method that is wrong everywhere else.
+     */
+    static final String[] HYBRID_IDS = {
+            SHIPPED_ID, "hybrid-v2", "hybrid-v3", "hybrid-v4", "hybrid-v5", "hybrid-v6"};
+
+    /**
+     * Tie order, best first: which method wins when two land the same distance from the
+     * operator's count. Ranked by exactness against the ground truth in
+     * {@code python/detection_ground_truth.py} as measured on the device's own OpenCV, so a
+     * tie goes to the method most likely to be right on the photographs this one was not
+     * tuned against. The shipped stack is last: it never misses a fastener, but it buried
+     * them under 260 extras across that set.
+     */
+    static final String[] TIE_ORDER = {
+            "hybrid-v6", "hybrid-v3", "hybrid-v4", "hybrid-v2", "hybrid-v5", SHIPPED_ID};
+
+    /** One method's candidate count on the reference, with its distance from the target. */
+    public static final class CountMatch {
+        public final String id;
+        public final String name;
+        public final int candidates;
+        public final int distance;
+
+        public CountMatch(String id, String name, int candidates, int distance) {
+            this.id = id;
+            this.name = name;
+            this.candidates = candidates;
+            this.distance = distance;
+        }
+    }
+
+    /**
+     * Ranks the hybrid methods by how close each one's candidate count on {@code uriString}
+     * comes to {@code expected}, best first.
+     *
+     * <p>This is what lets the operator say "there are four fasteners on this part" and have
+     * the app pick the edge stage that agrees, instead of learning which of six methods to
+     * choose in the Edge Lab. A method that throws on this photograph is left out rather than
+     * ranked as zero: zero is a count, and a method that did not run has none.
+     *
+     * <p>Heavy — every hybrid at working resolution. Call it off the main thread.
+     *
+     * @return ranked matches, empty when OpenCV is down or the image cannot be read
+     */
+    public static List<CountMatch> rankForCount(Context context, String uriString, int expected) {
+        List<CountMatch> matches = new ArrayList<>();
+        if (!HardwareFeatureExtractor.isAvailable()) return matches;
+        Bitmap bitmap = HardwareFeatureExtractor.loadBitmap(
+                context, uriString, HardwareFeatureExtractor.WORKING_MAX_DIM);
+        if (bitmap == null) return matches;
+
+        Mat src = new Mat();
+        Mat gray = new Mat();
+        try {
+            Utils.bitmapToMat(bitmap, src);
+            Imgproc.cvtColor(src, gray, Imgproc.COLOR_RGBA2GRAY);
+            for (String id : HYBRID_IDS) {
+                Method method = byId(id);
+                if (method == null) continue;
+                MethodResult r = run(method, gray, src, false);
+                if (r.edgeMap != null) r.edgeMap.recycle();
+                if (r.failed()) continue;
+                matches.add(new CountMatch(id, method.name, r.candidateBoxes,
+                        Math.abs(r.candidateBoxes - expected)));
+            }
+        } catch (Throwable t) {
+            Log.e(TAG, "Ranking methods by count failed", t);
+        } finally {
+            src.release();
+            gray.release();
+            bitmap.recycle();
+        }
+        return rank(matches);
+    }
+
+    /**
+     * Sorts matches by distance, then by {@link #TIE_ORDER}. Separated from the image work so
+     * the tie-breaking — the only part with a judgement in it — can be tested without OpenCV.
+     */
+    public static List<CountMatch> rank(List<CountMatch> matches) {
+        List<CountMatch> sorted = new ArrayList<>(matches);
+        Collections.sort(sorted, (a, b) -> {
+            if (a.distance != b.distance) return Integer.compare(a.distance, b.distance);
+            return Integer.compare(tieRank(a.id), tieRank(b.id));
+        });
+        return sorted;
+    }
+
+    private static int tieRank(String id) {
+        for (int i = 0; i < TIE_ORDER.length; i++) if (TIE_ORDER[i].equals(id)) return i;
+        return TIE_ORDER.length;
+    }
+
     /**
      * How many methods a run will produce, for a caller that wants to say so before starting.
      *

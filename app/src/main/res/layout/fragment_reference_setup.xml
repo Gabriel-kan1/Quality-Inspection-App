@@ -249,6 +249,73 @@
                 android:textSize="11sp"
                 android:lineSpacingExtra="2dp" />
 
+            <!-- The operator's own count. The detector's total above is a guess from one edge
+                 method; this is the number the app then chooses an edge method to agree
+                 with, from the shipped stack and the tuned hybrids in the Edge Lab. -->
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="1dp"
+                android:layout_marginTop="12dp"
+                android:background="@color/color_border" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:text="HOW MANY FEATURES ARE ACTUALLY ON THIS PART?"
+                android:textColor="@color/blue_primary"
+                android:textSize="11sp"
+                android:textStyle="bold" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <EditText
+                    android:id="@+id/et_expected_feature_count"
+                    android:layout_width="96dp"
+                    android:layout_height="44dp"
+                    android:background="@drawable/bg_number_field"
+                    android:gravity="center"
+                    android:hint="e.g. 4"
+                    android:imeOptions="actionDone"
+                    android:inputType="number"
+                    android:maxLength="3"
+                    android:textColor="@color/white"
+                    android:textColorHint="@color/gray_text_secondary"
+                    android:textSize="15sp"
+                    android:textStyle="bold" />
+
+                <Button
+                    android:id="@+id/btn_pick_method_for_count"
+                    android:layout_width="0dp"
+                    android:layout_height="44dp"
+                    android:layout_marginStart="10dp"
+                    android:layout_weight="1"
+                    android:backgroundTint="@color/blue_dark_accent"
+                    android:enabled="false"
+                    android:text="PICK EDGE METHOD FOR THIS COUNT"
+                    android:textColor="@color/white"
+                    android:textSize="11sp"
+                    android:textStyle="bold"
+                    app:cornerRadius="8dp" />
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/tv_method_pick_result"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:lineSpacingExtra="2dp"
+                android:textColor="@color/gray_text_secondary"
+                android:textSize="11sp"
+                android:visibility="gone"
+                tools:text="Chose Hybrid v6: 4 candidates. Shipped found 9, v2 6, v3 4, v4 4, v5 4."
+                tools:visibility="visible" />
+
         </LinearLayout>
 
     </com.google.android.material.card.MaterialCardView>

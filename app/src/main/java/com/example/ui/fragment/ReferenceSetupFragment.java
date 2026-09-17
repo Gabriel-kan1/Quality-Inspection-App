@@ -26,6 +26,7 @@ import com.example.data.entity.ClassificationEvent;
 import com.example.data.entity.ReferenceProfile;
 import com.example.ui.util.AssetBitmaps;
 import com.example.databinding.FragmentReferenceSetupBinding;
+import com.example.ml.EdgeMethodLab;
 import com.example.ml.HardwareFeatureExtractor;
 import com.example.ml.FeatureEmbedder;
 import com.example.ml.FeatureLayout;
@@ -121,6 +122,26 @@ public class ReferenceSetupFragment extends Fragment {
         // Click on the upload zone to pick an image
         binding.layoutUploadZone.setOnClickListener(v -> launchImageChooser());
 
+        // The operator's count enables the picker only once it is a number; the picker then
+        // chooses the edge method whose candidate count on this photograph comes closest.
+        binding.etExpectedFeatureCount.addTextChangedListener(new android.text.TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s, int a, int b, int c) { }
+            @Override public void onTextChanged(CharSequence s, int a, int b, int c) {
+                binding.btnPickMethodForCount.setEnabled(
+                        parseExpectedCount() != null && selectedImageExternalUri != null);
+            }
+            @Override public void afterTextChanged(android.text.Editable s) { }
+        });
+        binding.etExpectedFeatureCount.setOnEditorActionListener((v, actionId, event) -> {
+            if (actionId == android.view.inputmethod.EditorInfo.IME_ACTION_DONE
+                    && binding.btnPickMethodForCount.isEnabled()) {
+                pickMethodForCount();
+                return true;
+            }
+            return false;
+        });
+        binding.btnPickMethodForCount.setOnClickListener(v -> pickMethodForCount());
+
         // Saving a reference goes through labelling: an unclassified detection contributes
         // nothing to the counts, the landmarks or the positional report, so a reference saved
         // without this step silently defines much less than it appears to.
@@ -177,6 +198,98 @@ public class ReferenceSetupFragment extends Fragment {
      * {@code ResultsFragment.runFeatureVerificationPipeline}. A preview classified by a
      * different configuration than the real pass would be worse than none.
      */
+    /** The operator's count as typed, or null when the field is empty or not a positive number. */
+    @Nullable
+    private Integer parseExpectedCount() {
+        String raw = binding.etExpectedFeatureCount.getText().toString().trim();
+        if (raw.isEmpty()) return null;
+        try {
+            int n = Integer.parseInt(raw);
+            return n > 0 ? n : null;
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    /**
+     * Chooses the edge method that agrees with the operator's count, and re-analyses under it.
+     *
+     * <p>The operator knows how many fasteners are on the part; the app does not, and the six
+     * hybrid methods in the Edge Lab can disagree about it by an order of magnitude on the
+     * same photograph. Rather than ask the operator to learn which method to pick, this runs
+     * all six on the reference and picks the one whose candidate count lands closest to the
+     * number typed — ties going to the method most accurate against the ground-truth set.
+     * The choice is made through {@link EdgeMethodLab#select}, so it is the same setting the
+     * Edge Lab's USE FOR INSPECTIONS button writes, and it governs every inspection of this
+     * part afterwards exactly as that button would.
+     *
+     * <p>It cannot conjure a fastener the detector does not see: if no method reaches the
+     * count, the closest is chosen and the shortfall is stated, so the operator can judge
+     * whether to accept it or re-photograph.
+     */
+    private void pickMethodForCount() {
+        final Integer expected = parseExpectedCount();
+        if (expected == null || selectedImageExternalUri == null) return;
+        final String uri = selectedImageExternalUri.toString();
+        final android.content.Context context = requireContext().getApplicationContext();
+
+        binding.btnPickMethodForCount.setEnabled(false);
+        binding.tvMethodPickResult.setVisibility(View.VISIBLE);
+        binding.tvMethodPickResult.setText("Running the shipped stack and Hybrid v2–v6 on this"
+                + " photograph…");
+
+        new Thread(() -> {
+            final List<EdgeMethodLab.CountMatch> ranked =
+                    EdgeMethodLab.rankForCount(context, uri, expected);
+            requireActivity().runOnUiThread(() -> {
+                if (!isAdded() || binding == null) return;
+                binding.btnPickMethodForCount.setEnabled(true);
+                if (ranked.isEmpty()) {
+                    binding.tvMethodPickResult.setText("Could not run the edge methods on this"
+                            + " photograph — OpenCV is unavailable or the image could not be"
+                            + " read. The current method is unchanged.");
+                    return;
+                }
+                EdgeMethodLab.CountMatch best = ranked.get(0);
+                EdgeMethodLab.select(context, best.id);
+                binding.tvMethodPickResult.setText(describePick(expected, ranked));
+                // The card above was produced by the previous method; redo it under the new one
+                // so what the operator labels is what inspections will see.
+                analyseReference(uri);
+            });
+        }).start();
+    }
+
+    /** One paragraph: which method won, how close it got, and what the others found. */
+    static String describePick(int expected, List<EdgeMethodLab.CountMatch> ranked) {
+        EdgeMethodLab.CountMatch best = ranked.get(0);
+        StringBuilder sb = new StringBuilder();
+        if (best.distance == 0) {
+            sb.append(String.format(Locale.US, "Chose %s — it finds exactly %d.",
+                    best.name, expected));
+        } else {
+            sb.append(String.format(Locale.US,
+                    "No method finds exactly %d on this photograph. Chose %s, the closest, at"
+                            + " %d. If the missing hardware is faint or in shadow, a"
+                            + " re-photograph may do better than any method.",
+                    expected, best.name, best.candidates));
+        }
+        sb.append("\nAll six: ");
+        for (int i = 0; i < ranked.size(); i++) {
+            EdgeMethodLab.CountMatch m = ranked.get(i);
+            if (i > 0) sb.append(", ");
+            sb.append(shortName(m.id)).append(' ').append(m.candidates);
+        }
+        sb.append(". Inspections of this part now run ").append(best.name).append('.');
+        return sb.toString();
+    }
+
+    /** "Shipped" / "v2" … for the one-line roll-call; the full names are too long for it. */
+    private static String shortName(String id) {
+        if (EdgeMethodLab.SHIPPED_ID.equals(id)) return "Shipped";
+        return id.startsWith("hybrid-") ? id.substring("hybrid-".length()) : id;
+    }
+
     private void analyseReference(String uriString) {
         final int token = ++analysisToken;
         final android.content.Context context = requireContext().getApplicationContext();
@@ -1037,6 +1150,8 @@ public class ReferenceSetupFragment extends Fragment {
             binding.overlayReferencePreview.setVisibility(View.GONE);
             binding.layoutUploadPlaceholder.setVisibility(View.GONE);
             binding.btnCaptureReference.setText("SAVE REFERENCE");
+            binding.btnPickMethodForCount.setEnabled(parseExpectedCount() != null);
+            binding.tvMethodPickResult.setVisibility(View.GONE);
             binding.btnCaptureReference.setBackgroundColor(ContextCompat.getColor(requireContext(), R.color.green_pass_header));
             analyseReference(selectedImageExternalUri.toString());
         } catch (Exception e) {
@@ -1259,6 +1374,8 @@ public class ReferenceSetupFragment extends Fragment {
             binding.overlayReferencePreview.setVisibility(View.GONE);
             binding.layoutUploadPlaceholder.setVisibility(View.GONE);
             binding.btnCaptureReference.setText("SAVE REFERENCE");
+            binding.btnPickMethodForCount.setEnabled(parseExpectedCount() != null);
+            binding.tvMethodPickResult.setVisibility(View.GONE);
             binding.btnCaptureReference.setBackgroundColor(ContextCompat.getColor(requireContext(), R.color.green_pass_header));
             analyseReference(selectedImageExternalUri.toString());
             Toast.makeText(getContext(), "Image uploaded successfully!", Toast.LENGTH_SHORT).show();
