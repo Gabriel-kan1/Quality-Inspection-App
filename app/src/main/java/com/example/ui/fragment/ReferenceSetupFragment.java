@@ -155,6 +155,23 @@ public class ReferenceSetupFragment extends Fragment {
             addCountRow(e.getKey(),
                     FeatureTypeRegistry.displayName(requireContext(), e.getKey()), e.getValue());
         }
+        // The keyboard covers the lower rows, the total and the confirm button (the screen pans
+        // rather than resizes), so Next is how the operator walks down the list — and on the
+        // last row it has to become Done, or the keyboard stays up over the button they need.
+        android.widget.EditText last = null;
+        for (android.widget.EditText f : countFields.values()) last = f;
+        if (last != null) {
+            last.setImeOptions(android.view.inputmethod.EditorInfo.IME_ACTION_DONE);
+            last.setOnEditorActionListener((v, actionId, event) -> {
+                if (actionId != android.view.inputmethod.EditorInfo.IME_ACTION_DONE) return false;
+                v.clearFocus();
+                android.view.inputmethod.InputMethodManager imm =
+                        (android.view.inputmethod.InputMethodManager) requireContext()
+                                .getSystemService(android.content.Context.INPUT_METHOD_SERVICE);
+                if (imm != null) imm.hideSoftInputFromWindow(v.getWindowToken(), 0);
+                return true;
+            });
+        }
         refreshConfirmButton();
     }
 
