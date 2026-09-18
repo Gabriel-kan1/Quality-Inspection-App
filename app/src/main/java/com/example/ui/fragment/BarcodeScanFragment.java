@@ -20,6 +20,7 @@ import androidx.navigation.Navigation;
 
 import com.example.R;
 import com.example.data.AppDatabase;
+import com.example.data.entity.ExpectedFeature;
 import com.example.data.entity.PartProfile;
 import com.example.data.entity.Product;
 import com.example.data.entity.ReferenceProfile;
@@ -250,6 +251,12 @@ public class BarcodeScanFragment extends Fragment {
             long productId = db.productDao().insertProduct(new Product(Product.DEFAULT_NAME, now));
             for (String partId : SEED_PART_IDS) {
                 db.partProfileDao().insertPartProfile(new PartProfile(productId, partId, null, now));
+            }
+            // The presets' declared bill of features, from the same pinned table the migration
+            // writes, so a fresh install and an upgraded one agree on what the presets expect.
+            for (Object[] row : AppDatabase.SEED_EXPECTED_FEATURES) {
+                db.expectedFeatureDao().insert(
+                        new ExpectedFeature((String) row[0], (String) row[1], (Integer) row[2]));
             }
         });
     }
@@ -731,6 +738,7 @@ public class BarcodeScanFragment extends Fragment {
                 () -> runOnDb(db -> {
                     db.partProfileDao().deletePartProfile(row.id);
                     db.referenceProfileDao().deleteByPartType(row.partId);
+                    db.expectedFeatureDao().deleteForPart(row.partId);
                     if (row.partId.equals(selectedPartId)) selectedPartId = null;
                     return null;
                 }));
@@ -765,6 +773,7 @@ public class BarcodeScanFragment extends Fragment {
                     for (PartProfile part
                             : db.partProfileDao().getPartProfilesForProduct(group.id)) {
                         db.referenceProfileDao().deleteByPartType(part.getPartId());
+                        db.expectedFeatureDao().deleteForPart(part.getPartId());
                         if (part.getPartId().equals(selectedPartId)) selectedPartId = null;
                     }
                     db.productDao().deleteProduct(group.id);

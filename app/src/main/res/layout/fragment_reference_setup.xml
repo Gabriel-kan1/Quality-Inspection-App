@@ -40,7 +40,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginTop="8dp"
-            android:text="Choose or upload an acquired image of the MASTER GOLD-STANDARD product. This will establish reference feature patterns of the chassis."
+            android:text="Choose a photo of the MASTER GOLD-STANDARD part, then say how many of each feature it has. The photo guides framing; the counts are what every inspection is checked against."
             android:textColor="@color/gray_text_secondary"
             android:textSize="13sp" />
 
@@ -124,7 +124,7 @@
         android:layout_margin="16dp"
         android:background="@drawable/reference_guide_border"
         app:layout_constraintTop_toBottomOf="@id/card_assets_folder"
-        app:layout_constraintBottom_toTopOf="@id/card_reference_analysis"
+        app:layout_constraintBottom_toTopOf="@id/card_expected_features"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent">
 
@@ -136,15 +136,6 @@
             android:scaleType="fitCenter"
             android:visibility="gone"
             android:contentDescription="Selected reference design" />
-
-        <!-- Same overlay the inspection screen uses, so the operator sees the reference
-             classified exactly as an inspection would classify it. Replaces the flat preview
-             once analysis finishes. -->
-        <com.example.ui.view.ChassisOverlayView
-            android:id="@+id/overlay_reference_preview"
-            android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            android:visibility="gone" />
 
         <!-- Placeholder Hint -->
         <LinearLayout
@@ -194,16 +185,15 @@
         </LinearLayout>
     </FrameLayout>
 
-    <!-- What this reference actually contributes: the same detection + classification pass an
-         inspection runs, so the operator can see the expected features before saving. -->
+    <!-- The operator's declaration of what is on the part. This is the expected side of every
+         inspection's count comparison; the reference photograph itself is never analysed. -->
     <com.google.android.material.card.MaterialCardView
-        android:id="@+id/card_reference_analysis"
+        android:id="@+id/card_expected_features"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginStart="16dp"
         android:layout_marginEnd="16dp"
         android:layout_marginBottom="8dp"
-        android:visibility="gone"
         app:cardBackgroundColor="@color/surface_card"
         app:cardCornerRadius="12dp"
         app:layout_constraintBottom_toTopOf="@id/card_action_deck"
@@ -219,102 +209,55 @@
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="EXPECTED FEATURES IN THIS REFERENCE"
+                android:text="WHAT IS ON THIS PART?"
                 android:textColor="@color/blue_primary"
                 android:textSize="11sp"
-                android:textStyle="bold"
-                android:layout_marginBottom="6dp" />
+                android:textStyle="bold" />
 
             <TextView
-                android:id="@+id/tv_reference_analysis_status"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="Analysing reference image..."
-                android:textColor="@color/white"
-                android:textSize="12sp"
+                android:layout_marginTop="4dp"
+                android:text="Enter how many of each feature the part has. Inspections compare what they detect against these numbers — the reference photo itself is not analysed."
+                android:textColor="@color/gray_text_secondary"
+                android:textSize="11sp"
                 android:lineSpacingExtra="2dp" />
 
             <LinearLayout
-                android:id="@+id/layout_reference_type_rows"
+                android:id="@+id/layout_expected_type_rows"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="vertical"
                 android:layout_marginTop="8dp" />
 
-            <TextView
-                android:id="@+id/tv_reference_localisation_readiness"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="10dp"
-                android:textSize="11sp"
-                android:lineSpacingExtra="2dp" />
-
-            <!-- The operator's own count. The detector's total above is a guess from one edge
-                 method; this is the number the app then chooses an edge method to agree
-                 with, from the shipped stack and the tuned hybrids in the Edge Lab. -->
-            <View
-                android:layout_width="match_parent"
-                android:layout_height="1dp"
-                android:layout_marginTop="12dp"
-                android:background="@color/color_border" />
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="12dp"
-                android:text="HOW MANY FEATURES ARE ACTUALLY ON THIS PART?"
-                android:textColor="@color/blue_primary"
-                android:textSize="11sp"
-                android:textStyle="bold" />
-
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="6dp"
+                android:layout_marginTop="8dp"
                 android:gravity="center_vertical"
                 android:orientation="horizontal">
 
-                <EditText
-                    android:id="@+id/et_expected_feature_count"
-                    android:layout_width="96dp"
-                    android:layout_height="44dp"
-                    android:background="@drawable/bg_number_field"
-                    android:gravity="center"
-                    android:hint="e.g. 4"
-                    android:imeOptions="actionDone"
-                    android:inputType="number"
-                    android:maxLength="3"
-                    android:textColor="@color/white"
-                    android:textColorHint="@color/gray_text_secondary"
-                    android:textSize="15sp"
+                <TextView
+                    android:id="@+id/btn_add_feature_type"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:paddingTop="6dp"
+                    android:paddingBottom="6dp"
+                    android:text="+ Add a feature type"
+                    android:textColor="@color/blue_primary"
+                    android:textSize="12sp"
                     android:textStyle="bold" />
 
-                <Button
-                    android:id="@+id/btn_pick_method_for_count"
-                    android:layout_width="0dp"
-                    android:layout_height="44dp"
-                    android:layout_marginStart="10dp"
-                    android:layout_weight="1"
-                    android:backgroundTint="@color/blue_dark_accent"
-                    android:enabled="false"
-                    android:text="PICK EDGE METHOD FOR THIS COUNT"
+                <TextView
+                    android:id="@+id/tv_expected_total"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="TOTAL: 0"
                     android:textColor="@color/white"
-                    android:textSize="11sp"
-                    android:textStyle="bold"
-                    app:cornerRadius="8dp" />
+                    android:textSize="13sp"
+                    android:textStyle="bold" />
             </LinearLayout>
-
-            <TextView
-                android:id="@+id/tv_method_pick_result"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
-                android:lineSpacingExtra="2dp"
-                android:textColor="@color/gray_text_secondary"
-                android:textSize="11sp"
-                android:visibility="gone"
-                tools:text="Chose Hybrid v6: 4 candidates. Shipped found 9, v2 6, v3 4, v4 4, v5 4."
-                tools:visibility="visible" />
 
         </LinearLayout>
 
@@ -341,7 +284,8 @@
             android:gravity="center"
             android:padding="20dp">
 
-            <!-- SHUTTER BUTTON -->
+            <!-- Opens the chooser until a photo is picked, then confirms photo + counts. The
+                 label and enabled state are driven from ReferenceSetupFragment.confirmLabel. -->
             <Button
                 android:id="@+id/btn_capture_reference"
                 android:layout_width="match_parent"
@@ -350,16 +294,6 @@
                 android:text="CHOOSE IMAGE"
                 android:textColor="@color/white"
                 android:textStyle="bold" />
-
-            <!-- Build the few-shot detection library from the selected reference image -->
-            <Button
-                android:id="@+id/btn_build_library"
-                style="@style/Widget.Material3.Button.TonalButton"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="12dp"
-                android:text="BUILD DETECTION LIBRARY"
-                android:textColor="@color/white" />
 
         </LinearLayout>
 

@@ -172,6 +172,32 @@ public class DatabaseUpgradeOpensTest {
         assertEquals(1, db.inspectionDao().getAllInspections().size());
     }
 
+    /**
+     * v11→12 seeds the presets into the registry and v13→14 gives two of them their declared
+     * bill of features. A device that upgrades through both must come out able to inspect
+     * either preset against four features without any setup — and Room's schema validation on
+     * open is what proves the migration's CREATE TABLE matches the entity.
+     */
+    @Test
+    public void thePresetsArriveWithTheirDeclaredCounts() {
+        seedV10();
+        AppDatabase db = openThroughRoom();
+
+        assertEquals(4, totalDeclared(db, "CHASSIS-8821-B"));
+        assertEquals(4, totalDeclared(db, "PART-CHASSIS-A03"));
+        assertEquals("no declaration was ever specified for this preset",
+                0, totalDeclared(db, "ENGINE-COV-X42"));
+    }
+
+    private static int totalDeclared(AppDatabase db, String partId) {
+        int total = 0;
+        for (com.example.data.entity.ExpectedFeature f
+                : db.expectedFeatureDao().getForPart(partId)) {
+            total += f.getCount();
+        }
+        return total;
+    }
+
     @Test
     public void theSurvivingInspectionKeepsItsReportIntact() {
         seedV10();

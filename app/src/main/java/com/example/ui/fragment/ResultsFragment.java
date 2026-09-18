@@ -22,6 +22,7 @@ import androidx.navigation.Navigation;
 import com.example.R;
 import com.example.data.AppDatabase;
 import com.example.data.entity.ClassificationEvent;
+import com.example.data.entity.ExpectedFeature;
 import com.example.data.entity.FeatureResult;
 import com.example.data.entity.InspectionRecord;
 import com.example.data.entity.ReferenceProfile;
@@ -162,6 +163,20 @@ public class ResultsFragment extends Fragment {
      * than merely empty.
      */
     private FeatureLayout referenceLayout;
+
+    /** Where the expected counts came from; decides which warnings are meaningful. */
+    enum ExpectedSource {
+        /** No reference: the expected column mirrors the detected one. */
+        NONE,
+        /** The operator's declaration from reference setup. Not a detector's output. */
+        DECLARED,
+        /** Counts of the slots the operator labelled on a detected reference (legacy). */
+        LABELLED,
+        /** The reference was re-detected on this run (references from before labelling). */
+        REDETECTED
+    }
+
+    private ExpectedSource expectedSource = ExpectedSource.NONE;
     /**
      * The reference photo the layout describes, kept so a size finding can show the operator
      * the reference crop next to the inspection crop. Null without a real reference.
@@ -291,23 +306,34 @@ public class ResultsFragment extends Fragment {
             // Expected: from the gold-standard reference image if one exists, else mirror detected
             // (computed after live-labelling below, since labelling can change detected types).
             expectedCounts.clear();
+            expectedSource = ExpectedSource.NONE;
             hasRealReference = ref != null && ref.hasRealImage();
             referenceImageUri = hasRealReference ? ref.getImageUri() : null;
             if (hasRealReference) {
-                // Preferred source: the labels the operator gave every detection during
-                // reference setup. Those are a human statement of what this part should have,
-                // so they are used verbatim — no re-detection, no re-classification, and
-                // therefore no dependence on lighting or on where the library's decision
-                // boundary happens to sit today.
-                //
-                // Guarded by the reference URI, so a layout labelled against a photo that has
-                // since been replaced is refused rather than compared against.
+                // A labelled layout, if this part still has one from before declarations
+                // existed, supplies slot positions for the positional check. Guarded by the
+                // reference URI, so a layout labelled against a photo that has since been
+                // replaced is refused rather than compared against.
                 FeatureLayout labelled = keepCriticalSlots(context,
                         FeatureLayout.loadFor(context, partId, ref.getImageUri()));
-                if (labelled != null) {
+                referenceLayout = labelled;
+
+                // Preferred source: what the operator declared the part has, at reference
+                // setup. A human statement, used verbatim — no pass over the reference photo
+                // at all, so nothing here depends on the edge method, the lighting in the
+                // reference, or where the library's decision boundary sits today.
+                Map<String, Integer> declared =
+                        declaredCounts(db.expectedFeatureDao().getForPart(partId));
+                if (!declared.isEmpty()) {
+                    expectedCounts.putAll(declared);
+                    expectedSource = ExpectedSource.DECLARED;
+                } else if (labelled != null) {
+                    // Legacy: the labels the operator gave every detection during the old
+                    // reference setup, before counts were declared directly.
                     expectedCounts.putAll(labelled.countsByType());
-                    referenceLayout = labelled;
+                    expectedSource = ExpectedSource.LABELLED;
                 } else {
+                    expectedSource = ExpectedSource.REDETECTED;
                     // Fallback for references set before labelling existed, or skipped. Classify
                     // the reference image and take what the classifier makes of it.
                     //
@@ -439,6 +465,21 @@ public class ResultsFragment extends Fragment {
         recomputeAndRender();
     }
 
+    /**
+     * The declared rows as a count map, in declaration order. Non-positive rows are dropped
+     * rather than stored as an expectation of zero — a zero here would fail every part that
+     * has the hardware, and setup never writes one.
+     */
+    static Map<String, Integer> declaredCounts(List<ExpectedFeature> declared) {
+        Map<String, Integer> counts = new LinkedHashMap<>();
+        if (declared == null) return counts;
+        for (ExpectedFeature f : declared) {
+            if (f == null || f.getFeatureType() == null || f.getCount() <= 0) continue;
+            counts.put(f.getFeatureType(), f.getCount());
+        }
+        return counts;
+    }
+
     /** Whether a feature type drives pass/fail. Injected so the rule below stays testable. */
     interface CriticalityRule {
         boolean isCritical(String type);
@@ -554,7 +595,11 @@ public class ResultsFragment extends Fragment {
         // A labelled layout with no method recorded predates the choice, and everything before
         // the choice existed ran the shipped stack — so null reads as shipped rather than as
         // unknown, and the first inspection after switching methods gets the warning too.
-        String referenceMethod = referenceLayout == null ? null
+        //
+        // Not raised when the expected counts were declared by the operator: those are not a
+        // detector's output, so no method change can make them incomparable.
+        String referenceMethod = referenceLayout == null
+                || expectedSource == ExpectedSource.DECLARED ? null
                 : referenceLayout.edgeMethodId() != null ? referenceLayout.edgeMethodId()
                 : EdgeMethodLab.SHIPPED_ID;
         String thisMethod = analysisResult == null ? null : analysisResult.edgeMethodId;

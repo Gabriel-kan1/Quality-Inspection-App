@@ -10,11 +10,13 @@ import androidx.room.migration.Migration;
 import androidx.sqlite.db.SupportSQLiteDatabase;
 
 import com.example.data.dao.ClassificationEventDao;
+import com.example.data.dao.ExpectedFeatureDao;
 import com.example.data.dao.InspectionDao;
 import com.example.data.dao.PartProfileDao;
 import com.example.data.dao.ProductDao;
 import com.example.data.dao.ReferenceProfileDao;
 import com.example.data.entity.ClassificationEvent;
+import com.example.data.entity.ExpectedFeature;
 import com.example.data.entity.FeatureResult;
 import com.example.data.entity.InspectionRecord;
 import com.example.data.entity.PartProfile;
@@ -26,8 +28,9 @@ import com.example.ml.PartFiles;
 import java.util.UUID;
 
 @Database(entities = {InspectionRecord.class, FeatureResult.class, ReferenceProfile.class,
-        ClassificationEvent.class, SlotResult.class, Product.class, PartProfile.class},
-        version = 13, exportSchema = false)
+        ClassificationEvent.class, SlotResult.class, Product.class, PartProfile.class,
+        ExpectedFeature.class},
+        version = 14, exportSchema = false)
 public abstract class AppDatabase extends RoomDatabase {
     private static volatile AppDatabase INSTANCE;
 
@@ -43,11 +46,27 @@ public abstract class AppDatabase extends RoomDatabase {
     private static final String[] SEED_PART_IDS =
             {"CHASSIS-8821-B", "PART-CHASSIS-A03", "ENGINE-COV-X42"};
 
+    /**
+     * The declared bill of features for the two presets that have one: {partId, type, count}.
+     * Both parts carry four features. Pinned for the same reason as {@link #SEED_PART_IDS} —
+     * {@link #MIGRATION_13_14} wrote these values on the day it shipped, and a fresh install's
+     * seed ({@code BarcodeScanFragment.seedIfEmpty}) has to agree with it exactly.
+     */
+    public static final Object[][] SEED_EXPECTED_FEATURES = {
+            {"CHASSIS-8821-B", "hole", 1},
+            {"CHASSIS-8821-B", "stud", 2},
+            {"CHASSIS-8821-B", "screw", 1},
+            {"PART-CHASSIS-A03", "hole", 1},
+            {"PART-CHASSIS-A03", "stud", 2},
+            {"PART-CHASSIS-A03", "bolt_head", 1},
+    };
+
     public abstract InspectionDao inspectionDao();
     public abstract ReferenceProfileDao referenceProfileDao();
     public abstract ClassificationEventDao classificationEventDao();
     public abstract ProductDao productDao();
     public abstract PartProfileDao partProfileDao();
+    public abstract ExpectedFeatureDao expectedFeatureDao();
 
     /**
      * Adds ClassificationEvent.encoderId so ThresholdTuner can tell which embedding space
@@ -483,6 +502,43 @@ public abstract class AppDatabase extends RoomDatabase {
     };
 
     /**
+     * Adds ExpectedFeature: the operator's declared count of each feature type on a part.
+     *
+     * <p>Until now the expected side of an inspection came from processing the reference
+     * photograph — edge detection, then a labelling pass — so it moved whenever the edge method
+     * or the lighting did. A declared count is the operator's statement of what the part has,
+     * and it is what the count comparison now reads first.
+     *
+     * <p>Purely additive; nothing is backfilled from layouts, because a layout's counts are the
+     * detector's answer and this table exists precisely to stop trusting that. The two presets
+     * that have a known bill of features are seeded, but only where the part still exists in
+     * the registry — an operator who deleted a preset should not get counts for a ghost.
+     * {@code INSERT OR IGNORE} against the unique (partId, featureType) index makes a re-run
+     * harmless.
+     */
+    static final Migration MIGRATION_13_14 = new Migration(13, 14) {
+        @Override
+        public void migrate(@NonNull SupportSQLiteDatabase db) {
+            db.execSQL("CREATE TABLE IF NOT EXISTS ExpectedFeature ("
+                    + "id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,"
+                    + "partId TEXT,"
+                    + "featureType TEXT,"
+                    + "count INTEGER NOT NULL)");
+            db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_ExpectedFeature_partId_featureType"
+                    + " ON ExpectedFeature (partId, featureType)");
+            db.execSQL("CREATE INDEX IF NOT EXISTS index_ExpectedFeature_partId"
+                    + " ON ExpectedFeature (partId)");
+
+            for (Object[] row : SEED_EXPECTED_FEATURES) {
+                db.execSQL("INSERT OR IGNORE INTO ExpectedFeature (partId, featureType, count)"
+                                + " SELECT ?, ?, ?"
+                                + " WHERE EXISTS (SELECT 1 FROM PartProfile WHERE partId = ?)",
+                        new Object[]{row[0], row[1], row[2], row[0]});
+            }
+        }
+    };
+
+    /**
      * Every migration, in one place so that opening the database in a test goes through exactly
      * the list a device does. A test that hand-copied this would keep passing after someone
      * added a migration and forgot it, which is the case worth catching.
@@ -490,7 +546,7 @@ public abstract class AppDatabase extends RoomDatabase {
     static final Migration[] MIGRATIONS = {
             MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7,
             MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11,
-            MIGRATION_11_12, MIGRATION_12_13
+            MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14
     };
 
     public static AppDatabase getInstance(final Context context) {

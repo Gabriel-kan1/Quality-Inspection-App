@@ -1,7 +1,9 @@
 package com.example.ui.fragment;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
 
+import com.example.data.entity.ExpectedFeature;
 import com.example.ml.ReferenceLibrary;
 
 import org.junit.Test;
@@ -133,5 +135,40 @@ public class ResultsVerdictTest {
         assertEquals(ResultsFragment.Verdict.UNVERIFIED,
                 ResultsFragment.verdictFor(false, counts("screw", 4), counts("screw", 4),
                         types("screw"), ALL_CRITICAL, true));
+    }
+
+    // ── The declared expected side ────────────────────────────────────────
+
+    /**
+     * The operator's declaration is used exactly as stored, in the order it was entered, and a
+     * row with nothing expected is not an expectation of zero: a zero would make the verdict
+     * fail every part that has that hardware, which is the opposite of what an absent row means.
+     */
+    @Test
+    public void declaredCountsAreReadVerbatimAndNonPositiveRowsAreDropped() {
+        Map<String, Integer> declared = ResultsFragment.declaredCounts(Arrays.asList(
+                new ExpectedFeature("CHASSIS-8821-B", "hole", 1),
+                new ExpectedFeature("CHASSIS-8821-B", "stud", 2),
+                new ExpectedFeature("CHASSIS-8821-B", "rivet_head", 0),
+                new ExpectedFeature("CHASSIS-8821-B", "screw", 1)));
+        assertEquals(Arrays.asList("hole", "stud", "screw"),
+                new java.util.ArrayList<>(declared.keySet()));
+        assertEquals(Integer.valueOf(2), declared.get("stud"));
+
+        // Against a detection that found everything, the declaration passes the part; one
+        // stud short, it fails it — the count rule itself is unchanged by where the numbers
+        // came from.
+        assertEquals(ResultsFragment.Verdict.PASSED,
+                ResultsFragment.verdictFor(true, declared, counts("hole", 1, "stud", 2, "screw", 1),
+                        types("hole", "stud", "screw"), ALL_CRITICAL, false));
+        assertEquals(ResultsFragment.Verdict.FAILED,
+                ResultsFragment.verdictFor(true, declared, counts("hole", 1, "stud", 1, "screw", 1),
+                        types("hole", "stud", "screw"), ALL_CRITICAL, false));
+    }
+
+    @Test
+    public void noDeclarationIsAnEmptyMapNotNull() {
+        assertTrue(ResultsFragment.declaredCounts(null).isEmpty());
+        assertTrue(ResultsFragment.declaredCounts(new java.util.ArrayList<>()).isEmpty());
     }
 }

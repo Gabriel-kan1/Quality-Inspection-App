@@ -535,8 +535,12 @@ public final class FeatureLocalisation {
                                   List<String> featureTypes,
                                   java.util.Set<String> reportTypes) {
         if (layout == null || layout.isEmpty()) {
-            return new Result(false, "No reference layout — set a reference photo for this part"
-                    + " to enable positional checking.");
+            // The normal case now, not a setup gap: a reference is a photo plus declared counts,
+            // and positions are only known for parts whose reference was labelled by hand
+            // under the old flow. Saying "set a reference photo" here would send the operator
+            // back to a screen that cannot produce one.
+            return new Result(false, "Not available — this part's reference declares counts"
+                    + " only, so there are no expected positions to check against.");
         }
         if (LayoutMatcher.tooSmallToRegister(layout.slots().size())) {
             // Naming the count matters: the fix is a better reference photo, and an operator
