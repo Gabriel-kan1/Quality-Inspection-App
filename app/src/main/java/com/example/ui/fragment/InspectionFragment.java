@@ -854,7 +854,7 @@ public class InspectionFragment extends Fragment {
             java.util.List<String> imageFiles = new java.util.ArrayList<>();
             if (files != null) {
                 for (String file : files) {
-                    String lower = file.toLowerCase();
+                    String lower = file.toLowerCase(java.util.Locale.ROOT);
                     if (lower.endsWith(".jpg") || lower.endsWith(".png") || lower.endsWith(".jpeg") || lower.endsWith(".webp") || lower.endsWith(".bmp")) {
                         imageFiles.add(file);
                     }
@@ -993,7 +993,7 @@ public class InspectionFragment extends Fragment {
             java.util.List<String> imageFiles = new java.util.ArrayList<>();
             if (files != null) {
                 for (String file : files) {
-                    String lower = file.toLowerCase();
+                    String lower = file.toLowerCase(java.util.Locale.ROOT);
                     if (lower.endsWith(".jpg") || lower.endsWith(".png") || lower.endsWith(".jpeg") || lower.endsWith(".webp") || lower.endsWith(".bmp")) {
                         imageFiles.add(file);
                     }

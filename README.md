@@ -206,19 +206,18 @@ Legend: ✅ done · 🟡 partial · ❌ not started
   truth — a component solidity filter, a morphological open, and Canny bounds from a gradient
   percentile — were all inert; none appears in any top-ranked configuration.
 
-  **Not adopted by default** — the detector runs the original stack until one is chosen, in
-  the Edge Lab or by the count below.
-- **Pick the edge method from the operator's count.** Reference setup asks *how many features
-  are actually on this part*. Given that number, the app runs the shipped stack and Hybrid
-  v2–v6 on the reference photograph and adopts the one whose candidate count lands closest,
-  ties going to the method most accurate against ground truth. This turns the detector's
-  central weakness into a question the operator can answer: on `stud1.jpg` the shipped stack
-  finds 42 candidates in a photograph of four, and typing 4 selects v6; on `head3.jpg` every
-  tuned variant misses two low-contrast heads that the shipped stack sees, and typing 4
-  selects the shipped stack. Neither case needs the operator to know what an edge method is.
-  If no method reaches the count, the closest is chosen and the shortfall is stated, with the
-  likely cause.
-- **254 unit tests**, all passing.
+  **Not adopted by default** — the detector runs the original stack until one is chosen in
+  the Edge Lab (USE FOR INSPECTIONS).
+- **The operator declares what is on the part.** Reference setup is: choose the photo, enter
+  how many of each feature type the part has, confirm — and confirm stays disabled until both
+  are there. The counts are stored per part (`ExpectedFeature`, DB v14) and are the expected
+  side of every inspection's count comparison, read verbatim. Nothing is detected, labelled or
+  classified on the reference photograph any more; only the captured image is processed. The
+  photo is kept for the ghost overlay and the alignment gate. The two presets ship declared:
+  `CHASSIS-8821-B` one hole, two studs, one screw; `PART-CHASSIS-A03` one hole, two studs, one
+  bolt head. Positional localisation, which needed hand-labelled slot positions, is reported
+  as not available for a reference confirmed this way.
+- **342 unit tests**, all passing.
 - **Reproducible studies** in `python/` — localisation tolerance and transform model
   (`localisation_tolerance_study.py`), classifier margin fitted from real inspection history
   (`margin_study.py`), the edge-stage tuning search behind Hybrid v2/v3/v4

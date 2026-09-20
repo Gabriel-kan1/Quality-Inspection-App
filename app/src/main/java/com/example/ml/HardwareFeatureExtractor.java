@@ -1166,6 +1166,7 @@ public class HardwareFeatureExtractor {
     private static String getFilename(String uri) {
         if (uri == null) return "";
         int slash = uri.lastIndexOf('/');
-        return (slash >= 0) ? uri.substring(slash + 1).toLowerCase() : uri.toLowerCase();
+        return (slash >= 0) ? uri.substring(slash + 1).toLowerCase(java.util.Locale.ROOT)
+                : uri.toLowerCase(java.util.Locale.ROOT);
     }
 }

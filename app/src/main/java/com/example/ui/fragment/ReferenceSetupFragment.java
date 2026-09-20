@@ -323,6 +323,14 @@ public class ReferenceSetupFragment extends Fragment {
                     db.referenceProfileDao().insertProfile(
                             new ReferenceProfile(partId, uri, System.currentTimeMillis()));
                 });
+                // A layout hand-labelled under the old flow is superseded by this declaration.
+                // Left in place, and if the same photo is chosen again, it would keep feeding
+                // slot positions to the positional check — and a slot the operator has just
+                // declared away would be reported MISSING and fail the part on its own.
+                File staleLayout = com.example.ml.FeatureLayout.fileFor(context, partId);
+                if (staleLayout.exists() && !staleLayout.delete()) {
+                    Log.w(TAG, "Could not remove the superseded layout " + staleLayout);
+                }
                 saved = true;
             } catch (Exception e) {
                 Log.e(TAG, "Failed to confirm reference for " + partId, e);
@@ -487,7 +495,7 @@ public class ReferenceSetupFragment extends Fragment {
             java.util.List<String> imageFiles = new java.util.ArrayList<>();
             if (files != null) {
                 for (String file : files) {
-                    String lower = file.toLowerCase();
+                    String lower = file.toLowerCase(java.util.Locale.ROOT);
                     if (lower.endsWith(".jpg") || lower.endsWith(".png") || lower.endsWith(".jpeg") || lower.endsWith(".webp") || lower.endsWith(".bmp")) {
                         imageFiles.add(file);
                     }
@@ -630,7 +638,7 @@ public class ReferenceSetupFragment extends Fragment {
             java.util.List<String> imageFiles = new java.util.ArrayList<>();
             if (files != null) {
                 for (String file : files) {
-                    String lower = file.toLowerCase();
+                    String lower = file.toLowerCase(java.util.Locale.ROOT);
                     if (lower.endsWith(".jpg") || lower.endsWith(".png") || lower.endsWith(".jpeg") || lower.endsWith(".webp") || lower.endsWith(".bmp")) {
                         imageFiles.add(file);
                     }

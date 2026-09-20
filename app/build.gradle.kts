@@ -18,29 +18,51 @@ android {
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
-    // OpenCV + ONNX Runtime ship native libs for four ABIs, which pushed the debug
-    // APK past 350MB and made every install-and-run cycle painfully slow. x86_64
-    // covers emulators, arm64-v8a covers modern physical devices; the dropped 32-bit
-    // ABIs (x86, armeabi-v7a) have no supported target left worth the ~180MB.
-    ndk { abiFilters += listOf("x86_64", "arm64-v8a") }
   }
 
+  // OpenCV + ONNX Runtime ship native libs for four ABIs, which pushed a universal APK past
+  // 350MB. One APK per ABI instead: arm64-v8a is the one a phone downloads, x86_64 is the
+  // emulator's, and the dropped 32-bit ABIs (x86, armeabi-v7a) have no supported target left
+  // worth the ~180MB. Android Studio and adb both pick the matching split automatically. No
+  // universal APK, so nobody sideloads the 350MB one by mistake.
+  splits {
+    abi {
+      isEnable = true
+      reset()
+      include("arm64-v8a", "x86_64")
+      isUniversalApk = false
+    }
+  }
+
+  // The upload key is not in the repo (see .gitignore). When it is present — locally or on
+  // CI via KEYSTORE_PATH/STORE_PASSWORD/KEY_PASSWORD — release builds are signed with it.
+  // When it is not, release builds fall back to the debug key rather than failing, so a
+  // release APK can always be built and sideloaded for testing. A debug-signed release APK
+  // cannot be published or installed over a store build, which is the right limitation.
+  val uploadKeystore = file(System.getenv("KEYSTORE_PATH") ?: "${rootDir}/my-upload-key.jks")
   signingConfigs {
     create("release") {
-      val keystorePath = System.getenv("KEYSTORE_PATH") ?: "${rootDir}/my-upload-key.jks"
-      storeFile = file(keystorePath)
-      storePassword = System.getenv("STORE_PASSWORD")
-      keyAlias = "upload"
-      keyPassword = System.getenv("KEY_PASSWORD")
+      if (uploadKeystore.exists()) {
+        storeFile = uploadKeystore
+        storePassword = System.getenv("STORE_PASSWORD")
+        keyAlias = "upload"
+        keyPassword = System.getenv("KEY_PASSWORD")
+      }
     }
   }
 
   buildTypes {
     release {
       isCrunchPngs = false
-      isMinifyEnabled = false
+      // R8 + resource shrinking: the app's own code and the AndroidX/Compose/Material graph
+      // shrink by tens of MB. The native libraries and the encoder model are untouched by
+      // either. Keep rules for the libraries that are reached from native code or by name are
+      // in proguard-rules.pro.
+      isMinifyEnabled = true
+      isShrinkResources = true
       proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-      signingConfig = signingConfigs.getByName("release")
+      signingConfig = if (uploadKeystore.exists()) signingConfigs.getByName("release")
+                      else signingConfigs.getByName("debug")
     }
     debug {
       // Uses the default debug signing config

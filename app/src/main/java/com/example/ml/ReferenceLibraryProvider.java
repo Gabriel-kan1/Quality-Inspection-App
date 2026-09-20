@@ -171,7 +171,7 @@ public final class ReferenceLibraryProvider {
         }
         if (files == null) return result;
         for (String name : files) {
-            String lower = name.toLowerCase();
+            String lower = name.toLowerCase(java.util.Locale.ROOT);
             if (lower.endsWith(".jpg") || lower.endsWith(".jpeg") || lower.endsWith(".png")) {
                 result.add(name);
             }
