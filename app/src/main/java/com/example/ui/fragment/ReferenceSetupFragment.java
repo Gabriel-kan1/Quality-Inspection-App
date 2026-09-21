@@ -24,15 +24,21 @@ import com.example.data.AppDatabase;
 import com.example.data.entity.ExpectedFeature;
 import com.example.data.entity.ReferenceProfile;
 import com.example.databinding.FragmentReferenceSetupBinding;
+import com.example.ml.FeatureLayout;
+import com.example.ml.FeatureLocalisation;
 import com.example.ml.FeatureTypeRegistry;
+import com.example.ml.HardwareFeatureExtractor;
 import com.example.ml.PartFiles;
 import com.example.ml.ReferenceLibrary;
+import com.example.ml.ReferenceLibraryProvider;
+import com.example.ml.ThresholdTuner;
 import com.example.ui.util.AssetBitmaps;
 
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.text.SimpleDateFormat;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -42,13 +48,14 @@ import java.util.Map;
  * Reference setup: choose the gold-standard photo, declare how many of each feature the part
  * has, confirm.
  *
- * <p>The reference photograph is not analysed here, or anywhere. It used to be: edge detection
- * drew boxes on it, the operator labelled every box, and the labels became the expected counts.
- * That put the definition of a correct part at the mercy of whichever edge method ran and of
- * the lighting in one photograph. The operator knows what is on the part; asking them for the
- * number directly removes the whole chain, and means only the captured image is ever processed.
- * The photo is kept for what it is good at — framing the live camera through the ghost overlay
- * and the alignment gate.
+ * <p>The counts are the operator's, typed in; they are the expected side of every inspection's
+ * PASS/FAIL and never come from a detector. The photograph is detected once, here, for the one
+ * thing counts cannot give: where each feature is and how big its box is, which is what the
+ * positional check and the dimensional measurement on the results screen work from. The
+ * detector's boxes are shown on the preview and saved as the part's {@link FeatureLayout}; the
+ * classifier names each box, so there is no labelling dialog. If the detector finds fewer
+ * positions than were declared, the screen says so — the counts still stand, and localisation
+ * simply tracks the positions it has.
  */
 public class ReferenceSetupFragment extends Fragment {
 
@@ -66,6 +73,20 @@ public class ReferenceSetupFragment extends Fragment {
 
     /** True while a confirm is being written, so a double tap cannot file the reference twice. */
     private boolean confirming = false;
+
+    /** The detector's pass over the chosen photo, or null until it has finished. */
+    @Nullable
+    private HardwareFeatureExtractor.AnalysisResult pendingResult = null;
+    /** True from choosing a photo until its detection pass has posted; confirm waits for it. */
+    private boolean analysing = false;
+    /**
+     * Guards against a slow pass over a discarded photo overwriting a newer one's boxes.
+     * Incremented every time a photo is chosen; a finishing pass only publishes if its token
+     * still matches.
+     */
+    private int analysisToken = 0;
+    /** Largest share of the screen height the preview may take, so the counts stay reachable. */
+    private static final float PREVIEW_MAX_HEIGHT_FRACTION = 0.5f;
 
     private final ActivityResultLauncher<String> selectImageLauncher =
             registerForActivityResult(new ActivityResultContracts.GetContent(), uri -> {
@@ -277,14 +298,53 @@ public class ReferenceSetupFragment extends Fragment {
     }
 
     /**
-     * The confirm button's label for its three states. The button is only enabled in the last
+     * The confirm button's label for its four states. The button is only enabled in the last
      * one; in the first it is still tappable because it opens the chooser.
      */
-    static String confirmLabel(boolean hasImage, int total) {
+    static String confirmLabel(boolean hasImage, int total, boolean detecting) {
         if (!hasImage) return "CHOOSE IMAGE";
         if (total <= 0) return "ENTER FEATURE COUNTS TO CONFIRM";
+        if (detecting) return "DETECTING POSITIONS…";
         return String.format(Locale.US, "CONFIRM REFERENCE (%d FEATURE%s)", total,
                 total == 1 ? "" : "S");
+    }
+
+    static String confirmLabel(boolean hasImage, int total) {
+        return confirmLabel(hasImage, total, false);
+    }
+
+    /**
+     * The line under the explainer: how many positions the detector found against how many
+     * features were declared. Positions are what localisation and the size check can track;
+     * a shortfall is worth knowing before confirming, because a feature the detector cannot
+     * see on the reference has no position to be checked against on any inspection.
+     */
+    static String positionsText(int positions, int declaredTotal, boolean failed) {
+        if (failed) {
+            return "Could not detect positions on this photo. Counts will still be checked;"
+                    + " position and size will not be.";
+        }
+        if (positions == 0) {
+            return "No feature positions detected on this photo. Counts will still be"
+                    + " checked; position and size will not be. A clearer photo may do better.";
+        }
+        if (declaredTotal > 0 && positions < declaredTotal) {
+            return String.format(Locale.US,
+                    "Detected %d position%s on this photo for the %d features declared."
+                            + " Position and size will be checked for those %d; the counts"
+                            + " still stand. A clearer photo may find the rest.",
+                    positions, positions == 1 ? "" : "s", declaredTotal, positions);
+        }
+        if (declaredTotal > 0 && positions > declaredTotal) {
+            return String.format(Locale.US,
+                    "Detected %d positions on this photo but %d features are declared."
+                            + " If the extra boxes are not hardware, that is the detector"
+                            + " over-counting; the declared counts still decide PASS/FAIL.",
+                    positions, declaredTotal);
+        }
+        return String.format(Locale.US,
+                "Detected %d position%s on this photo. Position and size will be checked.",
+                positions, positions == 1 ? "" : "s");
     }
 
     private void refreshConfirmButton() {
@@ -292,10 +352,166 @@ public class ReferenceSetupFragment extends Fragment {
         int total = total(countsFrom(currentRawCounts()));
         boolean hasImage = selectedImageExternalUri != null;
         binding.tvExpectedTotal.setText(String.format(Locale.US, "TOTAL: %d", total));
-        binding.btnCaptureReference.setText(confirmLabel(hasImage, total));
-        binding.btnCaptureReference.setEnabled(!confirming && (!hasImage || total > 0));
+        binding.btnCaptureReference.setText(confirmLabel(hasImage, total, analysing));
+        boolean ready = hasImage && total > 0 && !analysing;
+        binding.btnCaptureReference.setEnabled(!confirming && (!hasImage || ready));
         binding.btnCaptureReference.setBackgroundColor(ContextCompat.getColor(requireContext(),
-                hasImage && total > 0 ? R.color.green_pass_header : R.color.blue_primary));
+                ready ? R.color.green_pass_header : R.color.blue_primary));
+        if (hasImage && !analysing) {
+            binding.tvReferencePositions.setText(positionsText(
+                    pendingResult == null ? 0 : slotTypes(pendingResult.features).size(),
+                    total, pendingResult == null));
+            binding.tvReferencePositions.setTextColor(ContextCompat.getColor(requireContext(),
+                    pendingResult != null && !slotTypes(pendingResult.features).isEmpty()
+                            ? R.color.green_pass : R.color.orange_warn));
+        }
+    }
+
+    // ── The photograph: preview, then one detection pass for positions ───
+
+    /** Both load paths end here: show the photo at its own shape, then detect its positions. */
+    private void onImageChosen(String uriString) {
+        Bitmap preview = HardwareFeatureExtractor.loadBitmap(requireContext(), uriString, 1080);
+        if (preview != null) {
+            binding.ivReferencePreview.setImageBitmap(preview);
+            fitPreview(preview.getWidth(), preview.getHeight());
+        }
+        binding.ivReferencePreview.setVisibility(View.VISIBLE);
+        binding.overlayReferencePreview.setVisibility(View.GONE);
+        binding.layoutUploadPlaceholder.setVisibility(View.GONE);
+        binding.tvReferencePositions.setVisibility(View.VISIBLE);
+        binding.tvReferencePositions.setText("Detecting feature positions on this photo…");
+        binding.tvReferencePositions.setTextColor(
+                ContextCompat.getColor(requireContext(), R.color.gray_text_secondary));
+        analyseReference(uriString);
+    }
+
+    /**
+     * Sizes the preview zone to the photograph's aspect, as large as the width allows and no
+     * taller than half the screen. The overlay stretches its bitmap to the view, so the view
+     * has to be the photo's shape or every box lands off its feature; and a phone-height
+     * portrait photo at full width would push the counts and the confirm button off screen.
+     */
+    private void fitPreview(int imageWidth, int imageHeight) {
+        if (imageWidth <= 0 || imageHeight <= 0 || binding == null) return;
+        android.util.DisplayMetrics dm = getResources().getDisplayMetrics();
+        int maxW = binding.layoutPreviewContainer.getWidth() - dp(32);
+        if (maxW <= 0) maxW = dm.widthPixels - dp(32);
+        int maxH = Math.round(dm.heightPixels * PREVIEW_MAX_HEIGHT_FRACTION);
+        float scale = Math.min((float) maxW / imageWidth, (float) maxH / imageHeight);
+        int w = Math.max(1, Math.round(imageWidth * scale));
+        int h = Math.max(1, Math.round(imageHeight * scale));
+        android.widget.FrameLayout.LayoutParams lp =
+                (android.widget.FrameLayout.LayoutParams) binding.layoutUploadZone.getLayoutParams();
+        lp.width = w;
+        lp.height = h;
+        lp.gravity = android.view.Gravity.CENTER_HORIZONTAL;
+        binding.layoutUploadZone.setLayoutParams(lp);
+    }
+
+    /**
+     * Runs the detector over the reference once, for positions and box sizes only.
+     *
+     * <p>Same call, library and tuned thresholds as an inspection, so the boxes saved here are
+     * the boxes an inspection will be matched against. The counts are not touched by this:
+     * they are what the operator typed, whatever the detector makes of the photo.
+     */
+    private void analyseReference(String uriString) {
+        final int token = ++analysisToken;
+        final android.content.Context context = requireContext().getApplicationContext();
+        pendingResult = null;
+        analysing = true;
+        refreshConfirmButton();
+
+        new Thread(() -> {
+            HardwareFeatureExtractor.AnalysisResult result = null;
+            try {
+                ReferenceLibrary library = ReferenceLibraryProvider.effectiveFor(context, partId);
+                if (library == null) library = new ReferenceLibrary();
+                ThresholdTuner.applyTo(context, partId, library);
+                // Null sink: nothing here needs the crops, only the boxes.
+                result = HardwareFeatureExtractor.extractFeatures(context, uriString, library, null);
+                if (result.processedBitmap != null) {
+                    result.processedBitmap.recycle();
+                    result.processedBitmap = null;
+                }
+            } catch (Throwable t) {
+                Log.e(TAG, "Reference detection failed for " + partId, t);
+            }
+            final HardwareFeatureExtractor.AnalysisResult done = result;
+            if (!isAdded()) return;
+            requireActivity().runOnUiThread(() -> {
+                if (!isAdded() || binding == null || token != analysisToken) return;
+                pendingResult = done;
+                analysing = false;
+                if (done != null && !done.features.isEmpty()) {
+                    binding.ivReferencePreview.setVisibility(View.GONE);
+                    binding.overlayReferencePreview.setVisibility(View.VISIBLE);
+                    binding.overlayReferencePreview.setResultData(uriString, done.features);
+                }
+                refreshConfirmButton();
+            });
+        }).start();
+    }
+
+    /**
+     * The slot type for each detection, index-aligned with {@code features}, or null where the
+     * detection makes no slot.
+     *
+     * <p>The classifier's nearest prototype is used whether or not its score cleared the
+     * acceptance threshold — the same choice the old labelling dialog made when it pre-filled
+     * each row. A reference is one photo of a part that is known to be correct, so the
+     * nearest type is very likely the right one, and a fresh part's library rejects almost
+     * everything as "unknown", which would leave the layout empty. Only critical types make
+     * slots: localisation is a claim about hardware with a place it belongs, and an advisory
+     * scratch has none.
+     */
+    private List<String> slotTypes(List<HardwareFeatureExtractor.ExtractedFeature> features) {
+        return slotTypes(features, type -> FeatureTypeRegistry.isCritical(requireContext(), type));
+    }
+
+    public static List<String> slotTypes(List<HardwareFeatureExtractor.ExtractedFeature> features,
+                                  java.util.function.Predicate<String> isCritical) {
+        List<String> types = new ArrayList<>();
+        if (features == null) return types;
+        for (HardwareFeatureExtractor.ExtractedFeature f : features) {
+            ReferenceLibrary.Classification c = f.classification;
+            String type = c != null && c.closestMatch != null && !"none".equals(c.closestMatch)
+                    ? c.closestMatch : f.type;
+            if (type == null || ReferenceLibrary.UNKNOWN.equals(type) || !isCritical.test(type)) {
+                type = null;
+            }
+            if (type != null) types.add(type);
+        }
+        return types;
+    }
+
+    /**
+     * The layout to save for this reference: one slot per critical detection, with its box,
+     * in the working frame the boxes were measured in. Null when there is nothing to track.
+     */
+    @Nullable
+    private FeatureLayout layoutFrom(HardwareFeatureExtractor.AnalysisResult result, String uri) {
+        if (result == null || result.features == null) return null;
+        List<android.graphics.RectF> rects = new ArrayList<>();
+        List<String> types = new ArrayList<>();
+        for (HardwareFeatureExtractor.ExtractedFeature f : result.features) {
+            ReferenceLibrary.Classification c = f.classification;
+            String type = c != null && c.closestMatch != null && !"none".equals(c.closestMatch)
+                    ? c.closestMatch : f.type;
+            if (type == null || ReferenceLibrary.UNKNOWN.equals(type)
+                    || !FeatureTypeRegistry.isCritical(requireContext(), type)) {
+                type = ReferenceLibrary.UNKNOWN; // skipped by layoutFrom
+            }
+            rects.add(f.rectFraction);
+            types.add(type);
+        }
+        FeatureLayout layout = FeatureLocalisation.layoutFrom(rects, types, null);
+        if (layout.isEmpty()) return null;
+        layout.setReferenceUri(uri);
+        layout.setImageSize(result.workingWidth, result.workingHeight);
+        layout.setEdgeMethodId(result.edgeMethodId);
+        return layout;
     }
 
     /**
@@ -304,9 +520,11 @@ public class ReferenceSetupFragment extends Fragment {
      */
     private void confirmReference() {
         final Map<String, Integer> counts = countsFrom(currentRawCounts());
-        if (selectedImageExternalUri == null || total(counts) <= 0 || confirming) return;
+        if (selectedImageExternalUri == null || total(counts) <= 0 || confirming || analysing) return;
         final String uri = selectedImageExternalUri.toString();
         final android.content.Context context = requireContext().getApplicationContext();
+        // Built on the UI thread: it reads the type registry through the fragment's context.
+        final FeatureLayout layout = layoutFrom(pendingResult, uri);
         confirming = true;
         refreshConfirmButton();
 
@@ -323,13 +541,17 @@ public class ReferenceSetupFragment extends Fragment {
                     db.referenceProfileDao().insertProfile(
                             new ReferenceProfile(partId, uri, System.currentTimeMillis()));
                 });
-                // A layout hand-labelled under the old flow is superseded by this declaration.
-                // Left in place, and if the same photo is chosen again, it would keep feeding
-                // slot positions to the positional check — and a slot the operator has just
-                // declared away would be reported MISSING and fail the part on its own.
-                File staleLayout = com.example.ml.FeatureLayout.fileFor(context, partId);
-                if (staleLayout.exists() && !staleLayout.delete()) {
-                    Log.w(TAG, "Could not remove the superseded layout " + staleLayout);
+                // The positions detected on this photo replace whatever layout the part had
+                // — including one hand-labelled under the old flow against the same photo,
+                // which would otherwise keep reporting a slot the operator has just declared
+                // away as MISSING. No positions at all means no layout, and the old one goes.
+                if (layout != null) {
+                    layout.save(context, partId);
+                } else {
+                    File stale = FeatureLayout.fileFor(context, partId);
+                    if (stale.exists() && !stale.delete()) {
+                        Log.w(TAG, "Could not remove the superseded layout " + stale);
+                    }
                 }
                 saved = true;
             } catch (Exception e) {
@@ -616,13 +838,7 @@ public class ReferenceSetupFragment extends Fragment {
         }
         try {
             selectedImageExternalUri = Uri.parse("file:///android_asset/chassis_images/" + filename);
-            // Preview only: nothing else ever reads the reference at full resolution here.
-            Bitmap bitmap = AssetBitmaps.decodeSampled(
-                    requireContext(), "chassis_images/" + filename, 1080);
-            if (bitmap != null) binding.ivReferencePreview.setImageBitmap(bitmap);
-            binding.ivReferencePreview.setVisibility(View.VISIBLE);
-            binding.layoutUploadPlaceholder.setVisibility(View.GONE);
-            refreshConfirmButton();
+            onImageChosen(selectedImageExternalUri.toString());
         } catch (Exception e) {
             Toast.makeText(getContext(), "Failed to load asset: " + e.getMessage(), Toast.LENGTH_SHORT).show();
         }
@@ -837,11 +1053,7 @@ public class ReferenceSetupFragment extends Fragment {
             inputStream.close();
 
             selectedImageExternalUri = Uri.fromFile(photoFile);
-
-            binding.ivReferencePreview.setImageURI(selectedImageExternalUri);
-            binding.ivReferencePreview.setVisibility(View.VISIBLE);
-            binding.layoutUploadPlaceholder.setVisibility(View.GONE);
-            refreshConfirmButton();
+            onImageChosen(selectedImageExternalUri.toString());
             Toast.makeText(getContext(), "Image uploaded successfully!", Toast.LENGTH_SHORT).show();
         } catch (Exception e) {
             Log.e(TAG, "Failed to copy reference image", e);

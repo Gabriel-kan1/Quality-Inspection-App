@@ -211,13 +211,15 @@ Legend: ✅ done · 🟡 partial · ❌ not started
 - **The operator declares what is on the part.** Reference setup is: choose the photo, enter
   how many of each feature type the part has, confirm — and confirm stays disabled until both
   are there. The counts are stored per part (`ExpectedFeature`, DB v14) and are the expected
-  side of every inspection's count comparison, read verbatim. Nothing is detected, labelled or
-  classified on the reference photograph any more; only the captured image is processed. The
-  photo is kept for the ghost overlay and the alignment gate. The two presets ship declared:
+  side of every inspection's count comparison, read verbatim — no detector decides them. The
+  photo is detected once, on the setup screen, for what counts cannot give: each feature's
+  position and box size, shown on the preview and saved as the part's layout so the positional
+  check and the dimensional measurement work as before. The classifier names each box (nearest
+  prototype), so there is no labelling dialog; if it finds fewer positions than were declared
+  the screen says so, and the counts still stand. The two presets ship declared:
   `CHASSIS-8821-B` one hole, two studs, one screw; `PART-CHASSIS-A03` one hole, two studs, one
-  bolt head. Positional localisation, which needed hand-labelled slot positions, is reported
-  as not available for a reference confirmed this way.
-- **342 unit tests**, all passing.
+  bolt head.
+- **347 unit tests**, all passing.
 - **Reproducible studies** in `python/` — localisation tolerance and transform model
   (`localisation_tolerance_study.py`), classifier margin fitted from real inspection history
   (`margin_study.py`), the edge-stage tuning search behind Hybrid v2/v3/v4

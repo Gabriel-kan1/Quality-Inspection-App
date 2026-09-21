@@ -63,5 +63,36 @@ public class ReferenceSetupCountsTest {
                 ReferenceSetupFragment.confirmLabel(true, 4));
         assertEquals("CONFIRM REFERENCE (1 FEATURE)",
                 ReferenceSetupFragment.confirmLabel(true, 1));
+        // Positions are still being detected: the counts are in, but confirming now would
+        // save a reference without them.
+        assertEquals("DETECTING POSITIONS…",
+                ReferenceSetupFragment.confirmLabel(true, 4, true));
+        // Without counts the wait is not the operator's problem yet.
+        assertEquals("ENTER FEATURE COUNTS TO CONFIRM",
+                ReferenceSetupFragment.confirmLabel(true, 0, true));
+    }
+
+    @Test
+    public void thePositionsLineSaysWhatLocalisationWillBeAbleToTrack() {
+        String full = ReferenceSetupFragment.positionsText(4, 4, false);
+        assertTrue(full, full.contains("Detected 4 positions"));
+        assertTrue(full, full.contains("Position and size will be checked"));
+
+        String fewer = ReferenceSetupFragment.positionsText(3, 4, false);
+        assertTrue(fewer, fewer.contains("3 positions"));
+        assertTrue("the shortfall is stated against the declaration", fewer.contains("4 features declared"));
+        assertTrue("the counts are not overridden by the detector", fewer.contains("counts still stand"));
+
+        String more = ReferenceSetupFragment.positionsText(6, 4, false);
+        assertTrue(more, more.contains("6 positions"));
+        assertTrue("PASS/FAIL stays with the declaration", more.contains("declared counts still decide"));
+
+        String none = ReferenceSetupFragment.positionsText(0, 4, false);
+        assertTrue(none, none.contains("No feature positions"));
+        assertTrue("says what is lost, not that the reference is unusable",
+                none.contains("Counts will still be checked"));
+
+        String failed = ReferenceSetupFragment.positionsText(0, 4, true);
+        assertTrue(failed, failed.contains("Could not detect"));
     }
 }

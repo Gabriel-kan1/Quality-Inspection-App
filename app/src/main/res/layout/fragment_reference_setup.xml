@@ -1,10 +1,20 @@
 <?xml version="1.0" encoding="utf-8"?>
-<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<androidx.core.widget.NestedScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@color/background_dark">
+    android:background="@color/background_dark"
+    android:fillViewport="true">
+
+  <!-- One scrolling column. It used to be a ConstraintLayout that gave the preview whatever
+       height was left between the cards, which on a phone with the count card open was a
+       strip a few dp tall. The preview now takes the size the photograph needs (set in code
+       to the image's aspect, capped at half the screen) and the rest scrolls beneath it. -->
+  <LinearLayout
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical">
 
     <!-- Instruction Panel (Translucent Overlay) -->
     <LinearLayout
@@ -13,8 +23,7 @@
         android:layout_height="wrap_content"
         android:background="#D92B2930"
         android:orientation="vertical"
-        android:padding="20dp"
-        app:layout_constraintTop_toTopOf="parent">
+        android:padding="20dp">
 
         <TextView
             android:id="@+id/tv_setup_header"
@@ -40,7 +49,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginTop="8dp"
-            android:text="Choose a photo of the MASTER GOLD-STANDARD part, then say how many of each feature it has. The photo guides framing; the counts are what every inspection is checked against."
+            android:text="Choose a photo of the MASTER GOLD-STANDARD part, then say how many of each feature it has. The counts decide PASS/FAIL; the positions detected on the photo drive the positional and size checks."
             android:textColor="@color/gray_text_secondary"
             android:textSize="13sp" />
 
@@ -56,8 +65,7 @@
         app:cardBackgroundColor="#1A4ADE80"
         app:cardCornerRadius="12dp"
         app:strokeWidth="1dp"
-        app:strokeColor="@color/green_pass"
-        app:layout_constraintTop_toBottomOf="@id/layout_instructions">
+        app:strokeColor="@color/green_pass">
 
         <LinearLayout
             android:layout_width="match_parent"
@@ -116,19 +124,27 @@
         </LinearLayout>
     </com.google.android.material.card.MaterialCardView>
 
-    <!-- Upload Display Area -->
+    <!-- Upload Display Area. The zone's width and height are set in code once a photograph
+         is chosen (ReferenceSetupFragment.fitPreview) so it has the image's own aspect: the
+         overlay stretches its bitmap to the view, so a view of any other shape would draw
+         every detection box off its feature. Before a photograph it is a fixed-height
+         drop target. -->
+    <FrameLayout
+        android:id="@+id/layout_preview_container"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="16dp"
+        android:layout_marginBottom="8dp">
+
     <FrameLayout
         android:id="@+id/layout_upload_zone"
-        android:layout_width="0dp"
-        android:layout_height="0dp"
-        android:layout_margin="16dp"
-        android:background="@drawable/reference_guide_border"
-        app:layout_constraintTop_toBottomOf="@id/card_assets_folder"
-        app:layout_constraintBottom_toTopOf="@id/card_expected_features"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent">
+        android:layout_width="match_parent"
+        android:layout_height="220dp"
+        android:layout_marginHorizontal="16dp"
+        android:layout_gravity="center_horizontal"
+        android:background="@drawable/reference_guide_border">
 
-        <!-- Selected Reference Image Preview -->
+        <!-- Selected Reference Image Preview, shown the moment a photo is chosen -->
         <ImageView
             android:id="@+id/iv_reference_preview"
             android:layout_width="match_parent"
@@ -136,6 +152,15 @@
             android:scaleType="fitCenter"
             android:visibility="gone"
             android:contentDescription="Selected reference design" />
+
+        <!-- The same overlay the results screen draws: the photo with the detector's boxes on
+             it. Replaces the plain preview once the positions have been detected, so the
+             operator can see which features localisation will be able to track. -->
+        <com.example.ui.view.ChassisOverlayView
+            android:id="@+id/overlay_reference_preview"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:visibility="gone" />
 
         <!-- Placeholder Hint -->
         <LinearLayout
@@ -184,6 +209,7 @@
                 app:cornerRadius="8dp" />
         </LinearLayout>
     </FrameLayout>
+    </FrameLayout>
 
     <!-- The operator's declaration of what is on the part. This is the expected side of every
          inspection's count comparison; the reference photograph itself is never analysed. -->
@@ -195,10 +221,7 @@
         android:layout_marginEnd="16dp"
         android:layout_marginBottom="8dp"
         app:cardBackgroundColor="@color/surface_card"
-        app:cardCornerRadius="12dp"
-        app:layout_constraintBottom_toTopOf="@id/card_action_deck"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent">
+        app:cardCornerRadius="12dp">
 
         <LinearLayout
             android:layout_width="match_parent"
@@ -218,10 +241,23 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="4dp"
-                android:text="Enter how many of each feature the part has. Inspections compare what they detect against these numbers — the reference photo itself is not analysed."
+                android:text="Enter how many of each feature the part has. Inspections compare what they detect against these numbers. The photo is detected once, so each feature’s position and size can be checked too."
                 android:textColor="@color/gray_text_secondary"
                 android:textSize="11sp"
                 android:lineSpacingExtra="2dp" />
+
+            <!-- What the detector found on the photo, against what was declared. Positions
+                 come from here; counts come from the rows below. -->
+            <TextView
+                android:id="@+id/tv_reference_positions"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:textSize="11sp"
+                android:lineSpacingExtra="2dp"
+                android:visibility="gone"
+                tools:text="Detected 4 positions on this photo — all 4 declared features can be localised."
+                tools:visibility="visible" />
 
             <LinearLayout
                 android:id="@+id/layout_expected_type_rows"
@@ -272,10 +308,7 @@
         app:cardBackgroundColor="@color/surface_card"
         app:cardCornerRadius="16dp"
         app:strokeWidth="1dp"
-        app:strokeColor="@color/color_border"
-        app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toStartOf="parent">
+        app:strokeColor="@color/color_border">
 
         <LinearLayout
             android:layout_width="match_parent"
@@ -299,4 +332,5 @@
 
     </com.google.android.material.card.MaterialCardView>
 
-</androidx.constraintlayout.widget.ConstraintLayout>
+  </LinearLayout>
+</androidx.core.widget.NestedScrollView>

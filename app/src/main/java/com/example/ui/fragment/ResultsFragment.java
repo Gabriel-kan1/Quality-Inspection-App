@@ -596,20 +596,26 @@ public class ResultsFragment extends Fragment {
         // the choice existed ran the shipped stack — so null reads as shipped rather than as
         // unknown, and the first inspection after switching methods gets the warning too.
         //
-        // Not raised when the expected counts were declared by the operator: those are not a
-        // detector's output, so no method change can make them incomparable.
-        String referenceMethod = referenceLayout == null
-                || expectedSource == ExpectedSource.DECLARED ? null
+        // With declared counts the counts themselves are the operator's and unaffected, but the
+        // positions and box sizes in the layout still came out of a detector, so the warning
+        // stays and says which half of the comparison it applies to.
+        String referenceMethod = referenceLayout == null ? null
                 : referenceLayout.edgeMethodId() != null ? referenceLayout.edgeMethodId()
                 : EdgeMethodLab.SHIPPED_ID;
         String thisMethod = analysisResult == null ? null : analysisResult.edgeMethodId;
         if (referenceMethod != null && thisMethod != null && !referenceMethod.equals(thisMethod)) {
             if (banner.length() > 0) banner.append("\n\n");
             banner.append(String.format(Locale.US,
-                    "⚠ EDGE METHOD CHANGED — the reference was set up with \"%s\" but this"
-                            + " inspection ran \"%s\" (chosen in the Edge Lab). Counts and sizes"
-                            + " are not comparable across methods; re-run reference setup for"
-                            + " this part, or switch back.",
+                    expectedSource == ExpectedSource.DECLARED
+                            ? "⚠ EDGE METHOD CHANGED — the reference positions were"
+                                    + " detected with \"%s\" but this inspection ran \"%s\" (chosen"
+                                    + " in the Edge Lab). Positions and sizes are not comparable"
+                                    + " across methods; the declared counts still are. Re-confirm"
+                                    + " the reference for this part, or switch back."
+                            : "⚠ EDGE METHOD CHANGED — the reference was set up with \"%s\" but"
+                                    + " this inspection ran \"%s\" (chosen in the Edge Lab). Counts"
+                                    + " and sizes are not comparable across methods; re-run"
+                                    + " reference setup for this part, or switch back.",
                     EdgeMethodLab.nameOf(referenceMethod), EdgeMethodLab.nameOf(thisMethod)));
         }
         if (banner.length() > 0) {
