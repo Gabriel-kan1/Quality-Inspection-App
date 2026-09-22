@@ -67,6 +67,21 @@
                     tools:visibility="visible"
                     tools:text="⚠ IMAGE NOT ALIGNED — TOO FAR" />
 
+                <!-- Which preprocessing strength the adaptive edge stage chose for this photo
+                     and why. Informational, not a warning: a strength that differs from the
+                     reference's is the mechanism working, not a fault. -->
+                <TextView
+                    android:id="@+id/tv_preprocessing_note"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:alpha="0.85"
+                    android:textColor="@color/white"
+                    android:textSize="11sp"
+                    android:visibility="gone"
+                    tools:visibility="visible"
+                    tools:text="MEDIUM preprocessing — noise 3.3, edge contrast 121; medium by image quality, confirmed by size agreement" />
+
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 

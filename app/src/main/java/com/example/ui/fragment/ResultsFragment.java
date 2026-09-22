@@ -45,6 +45,7 @@ import com.example.ml.ReferenceLibrary;
 import com.example.report.AdvisoryNotes;
 import com.example.ml.ReferenceLibraryProvider;
 import com.example.ml.ScaleCalibration;
+import com.example.ml.SizePrior;
 import com.example.ml.ThresholdTuner;
 
 import java.util.ArrayList;
@@ -267,11 +268,28 @@ public class ResultsFragment extends Fragment {
             // before classification so the whole run uses the tuned values.
             appliedThresholds = ThresholdTuner.applyTo(context, partId, activeLibrary);
 
+            // The labelled reference layout is read before detection runs, because the
+            // adaptive edge stage wants it: with the expected size of every critical feature
+            // in hand it can run each preprocessing strength and keep the one whose boxes
+            // reproduce those sizes, which is the one that neither merged a shadow in nor
+            // cropped a fastener. Null on any path without a labelled layout, and detection
+            // then decides on the image alone.
+            //
+            // Guarded by the reference URI, so a layout labelled against a photo that has
+            // since been replaced is refused rather than compared against.
+            expectedCounts.clear();
+            hasRealReference = ref != null && ref.hasRealImage();
+            referenceImageUri = hasRealReference ? ref.getImageUri() : null;
+            FeatureLayout labelled = hasRealReference ? keepCriticalSlots(context,
+                    FeatureLayout.loadFor(context, partId, ref.getImageUri())) : null;
+            SizePrior sizePrior = SizePrior.from(labelled);
+
             // Detected: classify the active chassis image. Crops are written straight to the
             // learning store and freed inside the extractor, so nothing scales with box count.
             HardwareFeatureExtractor.AnalysisResult activeResult =
                     HardwareFeatureExtractor.extractFeatures(context, imageUri, activeLibrary,
-                            (crop, index) -> LearningCropStore.save(context, partId, crop, index));
+                            (crop, index) -> LearningCropStore.save(context, partId, crop, index),
+                            null, sizePrior);
 
             // Noise filter: detections that resemble an ignored type, on a part whose
             // history has shown such crops are reliably not hardware, are carried as that
@@ -290,20 +308,12 @@ public class ResultsFragment extends Fragment {
 
             // Expected: from the gold-standard reference image if one exists, else mirror detected
             // (computed after live-labelling below, since labelling can change detected types).
-            expectedCounts.clear();
-            hasRealReference = ref != null && ref.hasRealImage();
-            referenceImageUri = hasRealReference ? ref.getImageUri() : null;
             if (hasRealReference) {
                 // Preferred source: the labels the operator gave every detection during
                 // reference setup. Those are a human statement of what this part should have,
                 // so they are used verbatim — no re-detection, no re-classification, and
                 // therefore no dependence on lighting or on where the library's decision
                 // boundary happens to sit today.
-                //
-                // Guarded by the reference URI, so a layout labelled against a photo that has
-                // since been replaced is refused rather than compared against.
-                FeatureLayout labelled = keepCriticalSlots(context,
-                        FeatureLayout.loadFor(context, partId, ref.getImageUri()));
                 if (labelled != null) {
                     expectedCounts.putAll(labelled.countsByType());
                     referenceLayout = labelled;
@@ -554,9 +564,7 @@ public class ResultsFragment extends Fragment {
         // A labelled layout with no method recorded predates the choice, and everything before
         // the choice existed ran the shipped stack — so null reads as shipped rather than as
         // unknown, and the first inspection after switching methods gets the warning too.
-        String referenceMethod = referenceLayout == null ? null
-                : referenceLayout.edgeMethodId() != null ? referenceLayout.edgeMethodId()
-                : EdgeMethodLab.SHIPPED_ID;
+        String referenceMethod = referenceMethodId();
         String thisMethod = analysisResult == null ? null : analysisResult.edgeMethodId;
         if (referenceMethod != null && thisMethod != null && !referenceMethod.equals(thisMethod)) {
             if (banner.length() > 0) banner.append("\n\n");
@@ -573,6 +581,37 @@ public class ResultsFragment extends Fragment {
         } else {
             binding.tvAlignmentWarning.setVisibility(View.GONE);
         }
+
+        // Which preprocessing strength this photo ran and why, beside the reference's. Not a
+        // warning: under the adaptive method the two are entitled to differ, and this line
+        // is what lets a size disagreement be read with that in mind.
+        String preprocessing = describePreprocessing();
+        binding.tvPreprocessingNote.setText(preprocessing);
+        binding.tvPreprocessingNote.setVisibility(preprocessing == null ? View.GONE : View.VISIBLE);
+    }
+
+    /**
+     * The edge method the reference layout was detected with, or null without a layout. A
+     * labelled layout with no method recorded predates the choice, and everything before the
+     * choice existed ran the shipped stack — so null reads as shipped rather than as unknown.
+     */
+    private String referenceMethodId() {
+        if (referenceLayout == null) return null;
+        return referenceLayout.edgeMethodId() != null ? referenceLayout.edgeMethodId()
+                : EdgeMethodLab.SHIPPED_ID;
+    }
+
+    /** The adaptive stage's choice for this photo, and the reference's rung, or null. */
+    private String describePreprocessing() {
+        if (analysisResult == null || analysisResult.preprocessing == null) return null;
+        StringBuilder sb = new StringBuilder(analysisResult.preprocessing.describe());
+        String referenceRung = referenceLayout == null ? null : referenceLayout.preprocessingRung();
+        if (referenceRung != null) {
+            sb.append(". Reference was detected with ").append(referenceRung);
+            sb.append(referenceRung.equals(analysisResult.preprocessing.rung.label)
+                    ? " as well." : " — sizes are compared across two strengths.");
+        }
+        return sb.toString();
     }
 
     /**
@@ -1623,18 +1662,15 @@ public class ResultsFragment extends Fragment {
      * background slots are healed without a migration. Severity is re-read here rather than
      * trusted from save time, because the catalog is global and editable — a type re-graded
      * after the reference was labelled has to leave the layout too.
+     *
+     * Slot ids survive the filter ({@link FeatureLayout#retaining}), so a finding's
+     * {@code slotId} names the same slot in the persisted file — which is where the size it
+     * measured is recorded when the inspection is filed.
      */
     private FeatureLayout keepCriticalSlots(android.content.Context context, FeatureLayout layout) {
         if (layout == null) return null;
-        FeatureLayout kept = new FeatureLayout();
-        kept.setReferenceUri(layout.referenceUri());
-        kept.setImageSize(layout.imageWidth(), layout.imageHeight());
-        kept.setEdgeMethodId(layout.edgeMethodId());
-        for (FeatureLayout.Slot s : layout.slots()) {
-            if (FeatureTypeRegistry.severityOf(context, s.type)
-                    != FeatureTypeRegistry.Severity.CRITICAL) continue;
-            kept.addSlot(s.type, s.x, s.y, s.w, s.h);
-        }
+        FeatureLayout kept = layout.retaining(s -> FeatureTypeRegistry.severityOf(context, s.type)
+                == FeatureTypeRegistry.Severity.CRITICAL);
         return kept.isEmpty() ? null : kept;
     }
 
@@ -1666,6 +1702,8 @@ public class ResultsFragment extends Fragment {
         // The frame the slot fractions are in, so the size check can apply its pixel floor.
         layout.setImageSize(refResult.workingWidth, refResult.workingHeight);
         layout.setEdgeMethodId(refResult.edgeMethodId);
+        layout.setPreprocessingRung(refResult.preprocessing == null ? null
+                : refResult.preprocessing.rung.label);
         return layout.isEmpty() ? null : layout;
     }
 
@@ -2011,6 +2049,11 @@ public class ResultsFragment extends Fragment {
         }
         final String finalOperator = typedOperator.isEmpty() ? null : typedOperator;
         binding.btnSaveReport.setEnabled(false);
+        // Read here, on the UI thread: onDestroyView drops analysisResult, and the filing
+        // thread routinely outlives this screen.
+        final boolean sameMethodAsReference = analysisResult != null
+                && analysisResult.edgeMethodId != null
+                && analysisResult.edgeMethodId.equals(referenceMethodId());
 
         final android.content.Context context = requireContext().getApplicationContext();
         new Thread(() -> {
@@ -2072,6 +2115,7 @@ public class ResultsFragment extends Fragment {
                 if (!slotRows.isEmpty()) {
                     db.inspectionDao().insertSlotResults(slotRows);
                 }
+                if (sameMethodAsReference) learnSlotSizes(context);
             }
 
             // Attach this run's classification events to the saved inspection so the
@@ -2098,6 +2142,42 @@ public class ResultsFragment extends Fragment {
                 }
             });
         }).start();
+    }
+
+    /**
+     * Feeds this inspection's measured sizes back into the part's layout, so the next one
+     * starts from a better estimate of how big each feature really is.
+     *
+     * Only PRESENT, size-judged findings: a WRONG_TYPE slot holds different hardware, and a
+     * DISPLACED one was matched by proximity rather than alignment. Only when this inspection
+     * ran the same edge method as the reference: across a method change the banner already
+     * says sizes are not comparable, and a history taken relative to boxes a different
+     * detector drew would be replaced along with them when the reference is redone. The
+     * persisted file is re-read rather than the in-memory copy saved, because that copy is
+     * the critical-only filter of it; ids match by construction ({@link #keepCriticalSlots}).
+     * A derived layout (the legacy re-classifying path) has no reference URI and is never
+     * written.
+     */
+    private void learnSlotSizes(android.content.Context context) {
+        if (localisation == null || !localisation.aligned || referenceLayout == null
+                || referenceLayout.referenceUri() == null) {
+            return;
+        }
+        try {
+            FeatureLayout persisted = FeatureLayout.loadFor(
+                    context, partId, referenceLayout.referenceUri());
+            if (persisted == null) return;
+            int recorded = 0;
+            for (FeatureLocalisation.SlotFinding f : localisation.findings) {
+                if (f.status != FeatureLocalisation.Status.PRESENT || !f.sizeJudged()) continue;
+                persisted.recordSizeRatio(f.slotId, f.sizeRatio);
+                recorded++;
+            }
+            if (recorded > 0) persisted.save(context, partId);
+        } catch (Exception e) {
+            // Learning must never fail a filing.
+            android.util.Log.e("ResultsFragment", "Could not record slot sizes", e);
+        }
     }
 
     @Override

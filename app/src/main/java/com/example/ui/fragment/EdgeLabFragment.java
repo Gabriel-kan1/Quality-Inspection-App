@@ -113,7 +113,7 @@ public class EdgeLabFragment extends Fragment {
     private void showActiveMethod() {
         if (binding == null) return;
         String name = EdgeMethodLab.selectedName(requireContext());
-        binding.tvActiveMethod.setText(EdgeMethodLab.shippedSelected(requireContext())
+        binding.tvActiveMethod.setText(EdgeMethodLab.defaultSelected(requireContext())
                 ? "INSPECTIONS RUN: " + name + " (default)"
                 : "INSPECTIONS RUN: " + name);
     }
@@ -241,6 +241,9 @@ public class EdgeLabFragment extends Fragment {
 
             card.tvMethodName.setText(result.name);
             card.tvMethodMetrics.setText(result.metricsLine());
+            // What a per-photograph method decided here — the adaptive card names its rung.
+            card.tvMethodNote.setText(result.note);
+            card.tvMethodNote.setVisibility(result.note == null ? View.GONE : View.VISIBLE);
             card.tvMethodSummary.setText(result.summary);
             card.tvMethodBadge.setVisibility(
                     result.isShippedPipeline ? View.VISIBLE : View.GONE);

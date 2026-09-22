@@ -757,6 +757,10 @@ public class ReferenceSetupFragment extends Fragment {
         final int workingWidth = pendingResult.workingWidth;
         final int workingHeight = pendingResult.workingHeight;
         final String edgeMethodId = pendingResult.edgeMethodId;
+        // Under the adaptive method, which rung the reference's boxes came out of. An
+        // inspection may legitimately run another; the results screen names both.
+        final String preprocessingRung = pendingResult.preprocessing == null ? null
+                : pendingResult.preprocessing.rung.label;
         final float simThreshold = pendingSimilarityThreshold;
         final float marginThreshold = pendingMarginThreshold;
 
@@ -803,6 +807,7 @@ public class ReferenceSetupFragment extends Fragment {
             // The edge method these boxes came out of. An inspection run under a different
             // one is compared against boxes a different detector drew, and is told so.
             layout.setEdgeMethodId(edgeMethodId);
+            layout.setPreprocessingRung(preprocessingRung);
             for (int i = 0; i < chosen.length; i++) {
                 if (chosen[i] == null) continue;
                 // Critical types only, matching what the inspection side puts forward as

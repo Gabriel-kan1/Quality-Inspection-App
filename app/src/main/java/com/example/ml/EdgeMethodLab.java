@@ -51,7 +51,10 @@ import java.util.Locale;
  *
  * <h3>Choosing one</h3>
  * The operator can pick any catalogued method to be the edge stage that inspections run
- * ({@link #select}); the choice persists across launches and defaults to the shipped stack.
+ * ({@link #select}); the choice persists across launches and defaults to
+ * {@link #ADAPTIVE_ID}, the entry that measures each photograph and picks one of three
+ * strengths of Hybrid v6 for it — see {@link AdaptivePreprocessing}. The shipped stack keeps
+ * its badge as the pipeline the detector was originally tuned with.
  * {@link HardwareFeatureExtractor#computeEdges(Context, Mat, Boolean)} consults it for every
  * image, reference setup and inspection alike, so the two sides of a count comparison always
  * come through the same operator. A method that is not the shipped stack hands the pipeline
@@ -71,8 +74,21 @@ public final class EdgeMethodLab {
     /** Where the chosen method lives. One preference file, one key, one id. */
     static final String PREFS = "edge_method";
     static final String KEY_SELECTED = "selected";
-    /** Catalogue id of the stack the detector was tuned with; what runs until someone chooses. */
+    /** Catalogue id of the stack the detector was originally tuned with; carries the badge. */
     public static final String SHIPPED_ID = "shipped-hybrid";
+    /**
+     * Catalogue id of the adaptive edge stage: {@link AdaptivePreprocessing}, which measures
+     * the photograph and runs one of the {@link PreprocessingStrength} rungs.
+     */
+    public static final String ADAPTIVE_ID = "adaptive";
+    /**
+     * What runs until someone chooses. Adaptive rather than shipped: the shipped stack's own
+     * per-image adaptation (bucketing Laplacian variance into a bilateral diameter) was found
+     * firing backwards, and the ground-truth search behind v6 already showed the shipped stack
+     * burying every fastener in extras (254 against v6's 13). The adaptive entry runs v6 for a
+     * photograph it cannot fault and moves off it only on measured evidence.
+     */
+    public static final String DEFAULT_ID = ADAPTIVE_ID;
 
     /**
      * Longest edge of the edge-map thumbnails handed back for display.
@@ -133,10 +149,26 @@ public final class EdgeMethodLab {
         public final boolean inUse;
         /** Non-null when the operator threw; the other numbers are meaningless then. */
         public final String failure;
+        /**
+         * What a method that decides something per photograph decided, or null. The adaptive
+         * entry reports the rung it ran and the measurements behind it; a card that only
+         * showed its counts would leave the operator matching numbers against the rung cards
+         * to work out which one it was.
+         */
+        public final String note;
 
         MethodResult(String id, String name, String summary, Bitmap edgeMap,
                      double edgeDensityPercent, int contourCount, int candidateBoxes,
                      long elapsedMs, boolean isShippedPipeline, boolean inUse, String failure) {
+            this(id, name, summary, edgeMap, edgeDensityPercent, contourCount, candidateBoxes,
+                    elapsedMs, isShippedPipeline, inUse, failure, null);
+        }
+
+        MethodResult(String id, String name, String summary, Bitmap edgeMap,
+                     double edgeDensityPercent, int contourCount, int candidateBoxes,
+                     long elapsedMs, boolean isShippedPipeline, boolean inUse, String failure,
+                     String note) {
+            this.note = note;
             this.id = id;
             this.inUse = inUse;
             this.name = name;
@@ -174,9 +206,12 @@ public final class EdgeMethodLab {
          *                   images being compared must agree on it.
          * @param glareOut   one-element array; a method with a glare branch writes whether it
          *                   ran, so the caller can pin the next image to the same decision
+         * @param noteOut    one-element array; a method that decides something per image may
+         *                   write one line saying what, for its card. Most leave it alone.
          * @return a fresh CV_8UC1 map of 0/255, which the caller releases
          */
-        Mat apply(Mat gray, Mat srcRgba, Boolean forceGlare, boolean[] glareOut);
+        Mat apply(Mat gray, Mat srcRgba, Boolean forceGlare, boolean[] glareOut,
+                  String[] noteOut);
     }
 
     /** Catalogue entry: what the method is called, what it does, and how to run it. */
@@ -214,7 +249,7 @@ public final class EdgeMethodLab {
                         + "what makes it fragile: the pair that finds a bolt head in even light "
                         + "goes blank on an underexposed photo and solid on a bright one.",
                 false,
-                (gray, srcRgba, forceGlare, glareOut) -> {
+                (gray, srcRgba, forceGlare, glareOut, noteOut) -> {
                     Mat out = new Mat();
                     Imgproc.Canny(gray, out, 50, 150);
                     return out;
@@ -226,7 +261,7 @@ public final class EdgeMethodLab {
                         + "single change that lets one setting survive a change of lighting, "
                         + "and the difference against the row above is what it is worth.",
                 false,
-                (gray, srcRgba, forceGlare, glareOut) -> {
+                (gray, srcRgba, forceGlare, glareOut, noteOut) -> {
                     Mat blurred = new Mat();
                     Mat otsuMask = new Mat();
                     Mat out = new Mat();
@@ -248,7 +283,7 @@ public final class EdgeMethodLab {
                         + "no hysteresis, so edges come out several pixels thick and every weak "
                         + "gradient survives — expect fat outlines and a high edge density.",
                 false,
-                (gray, srcRgba, forceGlare, glareOut) -> gradientMagnitude(gray, false)));
+                (gray, srcRgba, forceGlare, glareOut, noteOut) -> gradientMagnitude(gray, false)));
 
         methods.add(new Method("scharr", "Scharr gradient magnitude",
                 "Sobel's 3x3 kernel is a coarse approximation of a derivative and is "
@@ -257,7 +292,7 @@ public final class EdgeMethodLab {
                         + "row, because fastener heads are round and their gradients point "
                         + "every way at once.",
                 false,
-                (gray, srcRgba, forceGlare, glareOut) -> gradientMagnitude(gray, true)));
+                (gray, srcRgba, forceGlare, glareOut, noteOut) -> gradientMagnitude(gray, true)));
 
         methods.add(new Method("laplacian-of-gaussian", "Laplacian of Gaussian",
                 "Second derivative after a Gaussian, rectified and cut at Otsu. Responds to "
@@ -265,7 +300,7 @@ public final class EdgeMethodLab {
                         + "crown of a bolt head that a first-derivative operator can miss — and "
                         + "amplifies sensor noise for exactly the same reason.",
                 false,
-                (gray, srcRgba, forceGlare, glareOut) -> {
+                (gray, srcRgba, forceGlare, glareOut, noteOut) -> {
                     Mat blurred = new Mat();
                     Mat lap = new Mat();
                     Mat absLap = new Mat();
@@ -290,7 +325,7 @@ public final class EdgeMethodLab {
                         + "threshold tuning, and it is the cheapest thing on this list, so it "
                         + "is here to answer whether the expensive stack is buying anything.",
                 false,
-                (gray, srcRgba, forceGlare, glareOut) -> {
+                (gray, srcRgba, forceGlare, glareOut, noteOut) -> {
                     Mat kernel = Imgproc.getStructuringElement(
                             Imgproc.MORPH_ELLIPSE, new Size(3, 3));
                     Mat grad = new Mat();
@@ -313,7 +348,7 @@ public final class EdgeMethodLab {
                         + "meeting and this is the standard answer to it — read the contour "
                         + "count here as a region count, not as an edge count.",
                 false,
-                (gray, srcRgba, forceGlare, glareOut) -> {
+                (gray, srcRgba, forceGlare, glareOut, noteOut) -> {
                     Mat blurred = new Mat();
                     Mat out = new Mat();
                     try {
@@ -333,7 +368,7 @@ public final class EdgeMethodLab {
                         + "then Otsu-scaled Canny. Isolates what the contrast work contributes, "
                         + "so the row below can be read as the cost of everything else.",
                 false,
-                (gray, srcRgba, forceGlare, glareOut) -> {
+                (gray, srcRgba, forceGlare, glareOut, noteOut) -> {
                     Mat equalised = new Mat();
                     Mat filtered = new Mat();
                     Mat otsuMask = new Mat();
@@ -360,7 +395,7 @@ public final class EdgeMethodLab {
                         + "fragmented outline into one contour. Called directly rather than "
                         + "reproduced, so this row cannot drift away from the shipped code.",
                 true,
-                (gray, srcRgba, forceGlare, glareOut) -> {
+                (gray, srcRgba, forceGlare, glareOut, noteOut) -> {
                     HardwareFeatureExtractor.Edges edges =
                             HardwareFeatureExtractor.computeEdges(srcRgba, forceGlare);
                     try {
@@ -391,7 +426,7 @@ public final class EdgeMethodLab {
                         + "cheaper than it. Against the full ground truth it is exact on 12 "
                         + "of 26 photographs, with 5 misses — the most of any variant.",
                 false,
-                (gray, srcRgba, forceGlare, glareOut) -> hybridVariant(srcRgba, forceGlare, glareOut, 9, 5, 5, 1.1, 0.4, false, 5, 7)));
+                (gray, srcRgba, forceGlare, glareOut, noteOut) -> hybridVariant(srcRgba, forceGlare, glareOut, 9, 5, 5, 1.1, 0.4, false, 5, 7)));
 
         methods.add(new Method("hybrid-v3", "Hybrid v3 (wide Gaussian, best all-round)",
                 "Bilateral 5, a wider Gaussian at 7, Canny at 1.2x Otsu with the same 0.4 "
@@ -401,7 +436,7 @@ public final class EdgeMethodLab {
                         + "parameter plateau, group stability 0.18, and the cheapest. Against "
                         + "the full ground truth: 12 of 26 exact, 3 misses, 33 extras.",
                 false,
-                (gray, srcRgba, forceGlare, glareOut) -> hybridVariant(srcRgba, forceGlare, glareOut, 5, 5, 7, 1.2, 0.4, false, 5, 7)));
+                (gray, srcRgba, forceGlare, glareOut, noteOut) -> hybridVariant(srcRgba, forceGlare, glareOut, 5, 5, 7, 1.2, 0.4, false, 5, 7)));
 
         methods.add(new Method("hybrid-v4", "Hybrid v4 (L2 gradient, best stability)",
                 "Bilateral 7, the 0.4 low ratio, a true Euclidean gradient magnitude rather "
@@ -411,7 +446,7 @@ public final class EdgeMethodLab {
                         + "FAILs. Against the full ground truth it was far ahead of v2, v3 and "
                         + "v5 all along: 16 of 26 exact, 3 misses, 15 extras.",
                 false,
-                (gray, srcRgba, forceGlare, glareOut) -> hybridVariant(srcRgba, forceGlare, glareOut, 7, 5, 5, 1.0, 0.4, true, 3, 9)));
+                (gray, srcRgba, forceGlare, glareOut, noteOut) -> hybridVariant(srcRgba, forceGlare, glareOut, 7, 5, 5, 1.0, 0.4, true, 3, 9)));
 
         methods.add(new Method("hybrid-v5", "Hybrid v5 (adaptive-threshold mask)",
                 "v3's pipeline with an adaptive-threshold mask over the Canny map: only edges "
@@ -422,10 +457,11 @@ public final class EdgeMethodLab {
                         + "not: 12 of 26 exact, no better than v3, at twice the cost. Kept so "
                         + "the negative result can be seen rather than taken on trust.",
                 false,
-                (gray, srcRgba, forceGlare, glareOut) ->
-                        hybridVariant(srcRgba, forceGlare, glareOut, 5, 5, 7, 1.2, 0.4, false, 5, 7, 61, 2, 5)));
+                (gray, srcRgba, forceGlare, glareOut, noteOut) ->
+                        hybridVariant(srcRgba, forceGlare, glareOut, 5, 5, 7, 1.2, 0.4, false, 5, 7, 61, 2, 5,
+                                CLAHE_CLIP_LIMIT)));
 
-        methods.add(new Method("hybrid-v6", "Hybrid v6 (best against ground truth)",
+        methods.add(new Method(PreprocessingStrength.MEDIUM.id, "Hybrid v6 (best against ground truth)",
                 "Bilateral 5, Canny at 1.1x Otsu with the L2 gradient, dilate 5 and close 9. "
                         + "Found by searching 4,032 configurations against a hand-made count "
                         + "for every bundled photograph rather than six of them, ranked on "
@@ -437,8 +473,62 @@ public final class EdgeMethodLab {
                         + "0.13) — v4 remains the pick when agreement between interchangeable "
                         + "photographs matters more than absolute accuracy.",
                 false,
-                (gray, srcRgba, forceGlare, glareOut) ->
+                (gray, srcRgba, forceGlare, glareOut, noteOut) ->
                         outlineEdges(srcRgba, forceGlare, glareOut)));
+
+        // The adaptive stage's other two rungs, then the stage itself. v6 is its middle rung
+        // and is listed once, above, under its own id: a second card with identical output
+        // would read as a second method. See PreprocessingStrength for why the rungs move
+        // CLAHE's clip limit and not the filter apertures, and
+        // python/adaptive_preprocessing_study.py for every number below.
+        methods.add(new Method(PreprocessingStrength.LIGHT.id, "Adaptive rung: light (soft photos)",
+                "Hybrid v6 with twice the CLAHE contrast boost and a 3px Gaussian instead of "
+                        + "5px, so a faint edge survives to Canny. The rung the adaptive stage "
+                        + "runs when the photograph's edges are weak (99th-percentile Laplacian "
+                        + "response under 20): on the bundled set blurred 9px it scores 24 "
+                        + "against v6's 41. On anything sharp it is catastrophic — 25 misses "
+                        + "and 205 extras on the clean set — which is why the adaptive stage "
+                        + "will not even offer it above a contrast of 40.",
+                false,
+                (gray, srcRgba, forceGlare, glareOut, noteOut) ->
+                        strengthEdges(srcRgba, forceGlare, glareOut, PreprocessingStrength.LIGHT)));
+
+        methods.add(new Method(PreprocessingStrength.STRONG.id, "Adaptive rung: strong (noisy photos)",
+                "Hybrid v6 with half the CLAHE contrast boost and Canny's high bound back at "
+                        + "1.0x Otsu. CLAHE amplifies grain in flat regions as readily as it "
+                        + "lifts faint edges, and under noise the grain wins; this rung stops "
+                        + "amplifying it. Chosen when the robust noise estimate reaches 12 — "
+                        + "the textured plates, or sigma 7 of added noise. At sigma 10 it scores "
+                        + "20 against v6's 31; on clean photographs it costs a few low-contrast "
+                        + "heads (28 against 19). Same apertures as v6, same cost. A heavier "
+                        + "bilateral was measured for this role and erased small hardware.",
+                false,
+                (gray, srcRgba, forceGlare, glareOut, noteOut) ->
+                        strengthEdges(srcRgba, forceGlare, glareOut, PreprocessingStrength.STRONG)));
+
+        methods.add(new Method(ADAPTIVE_ID, "Adaptive (chooses a rung per photograph)",
+                "Measures the photograph — a robust noise estimate and how strong its edges "
+                        + "are — and runs the rung that evidence supports: strong for grain and "
+                        + "texture, light for a soft image, v6 otherwise. During an inspection "
+                        + "of a part with a labelled reference it goes further: every eligible "
+                        + "rung is run and the one whose boxes come closest to the sizes the "
+                        + "reference has learned for each feature wins, because a shadow merged "
+                        + "into a box or a fastener half-cropped is a size error before it is "
+                        + "anything else. The default. This card shows the image-quality choice "
+                        + "only, since the lab has no reference to size against.",
+                false,
+                (gray, srcRgba, forceGlare, glareOut, noteOut) -> {
+                    AdaptivePreprocessing.Choice[] choice = new AdaptivePreprocessing.Choice[1];
+                    HardwareFeatureExtractor.Edges edges =
+                            AdaptivePreprocessing.compute(srcRgba, forceGlare, null, choice);
+                    try {
+                        glareOut[0] = edges.glareCorrectionApplied;
+                        if (choice[0] != null) noteOut[0] = choice[0].describe();
+                        return edges.edgesClosed.clone();
+                    } finally {
+                        edges.release();
+                    }
+                }));
 
         return Collections.unmodifiableList(methods);
     }
@@ -463,7 +553,24 @@ public final class EdgeMethodLab {
 
     /** As above, with the glare branch pinned or reported as the catalogue's operators are. */
     static Mat outlineEdges(Mat srcRgba, Boolean forceGlare, boolean[] glareOut) {
-        return hybridVariant(srcRgba, forceGlare, glareOut, 5, 5, 5, 1.1, 0.4, true, 5, 9);
+        // v6 is the adaptive stage's middle rung, and this is the one place its parameters
+        // are written down — so the ghost outline, the Edge Lab card and the rung cannot
+        // drift apart.
+        return strengthEdges(srcRgba, forceGlare, glareOut, PreprocessingStrength.MEDIUM);
+    }
+
+    /**
+     * One rung of the adaptive stage: Hybrid v6's pipeline — bilateral 5, median 5, Canny
+     * low ratio 0.4 with the L2 gradient, dilate 5, close 9 — with the rung's CLAHE clip,
+     * Gaussian aperture and Otsu multiplier. {@link PreprocessingStrength#MEDIUM} reproduces
+     * v6 exactly.
+     *
+     * @return a fresh CV_8UC1 map of 0/255, which the caller releases
+     */
+    static Mat strengthEdges(Mat srcRgba, Boolean forceGlare, boolean[] glareOut,
+                             PreprocessingStrength rung) {
+        return hybridVariant(srcRgba, forceGlare, glareOut, 5, 5, rung.gaussK,
+                rung.otsuHighScale, 0.4, true, 5, 9, 0, 0, 0, rung.claheClip);
     }
 
     /**
@@ -497,7 +604,7 @@ public final class EdgeMethodLab {
                                      double otsuHighScale, double lowRatio, boolean l2Gradient,
                                      int dilateK, int closeK) {
         return hybridVariant(srcRgba, forceGlare, glareOut, bilateralD, medianK, gaussK,
-                otsuHighScale, lowRatio, l2Gradient, dilateK, closeK, 0, 0, 0);
+                otsuHighScale, lowRatio, l2Gradient, dilateK, closeK, 0, 0, 0, CLAHE_CLIP_LIMIT);
     }
 
     /**
@@ -516,12 +623,15 @@ public final class EdgeMethodLab {
      * @param maskBlock adaptiveThreshold neighbourhood, odd; 0 or less disables the mask
      * @param maskC     constant subtracted from the local Gaussian mean
      * @param maskGrow  ellipse used to dilate the mask so boundary edges survive it
+     * @param claheClip CLAHE clip limit. Production's 1.0 for every tuned variant; the
+     *                  adaptive rungs are the only callers that move it, and it is the knob
+     *                  that measured as the lever for noise and blur alike
      */
     private static Mat hybridVariant(Mat srcRgba, Boolean forceGlare, boolean[] glareOut,
                                      int bilateralD, int medianK, int gaussK,
                                      double otsuHighScale, double lowRatio, boolean l2Gradient,
                                      int dilateK, int closeK,
-                                     int maskBlock, int maskC, int maskGrow) {
+                                     int maskBlock, int maskC, int maskGrow, double claheClip) {
         Mat gray = new Mat();
         Mat preprocessed = new Mat();
         Mat equalised = new Mat();
@@ -551,7 +661,7 @@ public final class EdgeMethodLab {
                 gray.copyTo(preprocessed);
             }
 
-            CLAHE clahe = Imgproc.createCLAHE(CLAHE_CLIP_LIMIT, new Size(16, 16));
+            CLAHE clahe = Imgproc.createCLAHE(claheClip, new Size(16, 16));
             clahe.apply(preprocessed, equalised);
 
             Imgproc.bilateralFilter(equalised, filtered, bilateralD,
@@ -612,20 +722,20 @@ public final class EdgeMethodLab {
 
     // ── The method inspections run ─────────────────────────────────────────
 
-    /** Id of the method inspections currently run; {@link #SHIPPED_ID} until one is chosen. */
+    /** Id of the method inspections currently run; {@link #DEFAULT_ID} until one is chosen. */
     public static String selectedId(Context context) {
         String id = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                .getString(KEY_SELECTED, SHIPPED_ID);
+                .getString(KEY_SELECTED, DEFAULT_ID);
         // An id from a build that had a method this one does not is not an error worth a
         // crash, and silently running an arbitrary method would be worse: fall back to the
-        // stack the detector was tuned with.
-        return byId(id) == null ? SHIPPED_ID : id;
+        // default.
+        return byId(id) == null ? DEFAULT_ID : id;
     }
 
     /** Display name of the method inspections currently run. */
     public static String selectedName(Context context) {
         Method m = byId(selectedId(context));
-        return m == null ? "Shipped hybrid pipeline" : m.name;
+        return m == null ? nameOf(DEFAULT_ID) : m.name;
     }
 
     /** Display name for a catalogue id, or the id itself when it is not catalogued. */
@@ -648,9 +758,19 @@ public final class EdgeMethodLab {
         Log.i(TAG, "Inspections now use edge method " + id);
     }
 
-    /** True when the chosen method is the shipped stack, i.e. nothing has been overridden. */
+    /** True when the chosen method is the shipped stack. */
     public static boolean shippedSelected(Context context) {
         return SHIPPED_ID.equals(selectedId(context));
+    }
+
+    /** True when nothing has been overridden and the default runs. */
+    public static boolean defaultSelected(Context context) {
+        return DEFAULT_ID.equals(selectedId(context));
+    }
+
+    /** True when the chosen method is the adaptive stage, which picks a rung per photograph. */
+    public static boolean adaptiveSelected(Context context) {
+        return ADAPTIVE_ID.equals(selectedId(context));
     }
 
     static Method byId(String id) {
@@ -662,7 +782,7 @@ public final class EdgeMethodLab {
     /** The catalogue entry inspections run; never null. */
     static Method selected(Context context) {
         Method m = byId(selectedId(context));
-        return m != null ? m : byId(SHIPPED_ID);
+        return m != null ? m : byId(DEFAULT_ID);
     }
 
     /**
@@ -684,7 +804,7 @@ public final class EdgeMethodLab {
         try {
             Imgproc.cvtColor(src, gray, Imgproc.COLOR_RGBA2GRAY);
             boolean[] glare = new boolean[1];
-            map = method.operator.apply(gray, src, forceGlare, glare);
+            map = method.operator.apply(gray, src, forceGlare, glare, new String[1]);
             if (map == null) throw new IllegalStateException(method.name + " produced no map");
             HardwareFeatureExtractor.Edges edges = new HardwareFeatureExtractor.Edges(
                     gray, map, map.clone(), map.clone(), glare[0]);
@@ -803,7 +923,8 @@ public final class EdgeMethodLab {
         try {
             long startedAt = System.currentTimeMillis();
             // Unpinned: the lab looks at one photograph, so each method decides for itself.
-            edges = method.operator.apply(gray, src, null, new boolean[1]);
+            String[] note = new String[1];
+            edges = method.operator.apply(gray, src, null, new boolean[1], note);
             long elapsedMs = System.currentTimeMillis() - startedAt;
 
             double density = 100.0 * Core.countNonZero(edges) / (edges.rows() * edges.cols());
@@ -821,7 +942,7 @@ public final class EdgeMethodLab {
 
             return new MethodResult(method.id, method.name, method.summary,
                     toDisplayBitmap(edges), density, contours, boxes, elapsedMs,
-                    method.shipped, inUse, null);
+                    method.shipped, inUse, null, note[0]);
         } catch (Throwable t) {
             Log.e(TAG, method.name + " failed", t);
             String reason = t.getMessage() == null ? t.getClass().getSimpleName() : t.getMessage();

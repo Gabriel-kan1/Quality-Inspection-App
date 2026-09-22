@@ -89,14 +89,55 @@ public class EdgeMethodLabTest {
         assertTrue("the production pipeline must be in the catalogue", shippedAt >= 0);
 
         // A v2 shown above the stack it improves on reads as just another operator. The
-        // ordering is the argument: bare operators, then what ships, then what could replace it.
+        // ordering is the argument: bare operators, then what ships, then what could replace
+        // it — the tuned variants, and after them the adaptive stage built on the last of them.
         List<String> after = new ArrayList<>();
         for (int i = shippedAt + 1; i < methods.size(); i++) after.add(methods.get(i).name);
         assertFalse("the tuned variants are shown after the shipped pipeline", after.isEmpty());
+        boolean adaptiveSeen = false;
         for (String name : after) {
+            if (name.startsWith("Adaptive")) {
+                adaptiveSeen = true;
+                continue;
+            }
+            assertFalse("a tuned variant after the adaptive entries: " + name, adaptiveSeen);
             assertTrue("only tuned variants may follow the shipped pipeline, found: " + name,
                     name.startsWith("Hybrid v"));
         }
+        assertTrue("the adaptive stage and its rungs close the list", adaptiveSeen);
+    }
+
+    // ── The adaptive stage ───────────────────────────────────────────────────
+
+    /**
+     * Every rung is a catalogue entry under the id the enum names, so a layout that records
+     * a rung, and an operator who pins one in the lab, both refer to something that exists.
+     * The middle rung is v6 itself: two cards with identical output would read as two methods.
+     */
+    @Test
+    public void everyRungIsCataloguedAndTheMiddleOneIsV6() {
+        for (PreprocessingStrength rung : PreprocessingStrength.values()) {
+            EdgeMethodLab.Method m = EdgeMethodLab.byId(rung.id);
+            assertNotNull("no catalogue entry for rung " + rung, m);
+            assertEquals(rung, PreprocessingStrength.byId(m.id));
+            assertEquals(rung, PreprocessingStrength.byLabel(rung.label));
+        }
+        assertEquals("hybrid-v6", PreprocessingStrength.MEDIUM.id);
+        assertTrue(EdgeMethodLab.nameOf(PreprocessingStrength.MEDIUM.id).startsWith("Hybrid v6"));
+        assertNotNull(EdgeMethodLab.byId(EdgeMethodLab.ADAPTIVE_ID));
+        assertNull(PreprocessingStrength.byId("no-such-rung"));
+        assertNull(PreprocessingStrength.byId(null));
+    }
+
+    @Test
+    public void aNoteTravelsWithTheResultAndIsOptional() {
+        EdgeMethodLab.MethodResult plain = result(3, 40, 1.0, 12);
+        assertNull(plain.note);
+        EdgeMethodLab.MethodResult noted = new EdgeMethodLab.MethodResult("adaptive",
+                "Adaptive", "Summary", null, 1.0, 40, 3, 12, false, false, null,
+                "MEDIUM preprocessing — noise 3.3, edge contrast 121");
+        assertTrue(noted.note.startsWith("MEDIUM"));
+        assertFalse(noted.failed());
     }
 
     @Test
@@ -169,11 +210,20 @@ public class EdgeMethodLabTest {
         assertTrue("the shipped id must be in the catalogue", seen.contains(EdgeMethodLab.SHIPPED_ID));
     }
 
+    /**
+     * The adaptive stage runs until someone chooses. The shipped stack keeps its badge as
+     * the pipeline the detector was tuned with, but it is not what runs: its own per-image
+     * adaptation was found firing backwards, and v6 beat it 20/26 to 9/26 against ground truth.
+     */
     @Test
-    public void theShippedStackRunsUntilSomethingIsChosen() {
-        assertEquals(EdgeMethodLab.SHIPPED_ID, EdgeMethodLab.selectedId(ctx()));
-        assertTrue(EdgeMethodLab.shippedSelected(ctx()));
-        assertTrue(EdgeMethodLab.selected(ctx()).shipped);
+    public void theAdaptiveStageRunsUntilSomethingIsChosen() {
+        assertEquals(EdgeMethodLab.ADAPTIVE_ID, EdgeMethodLab.DEFAULT_ID);
+        assertEquals(EdgeMethodLab.DEFAULT_ID, EdgeMethodLab.selectedId(ctx()));
+        assertTrue(EdgeMethodLab.defaultSelected(ctx()));
+        assertTrue(EdgeMethodLab.adaptiveSelected(ctx()));
+        assertFalse(EdgeMethodLab.shippedSelected(ctx()));
+        assertFalse(EdgeMethodLab.selected(ctx()).shipped);
+        assertTrue(EdgeMethodLab.selectedName(ctx()).startsWith("Adaptive"));
     }
 
     @Test
@@ -187,15 +237,19 @@ public class EdgeMethodLabTest {
 
         EdgeMethodLab.select(ctx(), EdgeMethodLab.SHIPPED_ID);
         assertTrue(EdgeMethodLab.shippedSelected(ctx()));
+        assertFalse(EdgeMethodLab.defaultSelected(ctx()));
+
+        EdgeMethodLab.select(ctx(), EdgeMethodLab.ADAPTIVE_ID);
+        assertTrue(EdgeMethodLab.adaptiveSelected(ctx()));
     }
 
     /**
      * An id this build does not know — from a newer build, or a typo in the preferences file —
-     * must fall back to the stack the detector was tuned with, never run something arbitrary
-     * and never crash an inspection.
+     * must fall back to the default, never run something arbitrary and never crash an
+     * inspection.
      */
     @Test
-    public void anUnknownIdFallsBackToTheShippedStack() {
+    public void anUnknownIdFallsBackToTheDefault() {
         EdgeMethodLab.select(ctx(), "hybrid-v4");
         EdgeMethodLab.select(ctx(), "no-such-method");
         assertEquals("an unknown id must be ignored, not stored",
@@ -203,8 +257,8 @@ public class EdgeMethodLabTest {
 
         ctx().getSharedPreferences(EdgeMethodLab.PREFS, Context.MODE_PRIVATE).edit()
                 .putString(EdgeMethodLab.KEY_SELECTED, "from-a-future-build").apply();
-        assertEquals(EdgeMethodLab.SHIPPED_ID, EdgeMethodLab.selectedId(ctx()));
-        assertTrue(EdgeMethodLab.selected(ctx()).shipped);
+        assertEquals(EdgeMethodLab.DEFAULT_ID, EdgeMethodLab.selectedId(ctx()));
+        assertEquals(EdgeMethodLab.DEFAULT_ID, EdgeMethodLab.selected(ctx()).id);
         assertNull(EdgeMethodLab.byId("from-a-future-build"));
         assertEquals("from-a-future-build", EdgeMethodLab.nameOf("from-a-future-build"));
     }

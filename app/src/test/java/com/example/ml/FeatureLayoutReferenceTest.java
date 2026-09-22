@@ -147,4 +147,73 @@ public class FeatureLayoutReferenceTest {
         assertNotNull(loaded);
         assertNull("a layout that predates the choice must not claim one", loaded.edgeMethodId());
     }
+
+    /**
+     * The sizes inspections have measured at each slot survive a save — they are what the
+     * adaptive edge stage learns from, and a history that reset on every launch would leave
+     * the expected size pinned to the reference box forever.
+     */
+    @Test
+    public void roundTripsTheLearnedSizeHistoryAndTheRung() {
+        FeatureLayout layout = new FeatureLayout();
+        layout.setReferenceUri(REF);
+        layout.setImageSize(1280, 960);
+        layout.setEdgeMethodId("adaptive");
+        layout.setPreprocessingRung("strong");
+        layout.addSlot("screw", 0.2f, 0.2f, 0.05f, 0.04f);
+        layout.addSlot("stud", 0.8f, 0.8f, 0.05f, 0.05f);
+        layout.recordSizeRatio(1, 0.55f);
+        layout.recordSizeRatio(1, 0.60f);
+        layout.save(ctx(), PART);
+
+        FeatureLayout loaded = FeatureLayout.loadFor(ctx(), PART, REF);
+        assertNotNull(loaded);
+        assertEquals("strong", loaded.preprocessingRung());
+        assertEquals(2, loaded.slotById(1).sizeEvidence());
+        assertEquals(0.55f, loaded.slotById(1).sizeRatios.get(0), 1e-6f);
+        assertEquals(0.60f, loaded.slotById(1).expectedSizeFactor(), 1e-6f);
+        assertEquals(0, loaded.slotById(2).sizeEvidence());
+        assertEquals(1f, loaded.slotById(2).expectedSizeFactor(), 0f);
+
+        labelled(REF).save(ctx(), PART);
+        loaded = FeatureLayout.loadFor(ctx(), PART, REF);
+        assertNotNull(loaded);
+        assertNull("a layout that predates the adaptive stage names no rung",
+                loaded.preprocessingRung());
+    }
+
+    /**
+     * Filtering to critical slots must keep the persisted ids: a finding at "slot 3" has to
+     * mean the same slot in the file the measured size is written back to. Renumbering would
+     * record a fastener's size against its neighbour.
+     */
+    @Test
+    public void retainingKeepsIdsSizesAndHistory() {
+        FeatureLayout layout = new FeatureLayout();
+        layout.setReferenceUri(REF);
+        layout.setImageSize(1280, 960);
+        layout.setEdgeMethodId("adaptive");
+        layout.setPreprocessingRung("medium");
+        layout.addSlot("screw", 0.2f, 0.2f, 0.05f, 0.04f);     // id 1
+        layout.addSlot("scratches", 0.5f, 0.5f, 0.02f, 0.02f); // id 2
+        layout.addSlot("stud", 0.8f, 0.8f, 0.05f, 0.05f);      // id 3
+        layout.recordSizeRatio(3, 0.7f);
+
+        FeatureLayout kept = layout.retaining(s -> !"scratches".equals(s.type));
+        assertEquals(2, kept.slots().size());
+        assertNull(kept.slotById(2));
+        FeatureLayout.Slot stud = kept.slotById(3);
+        assertNotNull("the third slot keeps its id, not a renumbered 2", stud);
+        assertEquals("stud", stud.type);
+        assertEquals(0.05f, stud.w, 1e-6f);
+        assertEquals(1, stud.sizeEvidence());
+        assertEquals(REF, kept.referenceUri());
+        assertEquals(1280, kept.imageWidth());
+        assertEquals("adaptive", kept.edgeMethodId());
+        assertEquals("medium", kept.preprocessingRung());
+
+        // A copy, not a view: recording into it leaves the original untouched.
+        kept.recordSizeRatio(3, 0.7f);
+        assertEquals(1, layout.slotById(3).sizeEvidence());
+    }
 }

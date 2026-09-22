@@ -239,6 +239,12 @@ public class HardwareFeatureExtractor {
          * different method can be told apart from a genuinely different part.
          */
         public String edgeMethodId;
+        /**
+         * What the adaptive edge stage chose for this image and why, or null when the method
+         * was not adaptive (or did not run). The rung it names is the one that produced every
+         * box in {@link #features}; the results screen reports it beside the reference's.
+         */
+        public AdaptivePreprocessing.Choice preprocessing;
 
         public AnalysisResult(List<ExtractedFeature> features, Bitmap processedBitmap) {
             this(features, processedBitmap, null, false);
@@ -278,7 +284,16 @@ public class HardwareFeatureExtractor {
         }
     }
 
-    /** Computes an adaptive bilateral filter diameter based on the noise level */
+    /**
+     * Computes an adaptive bilateral filter diameter based on the noise level.
+     *
+     * <p>Kept exactly as it shipped, because this is the stack the Edge Lab's shipped row and
+     * the {@code python/} mirrors reproduce — but it is not a noise measure. Laplacian variance
+     * is dominated by edges, so it hands the least smoothing to the sharpest photographs
+     * ({@code python/hybrid_v2_study.py}: "firing backwards"). {@link ImageQuality} is the
+     * measured replacement, and the default edge stage ({@link AdaptivePreprocessing}) uses
+     * that instead.
+     */
     private static int computeAdaptiveBilateralD(Mat gray) {
         // compute Laplacian of the grayscale image
         Mat laplacian = new Mat();
@@ -453,6 +468,23 @@ public class HardwareFeatureExtractor {
     public static AnalysisResult extractFeatures(Context context, String uriString,
                                                  ReferenceLibrary library, CropSink sink,
                                                  Boolean forceGlareCorrection) {
+        return extractFeatures(context, uriString, library, sink, forceGlareCorrection, null);
+    }
+
+    /**
+     * As above, with the expected sizes of the part's features, when known.
+     *
+     * @param sizePrior what size each critical feature should be, from the part's labelled
+     *        reference layout refined by past inspections — or null when there is no such
+     *        layout (reference setup, a part without one, the legacy re-classifying path).
+     *        Only the adaptive edge stage reads it: with a prior it runs every eligible
+     *        preprocessing strength and keeps the one whose boxes best reproduce those sizes;
+     *        without one it decides on the image alone. See {@link AdaptivePreprocessing}.
+     */
+    public static AnalysisResult extractFeatures(Context context, String uriString,
+                                                 ReferenceLibrary library, CropSink sink,
+                                                 Boolean forceGlareCorrection,
+                                                 SizePrior sizePrior) {
         List<ExtractedFeature> features = new ArrayList<>();
         Bitmap diagnosticBitmap = null;
 
@@ -487,6 +519,7 @@ public class HardwareFeatureExtractor {
         Mat rgbaVisual = null;
         boolean glareApplied = false;
         ScaleCalibration calibration = null;
+        AdaptivePreprocessing.Choice[] preprocessing = new AdaptivePreprocessing.Choice[1];
         // Opened once per image, not per crop: constructing a region decoder re-reads the
         // file header, and there can be dozens of detections. Null is a normal result — the
         // source may be smaller than the working image, or not region-decodable at all — and
@@ -504,7 +537,7 @@ public class HardwareFeatureExtractor {
 
             // STEP 2 — preprocessing + edge detection (shared with extractCrops()), by
             // whichever method the operator chose in the Edge Lab.
-            e = computeEdges(context, src, forceGlareCorrection);
+            e = computeEdges(context, src, forceGlareCorrection, sizePrior, preprocessing);
             if (e == null) {
                 Log.e(TAG, "Edge stage produced nothing for " + filename + " — no detections.");
                 AnalysisResult empty = new AnalysisResult(features, null, null, false);
@@ -545,6 +578,7 @@ public class HardwareFeatureExtractor {
         result.workingWidth = workingWidth;
         result.workingHeight = workingHeight;
         result.edgeMethodId = EdgeMethodLab.selectedId(context);
+        result.preprocessing = preprocessing[0];
         return result;
     }
 
@@ -836,7 +870,28 @@ public class HardwareFeatureExtractor {
      * caller reports as no detections rather than quietly running a different method.
      */
     static Edges computeEdges(Context context, Mat src, Boolean forceGlareCorrection) {
+        return computeEdges(context, src, forceGlareCorrection, null, null);
+    }
+
+    /**
+     * As above, with what the adaptive stage needs: the part's expected sizes, when there is
+     * a labelled reference to take them from, and somewhere to report what it chose. Any
+     * other method ignores both.
+     */
+    static Edges computeEdges(Context context, Mat src, Boolean forceGlareCorrection,
+                              SizePrior sizePrior, AdaptivePreprocessing.Choice[] choiceOut) {
         EdgeMethodLab.Method method = EdgeMethodLab.selected(context);
+        if (EdgeMethodLab.ADAPTIVE_ID.equals(method.id)) {
+            try {
+                return AdaptivePreprocessing.compute(src, forceGlareCorrection, sizePrior,
+                        choiceOut);
+            } catch (Throwable t) {
+                // Same contract as computeWith: a method that throws yields no detections,
+                // reported as such, rather than a silent switch to a different method.
+                Log.e(TAG, "Adaptive edge stage failed; nothing detected", t);
+                return null;
+            }
+        }
         if (!method.shipped) Log.d(TAG, "Edge stage: " + method.name + " (chosen in Edge Lab)");
         return EdgeMethodLab.computeWith(method, src, forceGlareCorrection);
     }

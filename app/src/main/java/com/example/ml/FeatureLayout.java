@@ -40,6 +40,18 @@ import java.util.Locale;
  * {@code FeatureLocalisation.SIZE_TOLERANCE}. Layouts saved before sizes were recorded carry
  * none, and such slots are simply not judged.
  *
+ * <h3>Learned size</h3>
+ * The reference box is one detection of the fastener, and a detection can be wrong in size:
+ * a shadow or scratch beside the hardware merges into the box and it comes out larger than
+ * the fastener, or an edge is lost and it comes out smaller. Each slot therefore also keeps
+ * the size ratios observed at it across filed inspections ({@link Slot#sizeRatios}), and
+ * {@link Slot#expectedSizeFactor()} — the median of those ratios with the reference counted
+ * once at 1.0 — is the running estimate of how big the hardware there really is relative to
+ * the box the reference drew. {@link SizePrior} uses it to arbitrate between preprocessing
+ * strengths: the one whose boxes come closest to the learned sizes is the one that neither
+ * merged a shadow in nor cropped a fastener. The size <em>check</em> itself still compares
+ * against the reference box, which is what the filed reports say it does.
+ *
  * <h3>Dimension statistics</h3>
  * Each slot accumulates the sizes measured for it. Median and MAD are kept rather than mean
  * and standard deviation, deliberately: an occasional genuinely out-of-spec part would drag
@@ -68,6 +80,12 @@ public final class FeatureLayout {
     public static float OUTLIER_MADS = 3.0f;
     /** For normally distributed data, sigma ≈ 1.4826 × MAD. */
     private static final double SIGMA_PER_MAD = 1.4826;
+    /**
+     * Most recent observed size ratios kept per slot. Enough for the median to settle and to
+     * outvote a wrong reference box many times over; bounded so a part inspected daily does
+     * not grow its layout file without limit.
+     */
+    static final int MAX_SIZE_HISTORY = 50;
 
     public static final class Slot {
         public final int id;
@@ -84,6 +102,12 @@ public final class FeatureLayout {
         public final float h;
         /** Every size measured for this slot, in mm, across accepted inspections. */
         public final List<Double> samples = new ArrayList<>();
+        /**
+         * Linear size of the detection found at this slot over the size the reference box
+         * predicted, one entry per filed inspection where the slot was present and judged —
+         * {@code SlotResult.sizeRatio}, accumulated. Newest last; see {@link #MAX_SIZE_HISTORY}.
+         */
+        public final List<Float> sizeRatios = new ArrayList<>();
 
         Slot(int id, String type, float x, float y, float w, float h) {
             this.id = id;
@@ -97,6 +121,31 @@ public final class FeatureLayout {
         /** Whether the reference recorded a box size for this slot at all. */
         public boolean hasSize() {
             return w > 0f && h > 0f;
+        }
+
+        /**
+         * How large the hardware at this slot has measured relative to the reference box,
+         * as a linear factor: the median of every observed ratio with the reference itself
+         * counted once at 1.0. Exactly 1.0 until an inspection has been filed.
+         *
+         * A median rather than a mean, and the reference as one vote rather than a prior it
+         * takes many observations to move: if the reference box swallowed a shadow, two
+         * inspections that saw the fastener at 0.55 of it are already enough to say so, and
+         * one inspection that merged the same shadow again is not enough to hide it.
+         */
+        public float expectedSizeFactor() {
+            if (sizeRatios.isEmpty()) return 1f;
+            List<Float> votes = new ArrayList<>(sizeRatios);
+            votes.add(1f);
+            java.util.Collections.sort(votes);
+            int n = votes.size();
+            return n % 2 == 1 ? votes.get(n / 2)
+                    : (votes.get(n / 2 - 1) + votes.get(n / 2)) / 2f;
+        }
+
+        /** How many filed inspections the size estimate rests on. */
+        public int sizeEvidence() {
+            return sizeRatios.size();
         }
 
         public boolean hasLimits() {
@@ -203,6 +252,47 @@ public final class FeatureLayout {
         }
     }
 
+    /**
+     * Records the size ratio an inspection measured at a slot.
+     *
+     * Callers pass only PRESENT findings that were size-judged: a WRONG_TYPE slot holds a
+     * different fastener whose size says nothing about the expected one, and an unjudged
+     * finding has no ratio. Findings from failed parts are fine — a fastener present at its
+     * slot is a valid observation of that fastener whatever went wrong elsewhere — and a
+     * genuinely wrong-sized one is a minority the median absorbs.
+     */
+    public void recordSizeRatio(int slotId, float ratio) {
+        Slot s = slotById(slotId);
+        if (s == null || Float.isNaN(ratio) || Float.isInfinite(ratio) || ratio <= 0f) return;
+        s.sizeRatios.add(ratio);
+        while (s.sizeRatios.size() > MAX_SIZE_HISTORY) s.sizeRatios.remove(0);
+    }
+
+    /**
+     * A copy holding only the slots {@code keep} accepts, with their ids, sizes and histories
+     * intact and every layout-level field carried over.
+     *
+     * Ids are preserved on purpose. A filtered copy that renumbered its slots would report
+     * findings under ids the persisted layout does not have, and a size ratio recorded against
+     * such a finding would land on the wrong slot or none.
+     */
+    public FeatureLayout retaining(java.util.function.Predicate<Slot> keep) {
+        FeatureLayout kept = new FeatureLayout();
+        kept.referenceUri = referenceUri;
+        kept.imageWidth = imageWidth;
+        kept.imageHeight = imageHeight;
+        kept.edgeMethodId = edgeMethodId;
+        kept.preprocessingRung = preprocessingRung;
+        for (Slot s : slots) {
+            if (!keep.test(s)) continue;
+            Slot copy = new Slot(s.id, s.type, s.x, s.y, s.w, s.h);
+            copy.samples.addAll(s.samples);
+            copy.sizeRatios.addAll(s.sizeRatios);
+            kept.slots.add(copy);
+        }
+        return kept;
+    }
+
     // ── Persistence ──────────────────────────────────────────────────────────
 
     public static File fileFor(Context context, String partId) {
@@ -275,6 +365,24 @@ public final class FeatureLayout {
         this.edgeMethodId = id;
     }
 
+    /**
+     * Label of the {@link PreprocessingStrength} the reference was detected with when the edge
+     * method was adaptive, or null when it was not (or the layout predates the choice).
+     *
+     * Informational: an inspection under the adaptive method is entitled to pick a different
+     * rung — that is the point — and the results screen names both so a size disagreement can
+     * be read with that in mind.
+     */
+    private String preprocessingRung;
+
+    public String preprocessingRung() {
+        return preprocessingRung;
+    }
+
+    public void setPreprocessingRung(String label) {
+        this.preprocessingRung = label;
+    }
+
 
     /**
      * The shorter side of a slot's reference box in working-image pixels, or NaN when either
@@ -329,6 +437,11 @@ public final class FeatureLayout {
                 JSONArray samples = new JSONArray();
                 for (double d : s.samples) samples.put(d);
                 o.put("samples", samples);
+                if (!s.sizeRatios.isEmpty()) {
+                    JSONArray ratios = new JSONArray();
+                    for (float r : s.sizeRatios) ratios.put((double) r);
+                    o.put("sizeRatios", ratios);
+                }
                 arr.put(o);
             }
             JSONObject root = new JSONObject();
@@ -339,6 +452,7 @@ public final class FeatureLayout {
                 root.put("imageHeight", imageHeight);
             }
             if (edgeMethodId != null) root.put("edgeMethod", edgeMethodId);
+            if (preprocessingRung != null) root.put("preprocessing", preprocessingRung);
             try (FileOutputStream fos = new FileOutputStream(fileFor(context, partId))) {
                 fos.write(root.toString().getBytes(StandardCharsets.UTF_8));
             }
@@ -361,6 +475,7 @@ public final class FeatureLayout {
             layout.referenceUri = root.optString("referenceUri", null);
             layout.setImageSize(root.optInt("imageWidth", 0), root.optInt("imageHeight", 0));
             layout.edgeMethodId = root.optString("edgeMethod", null);
+            layout.preprocessingRung = root.optString("preprocessing", null);
             for (int i = 0; i < arr.length(); i++) {
                 JSONObject o = arr.getJSONObject(i);
                 // Sizes are optional: layouts written before they were recorded have none,
@@ -371,6 +486,12 @@ public final class FeatureLayout {
                 JSONArray samples = o.optJSONArray("samples");
                 if (samples != null) {
                     for (int j = 0; j < samples.length(); j++) s.samples.add(samples.getDouble(j));
+                }
+                JSONArray ratios = o.optJSONArray("sizeRatios");
+                if (ratios != null) {
+                    for (int j = 0; j < ratios.length(); j++) {
+                        s.sizeRatios.add((float) ratios.getDouble(j));
+                    }
                 }
                 layout.slots.add(s);
             }
