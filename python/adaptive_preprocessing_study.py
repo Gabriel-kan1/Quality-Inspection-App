@@ -61,8 +61,10 @@ truth over the interchangeable pairs:
 
 Below 0.08 the rule made bad overrides (a light rung winning on size while over-detecting);
 above 0.10 it stopped helping under blur. A fourth, heavier-bilateral rung (d=9, the knob the
-first draft moved) was tried as a candidate-only entry: chosen at most once per condition,
-neutral on counts, seven times the cost. Not adopted.
+first draft moved) was tried as a candidate-only entry: chosen at most once per condition and
+neutral on counts. Not adopted — for lack of benefit, not cost: bilateral 9 is about 12% more
+per rung (23.5 against 20.9 ms). What made the first draft's strong rung expensive (48 ms) was
+its 7px median, not its bilateral; OpenCV's fast median path stops at 5px.
 
 The honest headline is that v6 is already robust to noise — the per-image gain from the
 noise rung alone is modest (s=10: 20 vs 31) — and the larger wins are the soft-photo rung
@@ -80,9 +82,13 @@ SECTIONS
      detector — and scored by how far their sizes sit from A's. The rung that agrees best
      is compared, on count accuracy, with the noise-chosen rung and every fixed rung.
   4. Cost per rung.
+  5. (--alternatives) The rungs that were NOT adopted, on the same conditions: the first
+     draft's aperture ladder, a heavier bilateral, and the CLAHE-clip variants the final
+     rungs were chosen from. This is the evidence for the LADDER comment below.
 
 Run:  python python/adaptive_preprocessing_study.py
-      python python/adaptive_preprocessing_study.py --quick     (skips section 3)
+      python python/adaptive_preprocessing_study.py --quick          (skips section 3)
+      python python/adaptive_preprocessing_study.py --alternatives   (adds section 5)
 
 Needs opencv-python and numpy, plus the gitignored assets in
 app/src/main/assets/chassis_images/. Desktop OpenCV against the app's Android build; treat
@@ -428,10 +434,55 @@ def section_cost(repeats=5):
         print(f"   {rung:<10}{sorted(samples)[len(samples) // 2]:>7.1f} ms/img")
 
 
+# ─────────────────────────────────────────────
+# 5. The rungs that were not adopted
+# ─────────────────────────────────────────────
+ALTERNATIVES = {
+    # The first draft: strength as filter apertures. Wrong in both directions.
+    "draft light 3/3/3":     dict(V6, bilat=3, median=3, gauss=3),
+    "draft strong 9/7/7":    dict(V6, bilat=9, median=7, gauss=7),
+    "draft max 11/9/9":      dict(V6, bilat=11, median=9, gauss=9),
+    # Heavier bilateral only, apertures otherwise v6's: fewer extras under noise, but
+    # loses fasteners on clean photographs and costs several times more.
+    "bilateral 9":           dict(V6, bilat=9, median=5, gauss=5),
+    # The CLAHE lever, and the two steps to the adopted strong rung.
+    "clahe 0.5":             dict(V6, bilat=5, median=5, gauss=5, clahe_clip=0.5),
+    "clahe 0.5 otsu1.0 (*)": LADDER["strong"],
+    # Toward the adopted light rung: the median aperture and the clip both matter.
+    "5/3/3":                 dict(V6, bilat=5, median=3, gauss=3),
+    "5/5/5 clahe 2.0":       dict(V6, bilat=5, median=5, gauss=5, clahe_clip=2.0),
+    "5/5/3 clahe 2.0 (*)":   LADDER["light"],
+    "medium = v6 (*)":       LADDER["medium"],
+}
+
+
+def section_alternatives():
+    print("\n5. RUNGS NOT ADOPTED (weighted / misses / extras; (*) marks the three adopted)")
+    conditions = [("clean", lambda i: i), ("s=10", lambda i: noisy(i, 10)),
+                  ("s=20", lambda i: noisy(i, 20)), ("s=30", lambda i: noisy(i, 30)),
+                  ("blur5", lambda i: blurred(i, 5)), ("blur9", lambda i: blurred(i, 9)),
+                  ("blur13", lambda i: blurred(i, 13))]
+    imgs = {c: {n: fn(image(n)) for n in GTRUTH.GT} for c, fn in conditions}
+    print(f"   {'candidate':<24}" + "".join(f"{c:>14}" for c, _ in conditions) + f"{'ms/img':>8}")
+    six = [image(n) for n in HV.NAMES if image(n) is not None]
+    for label, p in ALTERNATIVES.items():
+        cells = []
+        for c, _ in conditions:
+            s = gt_score({n: len(boxes(i, p)) for n, i in imgs[c].items()})
+            cells.append(f"{s['weighted']:>4}/{s['fn']:>3}/{s['fp']:>4}")
+        t0 = time.perf_counter()
+        for im in six:
+            HV.edges_for(im, HV.cfg(**p))
+        ms = 1000 * (time.perf_counter() - t0) / len(six)
+        print(f"   {label:<24}" + "".join(f"{x:>14}" for x in cells) + f"{ms:>8.0f}")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--quick", action="store_true", help="skip the pair study (section 3)")
+    ap.add_argument("--alternatives", action="store_true",
+                    help="also score the rungs that were not adopted (section 5)")
     ap.add_argument("--thresholds", type=float, nargs=3,
                     metavar=("STRONG", "SOFT", "LIGHT_ELIGIBLE"),
                     default=(12.0, 20.0, 40.0),
@@ -452,6 +503,8 @@ def main():
     if not args.quick:
         section_selection(tuple(args.thresholds), args.margin)
     section_cost()
+    if args.alternatives:
+        section_alternatives()
 
 
 if __name__ == "__main__":
