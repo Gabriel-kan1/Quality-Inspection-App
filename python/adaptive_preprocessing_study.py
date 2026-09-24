@@ -39,9 +39,12 @@ shipped stack bucketed spans 22-2877 on the CLEAN assets alone. Against ground t
 (weighted = 2 x misses + extras, 26 photographs):
 
                    clean   s=5   s=7  s=10  s=20   blur5  blur7  blur9  blur13
-    light            255   234   236   292   361     113     31     24      36
-    medium (= v6)     19    22    23    31    26      27     28     41     101
+    light            254   235   228   291   364     113     31     24      36
+    medium (= v6)     19    22    23    31    26      27     28     40     101
     strong            28    22    22    20    16      25     33     54     111
+
+(Re-measured after fragment_rescue_study's change to the shared geometry filter. Only the
+light rung and one medium cell moved, by a count or two; every threshold below is unchanged.)
 
 So: STRONG from a noise estimate of about 12 (the s=7 crossover; also where the textured
 plates sit, on which the two rungs tie), LIGHT below an edge contrast of about 20 (blur9),

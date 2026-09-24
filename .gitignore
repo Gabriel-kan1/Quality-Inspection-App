@@ -38,3 +38,7 @@ debug.keystore
 /CLAUDE.md
 /.claude/
 /scripts/
+
+# Working findings kept on this machine only -- write-ups in progress that are not
+# ready for the FYP "Report Structures" folder and should not sync anywhere.
+/findings/

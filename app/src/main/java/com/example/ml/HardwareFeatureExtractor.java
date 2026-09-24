@@ -126,6 +126,24 @@ public class HardwareFeatureExtractor {
     /** Upper bound on boxes carried forward from one image; see the safety valve in findFeatureBoxes. */
     private static final int MAX_DETECTIONS = 300;
     /**
+     * Whether a contour below the dynamic area floor may still join a box that passed it.
+     *
+     * <p>The area filter runs <em>before</em> {@link #mergeNearbyBoxes}, so a feature whose
+     * outline Canny broke into pieces has those pieces judged individually against a floor
+     * sized for whole fasteners — and discarded, even where the merge's own guards would
+     * have rejoined them. Measured on {@code screws_none.jpg}, which holds two identical
+     * studs: the shipped stack boxed one 68x68 and the other 44x49, because the second one's
+     * pin fragmented into contours of area 366 and 356 against a floor of 468. Both touched
+     * the surviving collar box, and the merge would have accepted them at a fill ratio of
+     * 0.94. See {@code python/fragment_rescue_study.py}.
+     *
+     * <p>A rescued fragment may grow an existing box and may never become a box of its own,
+     * so this can add no detection — which is what makes it safe against the count ground
+     * truth. Measured there: identical counts and stability on all 26 photographs for the
+     * shipped stack and all three adaptive rungs, and no change in size repeatability or cost.
+     */
+    private static final boolean RESCUE_ADJACENT_FRAGMENTS = true;
+    /**
      * Logs every box before and after merging. Verbose — for tuning detection, not normal use.
      *
      * Off by default: at the counts the bundled assets produce this is up to ~110 log lines
@@ -744,9 +762,12 @@ public class HardwareFeatureExtractor {
                 validAreas.size() - referencePool.size(), validAreas.size()));
 
         List<Rect> sizedBoxes = new ArrayList<>();
+        List<Rect> belowFloor = new ArrayList<>();
         for (int i = 0; i < validBoxes.size(); i++) {
             if (validAreas.get(i) >= dynamicMinArea) {
                 sizedBoxes.add(validBoxes.get(i));
+            } else {
+                belowFloor.add(validBoxes.get(i));
             }
         }
 
@@ -770,20 +791,34 @@ public class HardwareFeatureExtractor {
             Collections.sort(sizedBoxes, (a, b) -> Long.compare(
                     (long) b.width * b.height, (long) a.width * a.height));
             sizedBoxes = new ArrayList<>(sizedBoxes.subList(0, MAX_DETECTIONS));
+            // The valve exists to bound the O(n^2) stages below; adding rescued fragments
+            // back would defeat it on exactly the frames it fires on.
+            belowFloor = new ArrayList<>();
         }
 
-        // 6. Nested Box Removal & Proximity Merge
-        List<Rect> deNested = removeNestedBoxes(sizedBoxes);
-        List<Rect> boxes = mergeNearbyBoxes(deNested, PROXIMITY_THRESHOLD);
+        // 6. Fragment rescue, Nested Box Removal & Proximity Merge
+        List<Rect> boxes = assembleBoxes(sizedBoxes, belowFloor);
 
         // Geometry dump: which boxes existed before merging and what they became. Counts alone
         // can't distinguish "lines swallowed bolt heads" from "adjacent bolt heads merged
-        // together", and those need opposite fixes.
+        // together", and those need opposite fixes. The sub-floor contours are listed too,
+        // since which of them the rescue offered to the merge is the other thing that decides
+        // a box's final size.
         if (DEBUG_GEOMETRY) {
-            Log.d(TAG, "  pre-merge boxes (" + deNested.size() + "):");
-            for (Rect r : deNested) {
+            Log.d(TAG, "  boxes above the area floor (" + sizedBoxes.size() + "):");
+            for (Rect r : sizedBoxes) {
                 Log.d(TAG, String.format(Locale.US, "    %dx%d at (%d,%d) aspect=%.2f area=%d",
                         r.width, r.height, r.x, r.y, (float) r.width / r.height, r.width * r.height));
+            }
+            Log.d(TAG, "  contours below it (" + belowFloor.size() + "), rescued where adjacent:");
+            for (Rect r : belowFloor) {
+                boolean touches = false;
+                for (Rect s : sizedBoxes) {
+                    if (adjacent(r, s, PROXIMITY_THRESHOLD)) { touches = true; break; }
+                }
+                Log.d(TAG, String.format(Locale.US, "    %dx%d at (%d,%d) area=%d  %s",
+                        r.width, r.height, r.x, r.y, r.width * r.height,
+                        touches ? "RESCUED" : "dropped"));
             }
             Log.d(TAG, "  post-merge boxes (" + boxes.size() + "):");
             for (Rect r : boxes) {
@@ -794,7 +829,8 @@ public class HardwareFeatureExtractor {
 
         Log.d(TAG, "findFeatureBoxes: " + contours.size() + " contours -> "
                 + validBoxes.size() + " passed geometry (" + rejectedAspect + " rejected as lines) -> "
-                + sizedBoxes.size() + " passed area -> " + boxes.size() + " after merge");
+                + sizedBoxes.size() + " passed area (" + belowFloor.size() + " below it) -> "
+                + boxes.size() + " after merge");
 
         // Second half of the safety valve: every surviving box costs an encoder inference
         // and a PNG write, so bound what the caller pays for as well as what the merge
@@ -1018,8 +1054,72 @@ public class HardwareFeatureExtractor {
         }
     }
 
+    /**
+     * Turns the boxes that passed the area floor, plus the ones that did not, into the final
+     * detections: rescue, de-nest, merge, then drop anything the rescue alone produced.
+     *
+     * <p>Package-visible and free of native calls so the rule can be unit-tested — {@code
+     * org.opencv.core.Rect} is a plain Java class, and everything here is arithmetic on it.
+     *
+     * @param sized      contours at or above the dynamic area floor
+     * @param belowFloor contours under it, candidates for rescue
+     */
+    static List<Rect> assembleBoxes(List<Rect> sized, List<Rect> belowFloor) {
+        List<Rect> candidates = new ArrayList<>(sized);
+        List<Boolean> anchors = new ArrayList<>();
+        for (int i = 0; i < sized.size(); i++) anchors.add(Boolean.TRUE);
+
+        // A contour below the floor that TOUCHES one above it is a fragment of that feature
+        // rather than noise of its own. Adjacency is the merge stage's own test, so nothing
+        // is offered to the merge that the merge would not have considered anyway.
+        if (RESCUE_ADJACENT_FRAGMENTS && !sized.isEmpty() && belowFloor != null) {
+            for (Rect r : belowFloor) {
+                for (Rect s : sized) {
+                    if (adjacent(r, s, PROXIMITY_THRESHOLD)) {
+                        candidates.add(r);
+                        anchors.add(Boolean.FALSE);
+                        break;
+                    }
+                }
+            }
+        }
+
+        List<Integer> kept = keptAfterNesting(candidates);
+        List<Rect> deNested = new ArrayList<>(kept.size());
+        boolean[] deAnchors = new boolean[kept.size()];
+        for (int i = 0; i < kept.size(); i++) {
+            deNested.add(candidates.get(kept.get(i)));
+            deAnchors[i] = anchors.get(kept.get(i));
+        }
+
+        boolean[] merged = new boolean[deNested.size()];
+        List<Rect> boxes = mergeNearbyBoxes(deNested, PROXIMITY_THRESHOLD, deAnchors, merged);
+
+        // A group of rescued fragments that never reached a box above the floor stays
+        // dropped: the rescue may grow a detection, never create one.
+        List<Rect> anchored = new ArrayList<>(boxes.size());
+        for (int i = 0; i < boxes.size(); i++) {
+            if (merged[i]) anchored.add(boxes.get(i));
+        }
+        return anchored;
+    }
+
+    /** The proximity test {@link #mergeNearbyBoxes} applies, as a predicate. */
+    static boolean adjacent(Rect a, Rect b, int threshold) {
+        int hGap = Math.max(0, Math.max(a.x, b.x) - Math.min(a.x + a.width, b.x + b.width));
+        int vGap = Math.max(0, Math.max(a.y, b.y) - Math.min(a.y + a.height, b.y + b.height));
+        return hGap <= threshold && vGap <= threshold;
+    }
+
     private static List<Rect> removeNestedBoxes(List<Rect> boxes) {
         List<Rect> filtered = new ArrayList<>();
+        for (int i : keptAfterNesting(boxes)) filtered.add(boxes.get(i));
+        return filtered;
+    }
+
+    /** Indices {@link #removeNestedBoxes} keeps, so callers can carry per-box state through. */
+    private static List<Integer> keptAfterNesting(List<Rect> boxes) {
+        List<Integer> filtered = new ArrayList<>();
         for (int i = 0; i < boxes.size(); i++) {
             Rect r1 = boxes.get(i);
             boolean isInside = false;
@@ -1044,7 +1144,7 @@ public class HardwareFeatureExtractor {
                     break;
                 }
             }
-            if (!isInside) filtered.add(r1);
+            if (!isInside) filtered.add(i);
         }
         return filtered;
     }
@@ -1060,28 +1160,45 @@ public class HardwareFeatureExtractor {
      * single blob had absorbed fifteen separate detections.
      */
     private static List<Rect> mergeNearbyBoxes(List<Rect> boxes, int threshold) {
+        return mergeNearbyBoxes(boxes, threshold, null, null);
+    }
+
+    /**
+     * As above, optionally carrying a per-box flag through the merge.
+     *
+     * @param anchors  one flag per input box, or null to treat every box as anchored
+     * @param anchored receives one flag per output box, OR-ed over everything that merged into
+     *                 it; may be null. Sized to the output, so the caller passes an array as
+     *                 long as {@code boxes} and reads only the first {@code result.size()}.
+     */
+    private static List<Rect> mergeNearbyBoxes(List<Rect> boxes, int threshold,
+                                               boolean[] anchors, boolean[] anchored) {
         List<Rect> working = new ArrayList<>(boxes);
         // Real content per working box, carried through merges alongside the bounding box.
         List<Double> content = new ArrayList<>();
         for (Rect r : boxes) content.add((double) r.width * r.height);
+        List<Boolean> anchor = new ArrayList<>();
+        for (int i = 0; i < boxes.size(); i++) {
+            anchor.add(anchors == null || (i < anchors.length && anchors[i]));
+        }
 
         boolean changed = true;
         while (changed) {
             changed = false;
             List<Rect> next = new ArrayList<>();
             List<Double> nextContent = new ArrayList<>();
+            List<Boolean> nextAnchor = new ArrayList<>();
             boolean[] skipped = new boolean[working.size()];
             for (int i = 0; i < working.size(); i++) {
                 if (skipped[i]) continue;
                 Rect r1 = working.get(i);
                 double c1 = content.get(i);
+                boolean a1 = anchor.get(i);
                 skipped[i] = true;
                 for (int j = i + 1; j < working.size(); j++) {
                     if (skipped[j]) continue;
                     Rect r2 = working.get(j);
-                    int hGap = Math.max(0, Math.max(r1.x, r2.x) - Math.min(r1.x + r1.width, r2.x + r2.width));
-                    int vGap = Math.max(0, Math.max(r1.y, r2.y) - Math.min(r1.y + r1.height, r2.y + r2.height));
-                    if (hGap <= threshold && vGap <= threshold) {
+                    if (adjacent(r1, r2, threshold)) {
                         int nx = Math.min(r1.x, r2.x);
                         int ny = Math.min(r1.y, r2.y);
                         int nw = Math.max(r1.x + r1.width, r2.x + r2.width) - nx;
@@ -1092,6 +1209,7 @@ public class HardwareFeatureExtractor {
                         if (mergedContent >= combinedArea * FILL_RATIO_THRESHOLD) {
                             r1 = new Rect(nx, ny, nw, nh);
                             c1 = mergedContent;
+                            a1 = a1 || anchor.get(j);
                             skipped[j] = true;
                             changed = true;
                         }
@@ -1099,9 +1217,16 @@ public class HardwareFeatureExtractor {
                 }
                 next.add(r1);
                 nextContent.add(c1);
+                nextAnchor.add(a1);
             }
             working = next;
             content = nextContent;
+            anchor = nextAnchor;
+        }
+        if (anchored != null) {
+            for (int i = 0; i < working.size() && i < anchored.length; i++) {
+                anchored[i] = anchor.get(i);
+            }
         }
         return working;
     }

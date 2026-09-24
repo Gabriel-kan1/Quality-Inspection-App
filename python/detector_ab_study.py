@@ -59,6 +59,9 @@ OUTLIER_AREA_FACTOR = 10.0
 PROXIMITY_THRESHOLD = 10
 FILL_RATIO_THRESHOLD = 0.7
 MAX_DETECTIONS = 300
+# Whether a contour below the dynamic area floor may still join a box that passed it.
+# Mirrors HardwareFeatureExtractor.RESCUE_ADJACENT_FRAGMENTS; see fragment_rescue_study.py.
+RESCUE_FRAGMENTS = True
 
 # (area, relative shooting distance) — copied from scale_probe_study.py.
 CATALOGUE = {
@@ -174,8 +177,8 @@ def compute_edges(img, bilateral_mode="adaptive"):
     }
 
 
-def remove_nested(boxes, apply_aspect_guard=True):
-    """removeNestedBoxes(). apply_aspect_guard=False drops the guard under test."""
+def remove_nested_indices(boxes, apply_aspect_guard=True):
+    """Indices removeNestedBoxes() keeps, so a caller can carry per-box state through it."""
     out = []
     for i, r1 in enumerate(boxes):
         inside = False
@@ -192,44 +195,63 @@ def remove_nested(boxes, apply_aspect_guard=True):
                 inside = True
                 break
         if not inside:
-            out.append(r1)
+            out.append(i)
     return out
 
 
-def merge_nearby(boxes, threshold=PROXIMITY_THRESHOLD):
+def remove_nested(boxes, apply_aspect_guard=True):
+    """removeNestedBoxes(). apply_aspect_guard=False drops the guard under test."""
+    return [boxes[i] for i in remove_nested_indices(boxes, apply_aspect_guard)]
+
+
+def adjacent(r1, r2, threshold=PROXIMITY_THRESHOLD):
+    """The merge stage's own proximity test, as a predicate."""
+    h_gap = max(0, max(r1[0], r2[0]) - min(r1[0] + r1[2], r2[0] + r2[2]))
+    v_gap = max(0, max(r1[1], r2[1]) - min(r1[1] + r1[3], r2[1] + r2[3]))
+    return h_gap <= threshold and v_gap <= threshold
+
+
+def merge_nearby(boxes, threshold=PROXIMITY_THRESHOLD, anchors=None):
+    """
+    mergeNearbyBoxes(). With `anchors` (one bool per box, True = passed the area floor),
+    the flag is OR-ed through every merge and returned alongside the boxes, so the caller
+    can drop groups made only of rescued fragments.
+    """
     working = list(boxes)
     content = [float(r[2] * r[3]) for r in boxes]
+    anchor = [True] * len(boxes) if anchors is None else list(anchors)
     changed = True
     while changed:
         changed = False
-        nxt, nxt_content, skipped = [], [], [False] * len(working)
+        nxt, nxt_content, nxt_anchor = [], [], []
+        skipped = [False] * len(working)
         for i in range(len(working)):
             if skipped[i]:
                 continue
-            r1, c1 = working[i], content[i]
+            r1, c1, a1 = working[i], content[i], anchor[i]
             skipped[i] = True
             for j in range(i + 1, len(working)):
                 if skipped[j]:
                     continue
-                r2 = working[j]
-                h_gap = max(0, max(r1[0], r2[0]) - min(r1[0] + r1[2], r2[0] + r2[2]))
-                v_gap = max(0, max(r1[1], r2[1]) - min(r1[1] + r1[3], r2[1] + r2[3]))
-                if h_gap <= threshold and v_gap <= threshold:
+                if adjacent(r1, working[j], threshold):
+                    r2 = working[j]
                     nx, ny = min(r1[0], r2[0]), min(r1[1], r2[1])
                     nw = max(r1[0] + r1[2], r2[0] + r2[2]) - nx
                     nh = max(r1[1] + r1[3], r2[1] + r2[3]) - ny
                     merged_content = c1 + content[j]
                     if merged_content >= nw * nh * FILL_RATIO_THRESHOLD:
                         r1, c1 = (nx, ny, nw, nh), merged_content
+                        a1 = a1 or anchor[j]
                         skipped[j] = True
                         changed = True
             nxt.append(r1)
             nxt_content.append(c1)
-        working, content = nxt, nxt_content
-    return working
+            nxt_anchor.append(a1)
+        working, content, anchor = nxt, nxt_content, nxt_anchor
+    return (working, anchor) if anchors is not None else working
 
 
-def find_feature_boxes(edges, cap_early=False, aspect_guard=True):
+def find_feature_boxes(edges, cap_early=False, aspect_guard=True, rescue=None):
     contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
     valid_boxes, valid_areas = [], []
@@ -261,13 +283,31 @@ def find_feature_boxes(edges, cap_early=False, aspect_guard=True):
     sized = [b for b, a in zip(valid_boxes, valid_areas) if a >= dynamic_min_area]
     stats["passed_area"] = len(sized)
 
+    # A contour below the floor that TOUCHES one above it is a fragment of that feature
+    # rather than noise of its own: Canny breaks a low-contrast outline into pieces, and the
+    # floor runs before the merge that would have rejoined them. Such a fragment is carried
+    # into the merge but can never become a box of its own. See fragment_rescue_study.py.
+    do_rescue = RESCUE_FRAGMENTS if rescue is None else rescue
+    rescued = []
+    if do_rescue and sized:
+        rescued = [b for b, a in zip(valid_boxes, valid_areas)
+                   if a < dynamic_min_area and any(adjacent(b, s) for s in sized)]
+    stats["rescued"] = len(rescued)
+
     if cap_early and len(sized) > MAX_DETECTIONS:
         # Bound the input to the O(n^2) stages instead of only their output.
         sized = sorted(sized, key=lambda r: r[2] * r[3], reverse=True)[:MAX_DETECTIONS]
+        rescued = []
         stats["capped"] = True
 
-    de_nested = remove_nested(sized, apply_aspect_guard=aspect_guard)
-    boxes = merge_nearby(de_nested)
+    candidates = sized + rescued
+    anchors = [True] * len(sized) + [False] * len(rescued)
+    kept = remove_nested_indices(candidates, apply_aspect_guard=aspect_guard)
+    de_nested = [candidates[i] for i in kept]
+    de_anchors = [anchors[i] for i in kept]
+    boxes, box_anchors = merge_nearby(de_nested, anchors=de_anchors)
+    # A group of rescued fragments that never reached a box above the floor stays dropped.
+    boxes = [b for b, a in zip(boxes, box_anchors) if a]
 
     if len(boxes) > MAX_DETECTIONS:
         boxes = sorted(boxes, key=lambda r: r[2] * r[3], reverse=True)[:MAX_DETECTIONS]
