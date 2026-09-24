@@ -1,7 +1,9 @@
 package com.example.ml;
 
+import android.graphics.Bitmap;
 import android.util.Log;
 
+import org.opencv.android.Utils;
 import org.opencv.core.Core;
 import org.opencv.core.CvType;
 import org.opencv.core.Mat;
@@ -227,6 +229,38 @@ public final class ChassisMask {
             if (kernel != null) kernel.release();
             if (maskSmall != null) maskSmall.release();
             if (full != null) full.release();
+        }
+    }
+
+    /**
+     * The mask as something a view can draw straight over the photograph: opaque white where
+     * the pixel is not the chassis, fully transparent where it is.
+     *
+     * <p>Kept at {@link #MASK_WIDTH} rather than the working size — it is a coarse region map
+     * and a canvas scales it for free, where a working-resolution copy would be 1280x960x4
+     * bytes carried around for the life of the result.
+     *
+     * @return the overlay, or null when nothing was masked or the conversion failed
+     */
+    public static Bitmap whiteOverlay(Result result) {
+        if (result == null || result.isEmpty()) return null;
+        Mat small = new Mat();
+        Mat rgba = null;
+        try {
+            int w = MASK_WIDTH;
+            int h = Math.max(1, (int) Math.round(result.mask.rows() * (w / (double) result.mask.cols())));
+            Imgproc.resize(result.mask, small, new Size(w, h), 0, 0, Imgproc.INTER_NEAREST);
+            rgba = Mat.zeros(h, w, CvType.CV_8UC4);
+            rgba.setTo(new Scalar(255, 255, 255, 255), small);
+            Bitmap bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+            Utils.matToBitmap(rgba, bitmap);
+            return bitmap;
+        } catch (Throwable t) {
+            Log.e(TAG, "Could not build the background overlay", t);
+            return null;
+        } finally {
+            small.release();
+            if (rgba != null) rgba.release();
         }
     }
 

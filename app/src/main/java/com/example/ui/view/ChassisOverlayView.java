@@ -71,6 +71,15 @@ public class ChassisOverlayView extends View {
      * time — costly to begin with and much worse now that taps trigger redraws.
      */
     private Bitmap scaledCache = null;
+    /**
+     * The region excluded as not-chassis, opaque white over transparent, or null.
+     *
+     * <p>Drawn over the photograph so the operator can see what the detector was not allowed
+     * to look at. The detector itself sees the plate's own grey there, not white — filling
+     * with white moves the intensity histogram Canny's thresholds come from. See
+     * {@code ml/ChassisMask}.
+     */
+    private Bitmap backgroundOverlay = null;
     private int cachedW = 0, cachedH = 0;
 
     private final List<DetectedFeature> features = new ArrayList<>();
@@ -170,7 +179,20 @@ public class ChassisOverlayView extends View {
      * Use this to avoid redundant feature extraction.
      */
     public void setResultData(String uriString, List<HardwareFeatureExtractor.ExtractedFeature> extractedFeatures) {
+        setResultData(uriString, extractedFeatures, null);
+    }
+
+    /**
+     * As above, plus the region excluded as not-chassis, which is drawn white over the photo.
+     *
+     * @param background {@code AnalysisResult.backgroundOverlay}, or null to show the whole
+     *                   photograph as inspected
+     */
+    public void setResultData(String uriString,
+                              List<HardwareFeatureExtractor.ExtractedFeature> extractedFeatures,
+                              Bitmap background) {
         loadBitmapFromUri(uriString);
+        backgroundOverlay = background;
         features.clear();
         if (extractedFeatures != null) {
             for (HardwareFeatureExtractor.ExtractedFeature ext : extractedFeatures) {
@@ -304,6 +326,14 @@ public class ChassisOverlayView extends View {
                 cachedH = viewHeight;
             }
             canvas.drawBitmap(scaledCache, 0f, 0f, null);
+            // What the detector was not allowed to look at. Drawn after the photo and before
+            // the boxes, so a box can never be hidden by it.
+            if (backgroundOverlay != null && !backgroundOverlay.isRecycled()) {
+                canvas.drawBitmap(backgroundOverlay,
+                        new android.graphics.Rect(0, 0, backgroundOverlay.getWidth(),
+                                backgroundOverlay.getHeight()),
+                        new android.graphics.Rect(0, 0, viewWidth, viewHeight), null);
+            }
         } else {
             canvas.drawColor(Color.rgb(43, 41, 48)); 
 

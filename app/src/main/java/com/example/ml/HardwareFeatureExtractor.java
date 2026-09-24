@@ -274,6 +274,12 @@ public class HardwareFeatureExtractor {
          */
         public double backgroundFraction;
         /**
+         * The excluded region as opaque white over transparent, for a view to draw straight
+         * over the photograph, or null when nothing was excluded. Coarse (320px wide) — it is
+         * a region map, and the canvas scales it.
+         */
+        public Bitmap backgroundOverlay;
+        /**
          * What the adaptive edge stage chose for this image and why, or null when the method
          * was not adaptive (or did not run). The rung it names is the one that produced every
          * box in {@link #features}; the results screen reports it beside the reference's.
@@ -578,6 +584,7 @@ public class HardwareFeatureExtractor {
         AdaptivePreprocessing.Choice[] preprocessing = new AdaptivePreprocessing.Choice[1];
         ChassisMask.Result background = null;
         double backgroundFraction = 0;
+        Bitmap backgroundOverlay = null;
         // Opened once per image, not per crop: constructing a region decoder re-reads the
         // file header, and there can be dozens of detections. Null is a normal result — the
         // source may be smaller than the working image, or not region-decodable at all — and
@@ -600,6 +607,7 @@ public class HardwareFeatureExtractor {
                 background = ChassisMask.of(src);
                 ChassisMask.fillWithPlate(src, background);
                 backgroundFraction = background.fraction;
+                backgroundOverlay = ChassisMask.whiteOverlay(background);
             }
 
             // STEP 2 — preprocessing + edge detection (shared with extractCrops()), by
@@ -654,6 +662,7 @@ public class HardwareFeatureExtractor {
         result.edgeMethodId = EdgeMethodLab.selectedId(context);
         result.preprocessing = preprocessing[0];
         result.backgroundFraction = backgroundFraction;
+        result.backgroundOverlay = backgroundOverlay;
         return result;
     }
 

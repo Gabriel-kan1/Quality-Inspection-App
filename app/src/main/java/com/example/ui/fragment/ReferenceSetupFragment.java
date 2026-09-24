@@ -334,7 +334,8 @@ public class ReferenceSetupFragment extends Fragment {
                                        HardwareFeatureExtractor.AnalysisResult result) {
         binding.ivReferencePreview.setVisibility(View.GONE);
         binding.overlayReferencePreview.setVisibility(View.VISIBLE);
-        binding.overlayReferencePreview.setResultData(uriString, result.features);
+        binding.overlayReferencePreview.setResultData(uriString, result.features,
+                result.backgroundOverlay);
 
         if (result.features.isEmpty()) {
             binding.tvReferenceAnalysisStatus.setText(
