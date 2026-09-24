@@ -23,6 +23,25 @@ Clutter does. Canny density over a margin strip against the same image's centre:
 A second, independent signature covers a flat dark object lying over the part (three.jpg's
 bottom strip: mean 38.8 against a plate at 146), which is dark rather than cluttered.
 
+CLUTTER ALONE OVER-REACHED
+--------------------------
+The panel's own fold is a crisp structural edge, so it reads as cluttered; being connected to
+the true background it was swallowed into the same region, and the mask covered 22.1% of
+whole screws2.jpg and 20.8% of whole screws3.jpg -- a good part of it chassis. Requiring the
+region to be BOTH cluttered AND a different local brightness from the plate leaves the fold
+alone, because a fold is the same metal as the panel beside it:
+
+                      clutter only    + unlikeness 30
+    whole screws1.jpg        4.7%               2.5%
+    whole screws2.jpg       22.0%               7.4%
+    whole screws3.jpg       20.8%               7.8%
+    three.jpg               21.8%              21.5%   (dark object, caught by the dark test)
+    every close-up           0.0%               0.0%
+
+It costs some false positives -- weighted 11 to 14, against 19 for no mask at all -- but
+misses stay at 3, the same as no mask, where the looser rule cost 4. Under-covering the
+background is the safe direction; shading the part is not.
+
 THE SAFETY PROPERTY
 -------------------
 A region counts as background only if it TOUCHES THE FRAME BORDER. An interior region can
@@ -65,6 +84,7 @@ CLUTTER_WINDOW = 25
 CLUTTER_MULTIPLE = 4.0
 CLUTTER_FLOOR = 0.02
 DARK_RATIO = 0.40
+PLATE_UNLIKENESS = 30.0
 MIN_BACKGROUND_FRACTION = 0.01
 CENTRE_FRACTION = 0.4
 MAX_BACKGROUND_FRACTION = 0.45
@@ -91,7 +111,11 @@ def background_mask(bgr):
     plate_grey = float(np.median(gray[cy0:cy1, cx0:cx1]))
     limit = max(CLUTTER_FLOOR, CLUTTER_MULTIPLE * plate_clutter)
 
-    foreign = ((clutter > limit) | (gray < DARK_RATIO * plate_grey)).astype(np.uint8)
+    # Clutter must be accompanied by a real difference in local brightness, or the panel's
+    # own fold — a crisp edge in the same metal — is swallowed along with the background.
+    local = cv2.medianBlur(gray, 31).astype(np.int16)
+    unlike = np.abs(local - int(plate_grey)) > PLATE_UNLIKENESS
+    foreign = (((clutter > limit) & unlike) | (gray < DARK_RATIO * plate_grey)).astype(np.uint8)
     foreign = cv2.morphologyEx(foreign, cv2.MORPH_CLOSE,
                                cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (15, 15)))
 
@@ -167,8 +191,10 @@ def section_safety():
                      if mask[min(y + h // 2, mask.shape[0] - 1),
                              min(x + w // 2, mask.shape[1] - 1)] > 0)
         print(f"   {n:<20}{len(boxes):>12}{inside:>9}")
-    print("   Each removal was inspected by eye: the shadowed region in hole1, the bench edge")
-    print("   in hole2, the floor strips in whole screws1-3. No fastener among them.")
+    print("   Each removal was inspected by eye — they are the floor strips in whole screws1-3.")
+    print("   No fastener among them. hole1 and hole2 now have nothing removed: the stricter")
+    print("   rule leaves their soft shadow and bench edge alone, which is what costs the")
+    print("   extras in section 3. Under-covering is the safe direction.")
 
 
 def section_counts():

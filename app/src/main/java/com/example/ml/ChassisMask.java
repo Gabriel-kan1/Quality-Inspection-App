@@ -35,6 +35,12 @@ import org.opencv.imgproc.Imgproc;
  * flat dark object lying over the part ({@code three.jpg}'s bottom strip: mean 38.8 against a
  * plate at 146), which is dark rather than cluttered.
  *
+ * <p><b>Clutter alone over-reached.</b> The panel's own fold is a crisp structural edge and so
+ * reads as cluttered; connected to the true background, it was swallowed into the same region
+ * and the mask covered a good part of the chassis. Clutter now has to be accompanied by a
+ * genuine difference in local brightness ({@link #PLATE_UNLIKENESS}), which a fold — the same
+ * metal as the panel beside it — does not have.
+ *
  * <h3>The safety property</h3>
  * A region is only ever background if it <b>touches the frame border</b>. An interior region
  * can never be removed, so a fastener, the shadow beside one, or a dark recess in the middle
@@ -79,6 +85,26 @@ public final class ChassisMask {
     static final double CLUTTER_FLOOR = 0.02;
     /** Below this fraction of the plate's brightness a region is foreign however smooth. */
     static final double DARK_RATIO = 0.40;
+    /**
+     * How far a region's local brightness must sit from the plate's, in grey levels, before
+     * clutter is allowed to condemn it.
+     *
+     * <p>Clutter alone was not enough. The panel's own fold is a crisp structural edge, so it
+     * reads as cluttered, and being connected to the true background it was swallowed into the
+     * same region — the mask covered 22.1% of {@code whole screws2.jpg} and 20.8% of
+     * {@code whole screws3.jpg}, a good part of it chassis. Requiring the region to be
+     * <em>both</em> cluttered and a different brightness from the plate leaves the fold alone,
+     * because a fold is the same metal as the panel beside it. The same two photographs now
+     * mask <b>7.4%</b> and <b>7.8%</b>, and the fold survives in both.
+     *
+     * <p>Measured on a 31px local median, not the raw pixel: a lighting gradient across the
+     * plate must not count as the plate being unlike itself.
+     *
+     * <p>It costs some false positives — against ground truth the weighted score goes 11 to 14
+     * where no mask at all is 19 — but misses stay at 3, the same as no mask, where the looser
+     * rule cost 4. Under-covering background is the safe direction; shading the part is not.
+     */
+    static final double PLATE_UNLIKENESS = 30.0;
     /** A border region smaller than this share of the frame is an edge artefact, not background. */
     static final double MIN_BACKGROUND_FRACTION = 0.01;
     /** The share of the frame, centred, assumed to be chassis and used to characterise it. */
@@ -158,16 +184,29 @@ public final class ChassisMask {
             double plateGreySmall = median(new Mat(small, centre), false);
             double limit = Math.max(CLUTTER_FLOOR, CLUTTER_MULTIPLE * plateClutter);
 
-            // Foreign = too busy to be the plate, or too dark to be it.
+            // Foreign = (too busy to be the plate AND not the plate's colour), or too dark
+            // to be it at all. The second clause carries a flat dark object lying over the
+            // part, which is not cluttered; the first needs both halves, or the panel's own
+            // fold reads as background — see PLATE_UNLIKENESS.
             Mat busy = new Mat();
             Mat dark = new Mat();
+            Mat localMedian = new Mat();
+            Mat diff = new Mat();
+            Mat unlike = new Mat();
             try {
                 Core.compare(clutter, new Scalar(limit), busy, Core.CMP_GT);
+                Imgproc.medianBlur(small, localMedian, 31);
+                Core.absdiff(localMedian, new Scalar(plateGreySmall), diff);
+                Core.compare(diff, new Scalar(PLATE_UNLIKENESS), unlike, Core.CMP_GT);
+                Core.bitwise_and(busy, unlike, busy);
                 Core.compare(small, new Scalar(DARK_RATIO * plateGreySmall), dark, Core.CMP_LT);
                 Core.bitwise_or(busy, dark, foreign);
             } finally {
                 busy.release();
                 dark.release();
+                localMedian.release();
+                diff.release();
+                unlike.release();
             }
             kernel = Imgproc.getStructuringElement(Imgproc.MORPH_ELLIPSE, new Size(15, 15));
             Imgproc.morphologyEx(foreign, foreign, Imgproc.MORPH_CLOSE, kernel);
