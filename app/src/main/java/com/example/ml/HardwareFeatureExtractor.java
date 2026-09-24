@@ -144,6 +144,17 @@ public class HardwareFeatureExtractor {
      */
     private static final boolean RESCUE_ADJACENT_FRAGMENTS = true;
     /**
+     * Whether everything outside the chassis is excluded before the edge stage runs.
+     *
+     * <p>A wide shot catches the bench, the floor or a tool beside the part, and each of those
+     * produces contours the detector offers as candidate hardware. {@link ChassisMask} finds
+     * the regions that are too cluttered or too dark to be the plate <em>and</em> reach the
+     * frame border, so an interior region is never removed. Measured against the ground-truth
+     * counts: false positives fall from 13 to 3 over 26 photographs and the weighted score
+     * from 19 to 11, at the cost of one miss. See {@code python/background_mask_study.py}.
+     */
+    private static final boolean MASK_BACKGROUND = true;
+    /**
      * Logs every box before and after merging. Verbose — for tuning detection, not normal use.
      *
      * Off by default: at the counts the bundled assets produce this is up to ~110 log lines
@@ -257,6 +268,11 @@ public class HardwareFeatureExtractor {
          * different method can be told apart from a genuinely different part.
          */
         public String edgeMethodId;
+        /**
+         * Share of the frame excluded as not-chassis, 0 when the whole photograph read as
+         * part. The operator sees the same region whited out on the diagnostic overlay.
+         */
+        public double backgroundFraction;
         /**
          * What the adaptive edge stage chose for this image and why, or null when the method
          * was not adaptive (or did not run). The rung it names is the one that produced every
@@ -428,6 +444,14 @@ public class HardwareFeatureExtractor {
         try {
             src = new Mat();
             Utils.bitmapToMat(bitmap, src);
+            if (MASK_BACKGROUND) {
+                ChassisMask.Result bg = ChassisMask.of(src);
+                try {
+                    ChassisMask.fillWithPlate(src, bg);
+                } finally {
+                    bg.release();
+                }
+            }
             e = computeEdges(context, src, null);
             if (e == null) return crops;
 
@@ -552,6 +576,8 @@ public class HardwareFeatureExtractor {
         boolean glareApplied = false;
         ScaleCalibration calibration = null;
         AdaptivePreprocessing.Choice[] preprocessing = new AdaptivePreprocessing.Choice[1];
+        ChassisMask.Result background = null;
+        double backgroundFraction = 0;
         // Opened once per image, not per crop: constructing a region decoder re-reads the
         // file header, and there can be dozens of detections. Null is a normal result — the
         // source may be smaller than the working image, or not region-decodable at all — and
@@ -566,6 +592,15 @@ public class HardwareFeatureExtractor {
             // frame. Runs on the unprocessed source: the marker is high-contrast by design and
             // the glare/CLAHE stage below is tuned for fastener detail, not for finding it.
             calibration = ScaleCalibration.detect(src);
+
+            // STEP 1b — exclude what is not the chassis. After marker detection, so a
+            // calibration marker lying near the part's edge is still found on real pixels,
+            // and before the edge stage, which is what the exclusion exists to protect.
+            if (MASK_BACKGROUND) {
+                background = ChassisMask.of(src);
+                ChassisMask.fillWithPlate(src, background);
+                backgroundFraction = background.fraction;
+            }
 
             // STEP 2 — preprocessing + edge detection (shared with extractCrops()), by
             // whichever method the operator chose in the Edge Lab.
@@ -586,6 +621,11 @@ public class HardwareFeatureExtractor {
             Imgproc.cvtColor(e.gray, rgbaVisual, Imgproc.COLOR_GRAY2RGBA);
             // Highlight detected edges in bright green so they are visible on mobile displays.
             rgbaVisual.setTo(new Scalar(0, 255, 0, 255), e.edgesDilated);
+            // What was excluded, shown white. The detector saw the plate's own grey there —
+            // white is what it means to the operator, not what it meant to Canny.
+            if (background != null && !background.isEmpty()) {
+                rgbaVisual.setTo(new Scalar(255, 255, 255, 255), background.mask);
+            }
             diagnosticBitmap = Bitmap.createBitmap(rgbaVisual.cols(), rgbaVisual.rows(), Bitmap.Config.ARGB_8888);
             Utils.matToBitmap(rgbaVisual, diagnosticBitmap);
 
@@ -602,6 +642,7 @@ public class HardwareFeatureExtractor {
             // decoder holds a native handle and an open source for the same reason.
             releaseQuietly(src, rgbaVisual);
             if (e != null) e.release();
+            if (background != null) background.release();
             if (sourceCropper != null) sourceCropper.close();
             bitmap.recycle();
         }
@@ -612,6 +653,7 @@ public class HardwareFeatureExtractor {
         result.workingHeight = workingHeight;
         result.edgeMethodId = EdgeMethodLab.selectedId(context);
         result.preprocessing = preprocessing[0];
+        result.backgroundFraction = backgroundFraction;
         return result;
     }
 
@@ -1329,6 +1371,17 @@ public class HardwareFeatureExtractor {
         Mat src = new Mat();
         try {
             Utils.bitmapToMat(bitmap, src);
+            // The same exclusion the real pass applies, or the counts shown to the operator
+            // would not be the counts they get: on a wide shot the survey would report the
+            // background's contours as features the strength "would find".
+            if (MASK_BACKGROUND) {
+                ChassisMask.Result bg = ChassisMask.of(src);
+                try {
+                    ChassisMask.fillWithPlate(src, bg);
+                } finally {
+                    bg.release();
+                }
+            }
             return AdaptivePreprocessing.survey(src, null);
         } catch (Throwable t) {
             Log.e(TAG, "Strength survey failed", t);
