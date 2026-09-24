@@ -98,7 +98,6 @@ public class ImageQualityTest {
         // leaves them.
         assertEquals(12.0, ImageQuality.NOISE_STRONG, 0);
         assertEquals(20.0, ImageQuality.SOFT_CONTRAST, 0);
-        assertEquals(40.0, ImageQuality.LIGHT_ELIGIBLE_CONTRAST, 0);
         assertEquals(PreprocessingStrength.MEDIUM, new ImageQuality(11.9, 255).suggest());
         assertEquals(PreprocessingStrength.STRONG, new ImageQuality(12.0, 255).suggest());
     }
@@ -106,25 +105,27 @@ public class ImageQualityTest {
     // ── Eligibility for the size test ────────────────────────────────────────
 
     /**
-     * On anything sharp the light rung is catastrophic in a way the size score cannot see
-     * (it judges the boxes at the slots, not the extras between them), so it must not be on
-     * offer. Every clean asset sits above 40; hole2.jpg is the lowest at 42.
+     * Every rung goes on the ballot now, at any sharpness.
+     *
+     * <p>Light used to be withheld above a contrast of 40 because it over-detects on sharp
+     * photographs and the size score could not see that. It also withheld light on
+     * {@code screws_none.jpg} (contrast 62), where it is the only rung that finds one of the
+     * bolts — so the layout came out with five slots instead of six. {@link SizePrior} charges
+     * unmatched detections on the part now, so over-detection is scored rather than assumed.
      */
     @Test
-    public void theLightRungIsNotOfferedOnASharpPhotograph() {
-        List<PreprocessingStrength> c = new ImageQuality(2.0, 42).candidates();
-        assertFalse(c.contains(PreprocessingStrength.LIGHT));
-        assertTrue(c.contains(PreprocessingStrength.MEDIUM));
-        assertTrue(c.contains(PreprocessingStrength.STRONG));
-    }
-
-    @Test
-    public void theLightRungIsOfferedWhenEdgesAreWeakEvenIfNotSuggested() {
-        // A 5px blur (35): v6 still wins outright, but light is close enough to let the
-        // reference's sizes decide.
-        ImageQuality q = new ImageQuality(1.7, 35);
-        assertEquals(PreprocessingStrength.MEDIUM, q.suggest());
-        assertTrue(q.candidates().contains(PreprocessingStrength.LIGHT));
+    public void everyRungIsOnTheBallotWhateverTheSharpness() {
+        for (ImageQuality q : new ImageQuality[]{
+                new ImageQuality(2.0, 42),     // hole2.jpg, the sharpest-edged clean asset
+                new ImageQuality(2.65, 62),    // screws_none.jpg — the case that motivated this
+                new ImageQuality(18.6, 255),   // three.jpg, a textured plate
+                new ImageQuality(0.7, 17)}) {  // blurred
+            List<PreprocessingStrength> c = q.candidates();
+            assertEquals(q.describe(), PreprocessingStrength.values().length, c.size());
+            assertTrue(q.describe(), c.contains(PreprocessingStrength.LIGHT));
+            assertTrue(q.describe(), c.contains(PreprocessingStrength.MEDIUM));
+            assertTrue(q.describe(), c.contains(PreprocessingStrength.STRONG));
+        }
     }
 
     @Test

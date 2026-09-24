@@ -32,12 +32,27 @@ import java.util.Map;
  *
  * <h3>Scoring</h3>
  * Detections are aligned onto the layout by {@link LayoutMatcher} — positional, as always —
- * and every judgeable slot contributes the deviation {@code |ln(found / expected)|} of the
- * box matched to it, capped at {@link #DEVIATION_CAP}; a judgeable slot nothing matched is
- * charged the cap. The score is the <em>mean</em>, not the median, on purpose: the failure
- * this exists to catch is one box that swallowed a shadow, and a median over four slots
- * would not see it. Charging absent slots is what stops a strength that erased a fastener
- * from scoring well on the ones it kept.
+ * and the score is the <em>mean</em> over everything the strength ought to have accounted
+ * for. There are three ways to be wrong and they are charged on one scale:
+ *
+ * <ul>
+ *   <li>a box the wrong size — {@code |ln(found / expected)|}, capped at {@link #DEVIATION_CAP};
+ *   <li>a judgeable slot nothing matched — the cap: the strength lost a feature;
+ *   <li>a detection that explains no slot and lies on the part — the cap: it invented one.
+ * </ul>
+ *
+ * <p>A mean rather than a median on purpose: the failure this exists to catch is one box that
+ * swallowed a shadow, and a median over four slots would not see it. Charging absent slots is
+ * what stops a strength that erased a fastener from scoring well on the ones it kept.
+ *
+ * <p><b>The extras term is what lets every strength be put on the ballot.</b> Without it the
+ * score judges boxes <em>at</em> the layout's slots and is blind to what a strength scatters
+ * <em>between</em> them, so one that over-detects could win on size while flooding the frame.
+ * That blindness is why {@link PreprocessingStrength#LIGHT} used to be withheld unless the
+ * photograph's edges were weak — a blunt rule that also withheld it on the photographs where
+ * it was the only strength that found a feature at all. Measured: on the bundled photographs
+ * light is charged 0.14–0.57 where it over-detects and 0.067 where it is right, against
+ * 0.00–0.22 for the other strengths, so the score separates the two cases on its own.
  *
  * <p>Slots are judgeable on the same terms as the size check ({@code
  * FeatureLocalisation.MIN_SIZE_JUDGED_PX}): the reference must have recorded a box, and the
@@ -59,6 +74,18 @@ public final class SizePrior {
      * linear size. Beyond it the box is not the fastener with a shadow, it is something else.
      */
     public static final double DEVIATION_CAP = Math.log(2.0);
+    /**
+     * How far past the slots' own bounding box a detection still counts as "on the part", as
+     * a fraction of that box's extent on each side.
+     *
+     * <p>Zero is too tight to see over-detection on a small layout: with four slots the box
+     * spans only the hardware itself, and on {@code head1.jpg} the light strength's eight
+     * detections scored 0.102 against medium's 0.000 — inside the decision margin. At 0.5 the
+     * same case separates at 0.355, and every measured case lands 0.14–0.57 for a strength
+     * that over-detects against 0.00–0.15 for one that does not. Further out would start
+     * charging a strength for hardware that genuinely sits outside the layout.
+     */
+    public static final double EXTRA_ENVELOPE_PAD = 0.5;
 
     private final FeatureLayout layout;
     /** Expected fractional area in the reference frame, per judgeable slot id. */
@@ -139,7 +166,46 @@ public final class SizePrior {
         }
         double sum = 0;
         for (double d : deviation.values()) sum += d;
-        return sum / deviation.size();
+        int terms = deviation.size();
+
+        // Detections that explain no slot but sit on the part: hardware the strength invented.
+        float[] envelope = projectedEnvelope(match);
+        if (envelope != null) {
+            for (Integer index : match.unmatchedFeatureIndices) {
+                if (index == null || index < 0 || index >= rects.size()) continue;
+                RectF r = rects.get(index);
+                float cx = (r.left + r.right) / 2f, cy = (r.top + r.bottom) / 2f;
+                if (cx >= envelope[0] && cx <= envelope[2]
+                        && cy >= envelope[1] && cy <= envelope[3]) {
+                    sum += DEVIATION_CAP;
+                    terms++;
+                }
+            }
+        }
+        return terms == 0 ? Double.NaN : sum / terms;
+    }
+
+    /**
+     * The part's extent in this photo's coordinates — every slot projected through the
+     * alignment, bounded, then padded by {@link #EXTRA_ENVELOPE_PAD} of its own extent.
+     * Null when nothing could be projected. Uses every slot, not only the judgeable ones:
+     * this is asking where the part is, not which of it can be size-checked.
+     */
+    private float[] projectedEnvelope(LayoutMatcher.Result match) {
+        float minX = Float.MAX_VALUE, minY = Float.MAX_VALUE;
+        float maxX = -Float.MAX_VALUE, maxY = -Float.MAX_VALUE;
+        for (FeatureLayout.Slot s : layout.slots()) {
+            float[] p = match.project(s.x, s.y);
+            if (p == null) continue;
+            minX = Math.min(minX, p[0]);
+            minY = Math.min(minY, p[1]);
+            maxX = Math.max(maxX, p[0]);
+            maxY = Math.max(maxY, p[1]);
+        }
+        if (minX > maxX) return null;
+        float padX = (float) Math.max(maxX - minX, 1e-6) * (float) EXTRA_ENVELOPE_PAD;
+        float padY = (float) Math.max(maxY - minY, 1e-6) * (float) EXTRA_ENVELOPE_PAD;
+        return new float[]{minX - padX, minY - padY, maxX + padX, maxY + padY};
     }
 
     public String describe() {

@@ -127,6 +127,90 @@ public class SizePriorTest {
         assertEquals(SizePrior.DEVIATION_CAP / 5, prior.agreement(rects), 0.02);
     }
 
+    // ── Extras: hardware the strength invented ───────────────────────────────
+
+    /**
+     * The term that lets every strength go on the ballot. A detection explaining no slot, on
+     * the part, is charged exactly what losing a feature costs — so a strength that scatters
+     * boxes between the slots can no longer win on the size of the ones it got right.
+     */
+    @Test
+    public void aDetectionThatExplainsNoSlotAndSitsOnThePartIsCharged() {
+        FeatureLayout layout = layout();
+        SizePrior prior = SizePrior.from(layout);
+        List<RectF> rects = perfect(layout, 1f);
+        assertEquals("the five judged slots are all correct", 0.0, prior.agreement(rects), 1e-6);
+
+        // One spurious box in the middle of the part, matching nothing.
+        rects.add(new RectF(0.60f, 0.60f, 0.64f, 0.64f));
+        // Five judged slots at 0, plus one extra at the cap, over six terms.
+        assertEquals(SizePrior.DEVIATION_CAP / 6, prior.agreement(rects), 0.03);
+    }
+
+    @Test
+    public void everyExtraIsCharged() {
+        FeatureLayout layout = layout();
+        SizePrior prior = SizePrior.from(layout);
+        List<RectF> rects = perfect(layout, 1f);
+        for (int i = 0; i < 4; i++) {
+            float x = 0.35f + i * 0.06f;
+            rects.add(new RectF(x, 0.62f, x + 0.03f, 0.65f));
+        }
+        // Five judged slots at 0, four extras at the cap, over nine terms.
+        assertEquals(4 * SizePrior.DEVIATION_CAP / 9, prior.agreement(rects), 0.05);
+    }
+
+    /**
+     * Off the part it is other scene content, not this check's business.
+     *
+     * <p>Needs a compact layout to demonstrate: the envelope is the slots' bounding box padded
+     * by {@link SizePrior#EXTRA_ENVELOPE_PAD} of its own extent, so a part that fills the frame
+     * — which the alignment gate encourages — has an envelope covering all of it, and in
+     * practice almost every detection counts as on the part. Here the slots span 0.40-0.60, so
+     * the envelope reaches 0.30-0.70 and a detection at 0.05 is clearly outside.
+     */
+    @Test
+    public void aDetectionWellOffThePartIsNotCharged() {
+        FeatureLayout compact = new FeatureLayout();
+        compact.setImageSize(1280, 960);
+        float[][] at = {{0.40f, 0.40f}, {0.60f, 0.42f}, {0.42f, 0.60f}, {0.60f, 0.58f},
+                {0.50f, 0.50f}};
+        for (float[] c : at) compact.addSlot("screw", c[0], c[1], SIDE, SIDE);
+        SizePrior prior = SizePrior.from(compact);
+        assertNotNull(prior);
+
+        List<RectF> rects = perfect(compact, 1f);
+        assertEquals(0.0, prior.agreement(rects), 1e-6);
+
+        rects.add(new RectF(0.03f, 0.03f, 0.07f, 0.07f));
+        assertEquals("outside the padded envelope", 0.0, prior.agreement(rects), 1e-6);
+
+        // ...but one just inside it is still charged.
+        rects.add(new RectF(0.32f, 0.50f, 0.36f, 0.54f));
+        assertTrue(prior.agreement(rects) > 0);
+    }
+
+    /**
+     * The case this whole change exists for, in miniature: one strength loses a feature, the
+     * other finds it and adds nothing. The one that finds it must score better.
+     */
+    @Test
+    public void findingAFeatureBeatsLosingOne() {
+        FeatureLayout layout = layout();
+        SizePrior prior = SizePrior.from(layout);
+
+        List<RectF> foundAll = perfect(layout, 1f);
+        List<RectF> lostOne = perfect(layout, 1f);
+        lostOne.remove(4);
+
+        double withIt = prior.agreement(foundAll);
+        double withoutIt = prior.agreement(lostOne);
+        assertTrue("losing a feature must cost more: " + withIt + " vs " + withoutIt,
+                withIt < withoutIt);
+        assertTrue("and by more than the decision margin",
+                withoutIt - withIt > AdaptivePreprocessing.AGREEMENT_MARGIN);
+    }
+
     @Test
     public void detectionsThatCannotBeAlignedScoreNaN() {
         SizePrior prior = SizePrior.from(layout());

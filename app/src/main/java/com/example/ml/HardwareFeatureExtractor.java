@@ -503,6 +503,20 @@ public class HardwareFeatureExtractor {
                                                  ReferenceLibrary library, CropSink sink,
                                                  Boolean forceGlareCorrection,
                                                  SizePrior sizePrior) {
+        return extractFeatures(context, uriString, library, sink, forceGlareCorrection,
+                sizePrior, null);
+    }
+
+    /**
+     * As above, with {@code forcedStrength} pinning the adaptive stage's rung instead of
+     * letting it choose. Reference setup uses it once the operator has picked one from
+     * {@link #surveyStrengths}; every other caller passes null.
+     */
+    public static AnalysisResult extractFeatures(Context context, String uriString,
+                                                 ReferenceLibrary library, CropSink sink,
+                                                 Boolean forceGlareCorrection,
+                                                 SizePrior sizePrior,
+                                                 PreprocessingStrength forcedStrength) {
         List<ExtractedFeature> features = new ArrayList<>();
         Bitmap diagnosticBitmap = null;
 
@@ -555,7 +569,8 @@ public class HardwareFeatureExtractor {
 
             // STEP 2 — preprocessing + edge detection (shared with extractCrops()), by
             // whichever method the operator chose in the Edge Lab.
-            e = computeEdges(context, src, forceGlareCorrection, sizePrior, preprocessing);
+            e = computeEdges(context, src, forceGlareCorrection, sizePrior, preprocessing,
+                    forcedStrength);
             if (e == null) {
                 Log.e(TAG, "Edge stage produced nothing for " + filename + " — no detections.");
                 AnalysisResult empty = new AnalysisResult(features, null, null, false);
@@ -916,11 +931,18 @@ public class HardwareFeatureExtractor {
      */
     static Edges computeEdges(Context context, Mat src, Boolean forceGlareCorrection,
                               SizePrior sizePrior, AdaptivePreprocessing.Choice[] choiceOut) {
+        return computeEdges(context, src, forceGlareCorrection, sizePrior, choiceOut, null);
+    }
+
+    /** As above, with the adaptive stage's rung pinned. */
+    static Edges computeEdges(Context context, Mat src, Boolean forceGlareCorrection,
+                              SizePrior sizePrior, AdaptivePreprocessing.Choice[] choiceOut,
+                              PreprocessingStrength forcedStrength) {
         EdgeMethodLab.Method method = EdgeMethodLab.selected(context);
         if (EdgeMethodLab.ADAPTIVE_ID.equals(method.id)) {
             try {
                 return AdaptivePreprocessing.compute(src, forceGlareCorrection, sizePrior,
-                        choiceOut);
+                        choiceOut, forcedStrength);
             } catch (Throwable t) {
                 // Same contract as computeWith: a method that throws yields no detections,
                 // reported as such, rather than a silent switch to a different method.
@@ -1285,6 +1307,35 @@ public class HardwareFeatureExtractor {
             if (upright != null && upright != decoded) {
                 if (decoded != null) decoded.recycle();
             }
+        }
+    }
+
+    /**
+     * How many detections each preprocessing strength would find in this image.
+     *
+     * <p>Reference setup shows these because it has nothing to arbitrate with: the
+     * size-agreement test needs a reference layout, and this is the step that creates one.
+     * Empty when OpenCV is unavailable, the image cannot be read, or the operator has pinned
+     * a specific edge method in the Edge Lab rather than leaving it adaptive.
+     */
+    public static java.util.Map<PreprocessingStrength, Integer> surveyStrengths(
+            Context context, String uriString) {
+        java.util.Map<PreprocessingStrength, Integer> empty = new java.util.LinkedHashMap<>();
+        if (!OPENCV_READY || uriString == null || uriString.isEmpty()) return empty;
+        if (!EdgeMethodLab.ADAPTIVE_ID.equals(EdgeMethodLab.selectedId(context))) return empty;
+
+        Bitmap bitmap = loadBitmap(context, uriString, WORKING_MAX_DIM);
+        if (bitmap == null) return empty;
+        Mat src = new Mat();
+        try {
+            Utils.bitmapToMat(bitmap, src);
+            return AdaptivePreprocessing.survey(src, null);
+        } catch (Throwable t) {
+            Log.e(TAG, "Strength survey failed", t);
+            return empty;
+        } finally {
+            src.release();
+            bitmap.recycle();
         }
     }
 

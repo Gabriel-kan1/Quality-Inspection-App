@@ -249,6 +249,33 @@
                 android:textSize="11sp"
                 android:lineSpacingExtra="2dp" />
 
+            <!-- What each preprocessing strength would find here. Reference setup has no
+                 reference to arbitrate with, so the operator decides; shown only when the
+                 strengths actually disagree. -->
+            <TextView
+                android:id="@+id/tv_reference_strength_note"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:textColor="@color/orange_warn"
+                android:textSize="11sp"
+                android:lineSpacingExtra="2dp"
+                android:visibility="gone"
+                tools:visibility="visible"
+                tools:text="Preprocessing strengths disagree here: light would find 6, medium 5, strong 5." />
+
+            <Button
+                android:id="@+id/btn_reference_strength"
+                android:layout_width="match_parent"
+                android:layout_height="44dp"
+                android:layout_marginTop="8dp"
+                android:backgroundTint="@color/blue_primary"
+                android:textColor="@color/white"
+                android:textSize="12sp"
+                android:visibility="gone"
+                tools:visibility="visible"
+                tools:text="RE-ANALYSE WITH LIGHT (6 FEATURES)" />
+
         </LinearLayout>
 
     </com.google.android.material.card.MaterialCardView>

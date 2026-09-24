@@ -27,6 +27,7 @@ import com.example.data.entity.ReferenceProfile;
 import com.example.ui.util.AssetBitmaps;
 import com.example.databinding.FragmentReferenceSetupBinding;
 import com.example.ml.HardwareFeatureExtractor;
+import com.example.ml.PreprocessingStrength;
 import com.example.ml.FeatureEmbedder;
 import com.example.ml.FeatureLayout;
 import com.example.ml.FeatureTypeRegistry;
@@ -61,6 +62,11 @@ public class ReferenceSetupFragment extends Fragment {
      * token still matches.
      */
     private int analysisToken = 0;
+    /**
+     * The preprocessing strength the operator pinned for this reference, or null to let the
+     * adaptive stage choose. Only meaningful during setup — see {@code showStrengthSurvey}.
+     */
+    private PreprocessingStrength pendingStrength;
 
     /** Last analysed reference: its detections, and one crop per detection for labelling. */
     private HardwareFeatureExtractor.AnalysisResult pendingResult = null;
@@ -178,13 +184,27 @@ public class ReferenceSetupFragment extends Fragment {
      * different configuration than the real pass would be worse than none.
      */
     private void analyseReference(String uriString) {
+        analyseReference(uriString, null);
+    }
+
+    /**
+     * @param forcedStrength the preprocessing strength to pin, or null to let the adaptive
+     *        stage decide. Reference setup is the one place an operator may pin one: the
+     *        size-agreement test needs a reference layout to arbitrate with, and this is the
+     *        step that creates it, so there is nothing to compare against yet. The operator
+     *        can see the photograph, so they are offered the choice instead.
+     */
+    private void analyseReference(String uriString, PreprocessingStrength forcedStrength) {
         final int token = ++analysisToken;
         final android.content.Context context = requireContext().getApplicationContext();
+        pendingStrength = forcedStrength;
 
         binding.cardReferenceAnalysis.setVisibility(View.VISIBLE);
         binding.tvReferenceAnalysisStatus.setText("Analysing reference image...");
         binding.layoutReferenceTypeRows.removeAllViews();
         binding.tvReferenceLocalisationReadiness.setText("");
+        binding.tvReferenceStrengthNote.setVisibility(View.GONE);
+        binding.btnReferenceStrength.setVisibility(View.GONE);
 
         new Thread(() -> {
             ReferenceLibrary library = ReferenceLibraryProvider.effectiveFor(context, partId);
@@ -205,8 +225,14 @@ public class ReferenceSetupFragment extends Fragment {
                                 Bitmap kept = scaleForKeeping(crop);
                                 if (kept != null) crops.put(index, kept);
                                 return null;
-                            });
+                            }, null, null, forcedStrength);
             if (result.processedBitmap != null) result.processedBitmap.recycle();
+
+            // What the other strengths would have found. Cheap — edge stage and geometry
+            // filter only, no crops and no encoder — and it is the only evidence available
+            // at setup time, since there is no reference layout to score against yet.
+            final java.util.Map<PreprocessingStrength, Integer> survey =
+                    HardwareFeatureExtractor.surveyStrengths(context, uriString);
 
             requireActivity().runOnUiThread(() -> {
                 if (!isAdded() || binding == null || token != analysisToken) {
@@ -219,8 +245,68 @@ public class ReferenceSetupFragment extends Fragment {
                 pendingMarginThreshold = marginThreshold;
                 pendingCrops.putAll(crops);
                 showReferenceAnalysis(uriString, result);
+                showStrengthSurvey(uriString, result, survey);
             });
         }).start();
+    }
+
+    /**
+     * Offers the operator the strengths that would find more here than the one that ran.
+     *
+     * <p>The adaptive stage arbitrates between strengths by how well their boxes reproduce a
+     * reference layout's known sizes — but this screen is what creates that layout, so there
+     * is nothing to arbitrate with. The image-quality heuristic alone picked the strength that
+     * ran, and on a photograph where a feature is barely above the plate it can pick one that
+     * misses it. Measured case: {@code screws_none.jpg} reads noise 2.65 / contrast 62, so
+     * MEDIUM runs and finds five features, while LIGHT finds six — the sixth being an
+     * out-of-focus bolt at 4.7 grey levels. Nothing in the photograph tells the app which
+     * count is right. The operator can see it, so they are shown the disagreement.
+     *
+     * <p>Shown only when a strength would find <em>more</em> than the one that ran: fewer is
+     * what the strengths are supposed to do when they suppress noise, and every count is
+     * reviewable crop by crop below anyway.
+     */
+    private void showStrengthSurvey(String uriString,
+                                    HardwareFeatureExtractor.AnalysisResult result,
+                                    java.util.Map<PreprocessingStrength, Integer> survey) {
+        if (binding == null || survey == null || survey.isEmpty()) return;
+        PreprocessingStrength ran = result.preprocessing == null ? null
+                : result.preprocessing.rung;
+        if (ran == null) return;
+
+        Integer ranCount = survey.get(ran);
+        if (ranCount == null) ranCount = result.features.size();
+
+        PreprocessingStrength best = null;
+        int bestCount = ranCount;
+        for (java.util.Map.Entry<PreprocessingStrength, Integer> e : survey.entrySet()) {
+            if (e.getValue() != null && e.getValue() > bestCount) {
+                bestCount = e.getValue();
+                best = e.getKey();
+            }
+        }
+        if (best == null) return;
+
+        StringBuilder sb = new StringBuilder("Preprocessing strengths disagree on this photo: ");
+        boolean first = true;
+        for (java.util.Map.Entry<PreprocessingStrength, Integer> e : survey.entrySet()) {
+            if (!first) sb.append(", ");
+            first = false;
+            sb.append(e.getKey().label).append(' ').append(e.getValue());
+            if (e.getKey() == ran) sb.append(" (ran)");
+        }
+        sb.append(". There is no reference to compare against yet — you are creating it — so"
+                + " the app cannot tell which is right. Check the crops below; if a feature is"
+                + " missing, re-analyse with the stronger-detecting option.");
+        binding.tvReferenceStrengthNote.setText(sb);
+        binding.tvReferenceStrengthNote.setVisibility(View.VISIBLE);
+
+        final PreprocessingStrength target = best;
+        binding.btnReferenceStrength.setText(String.format(Locale.getDefault(),
+                "RE-ANALYSE WITH %s (%d FEATURES)",
+                target.label.toUpperCase(Locale.getDefault()), bestCount));
+        binding.btnReferenceStrength.setVisibility(View.VISIBLE);
+        binding.btnReferenceStrength.setOnClickListener(v -> analyseReference(uriString, target));
     }
 
     /** Aspect-preserving copy bounded to {@link #CROP_KEEP_PX}, or the original if already small. */

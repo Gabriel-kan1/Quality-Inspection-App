@@ -111,6 +111,33 @@ public final class AdaptivePreprocessing {
     }
 
     /**
+     * How many detections each strength would find in this image.
+     *
+     * <p>For reference setup, which has no prior to arbitrate with: the app cannot tell which
+     * strength is right without something to compare against, but the operator is looking at
+     * the photograph and can. Running the edge stage and the geometry filter per strength is
+     * cheap — no crops, no encoder — so the counts can simply be shown.
+     *
+     * @param src working-resolution RGBA; not modified
+     */
+    public static Map<PreprocessingStrength, Integer> survey(Mat src, Boolean forceGlare) {
+        Map<PreprocessingStrength, Integer> out = new LinkedHashMap<>();
+        float w = src.width(), h = src.height();
+        for (PreprocessingStrength rung : PreprocessingStrength.values()) {
+            Mat map = null;
+            try {
+                map = EdgeMethodLab.strengthEdges(src, forceGlare, new boolean[1], rung);
+                out.put(rung, HardwareFeatureExtractor.findFeatureBoxes(map, w, h).size());
+            } catch (Throwable t) {
+                Log.e(TAG, "Strength " + rung.label + " failed during survey", t);
+            } finally {
+                if (map != null) map.release();
+            }
+        }
+        return out;
+    }
+
+    /**
      * The decision, separated from the OpenCV work so it can be tested: the suggested rung
      * stands unless some other rung's deviation is lower by more than {@code margin}. A rung
      * that could not be aligned (NaN) is never chosen. If the suggested rung itself could not
@@ -148,15 +175,26 @@ public final class AdaptivePreprocessing {
      */
     static HardwareFeatureExtractor.Edges compute(Mat src, Boolean forceGlare,
                                                   SizePrior sizePrior, Choice[] choiceOut) {
+        return compute(src, forceGlare, sizePrior, choiceOut, null);
+    }
+
+    /**
+     * As above, with {@code forced} pinning the strength instead of letting the evidence
+     * choose. Used by reference setup, where the operator can see the photograph and the app
+     * has no prior to arbitrate with — see {@link #survey}.
+     */
+    static HardwareFeatureExtractor.Edges compute(Mat src, Boolean forceGlare,
+                                                  SizePrior sizePrior, Choice[] choiceOut,
+                                                  PreprocessingStrength forced) {
         Mat gray = new Mat();
         Map<PreprocessingStrength, Mat> maps = new LinkedHashMap<>();
         boolean ok = false;
         try {
             Imgproc.cvtColor(src, gray, Imgproc.COLOR_RGBA2GRAY);
             ImageQuality quality = ImageQuality.assess(gray);
-            PreprocessingStrength suggested = quality.suggest();
+            PreprocessingStrength suggested = forced != null ? forced : quality.suggest();
 
-            List<PreprocessingStrength> candidates = sizePrior == null
+            List<PreprocessingStrength> candidates = (forced != null || sizePrior == null)
                     ? Collections.singletonList(suggested) : quality.candidates();
             Map<PreprocessingStrength, Double> scores = new LinkedHashMap<>();
             boolean glare = false;
@@ -185,7 +223,7 @@ public final class AdaptivePreprocessing {
                 scores.put(rung, sizePrior.agreement(rects));
             }
 
-            PreprocessingStrength chosen = sizePrior == null ? suggested
+            PreprocessingStrength chosen = (forced != null || sizePrior == null) ? suggested
                     : choose(suggested, scores, AGREEMENT_MARGIN);
             Choice choice = new Choice(chosen, quality, suggested, scores, sizePrior);
             if (choiceOut != null && choiceOut.length > 0) choiceOut[0] = choice;

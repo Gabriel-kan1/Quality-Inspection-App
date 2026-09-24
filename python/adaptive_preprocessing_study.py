@@ -150,6 +150,13 @@ RUNGS = list(LADDER)
 MIN_JUDGED_PX = 30            # FeatureLocalisation.MIN_SIZE_JUDGED_PX
 DEVIATION_CAP = np.log(2.0)   # a box twice or half the expected size is as bad as absent
 MISSING_PENALTY = DEVIATION_CAP
+EXTRA_PENALTY = DEVIATION_CAP   # inventing a feature costs what losing one does
+# How far past the reference features' own bounding box a detection still counts as "on the
+# part", as a fraction of that box's extent on each side. 0 is too tight to see over-detection
+# on a 4-slot layout (head1.jpg: light scores 0.102 against medium's 0.000, inside the margin);
+# 0.5 separates every case measured (0.14-0.57 against 0.00-0.15) without reaching so far that
+# genuine hardware outside the layout would be charged.
+EXTRA_ENVELOPE_PAD = 0.5
 
 # For the Laplacian kernel [0 1 0; 1 -4 1; 0 1 0], white noise of standard deviation s has
 # response standard deviation s*sqrt(20), and the median of the absolute value of a
@@ -275,13 +282,24 @@ def frac_boxes(bx, w, h):
                      for x, y, bw, bh in bx], dtype=np.float64).reshape(-1, 4)
 
 
-def agreement(ref, ref_px, H, cand):
+def agreement(ref, ref_px, H, cand, count_extras=True):
     """
-    Mean capped size deviation of the candidate's boxes from the reference's, over every
-    reference box big enough to judge, with unmatched reference boxes charged the cap.
+    Mean capped deviation over everything the rung ought to account for: every reference box
+    big enough to judge, plus (with count_extras) every detection that explains no reference
+    box and lies inside the part.
+
+    Three ways to be wrong, all charged on one scale:
+      * a box the wrong size        -> |ln(found/expected)|, capped
+      * a reference box unmatched   -> the cap (the rung lost a feature)
+      * a detection explaining none -> the cap (the rung invented one)
 
     A mean rather than a median on purpose: the failure this exists to catch is ONE box that
     swallowed a shadow, and a median over four slots would not see it.
+
+    The extras term is what lets every rung be put on the ballot. Without it the score judges
+    boxes AT the reference's features and is blind to what a rung scatters BETWEEN them, so a
+    rung that over-detects can win on size while flooding the frame -- which is why the light
+    rung previously had to be kept off the ballot by a blunt edge-contrast threshold instead.
     """
     judged = [i for i in range(len(ref)) if min(ref_px[i]) >= MIN_JUDGED_PX]
     if not judged or len(cand) == 0:
@@ -306,6 +324,20 @@ def agreement(ref, ref_px, H, cand):
             continue
         ratio = np.sqrt((cand[j, 2] * cand[j, 3]) / (ref[i, 2] * ref[i, 3] * scale * scale))
         devs.append(min(abs(np.log(ratio)), DEVIATION_CAP))
+
+    if count_extras:
+        # The part, as the reference's own features span it in this photo's frame. A detection
+        # outside it is other scene content and none of this check's business; one inside it,
+        # explaining nothing, is the rung inventing hardware.
+        lo, hi = pred.min(axis=0), pred.max(axis=0)
+        extent = np.maximum(hi - lo, 1e-6)
+        lo, hi = lo - extent * EXTRA_ENVELOPE_PAD, hi + extent * EXTRA_ENVELOPE_PAD
+        claimed = set(matched.values())
+        for j in range(len(cand)):
+            if j in claimed:
+                continue
+            if lo[0] <= cand[j, 0] <= hi[0] and lo[1] <= cand[j, 1] <= hi[1]:
+                devs.append(EXTRA_PENALTY)
     return float(np.mean(devs)), len(matches)
 
 
@@ -319,13 +351,20 @@ def noise_rung(noise, contrast, thresholds):
     return "medium"
 
 
-def eligible(contrast, thresholds):
-    """Rungs the size test may choose between — AdaptivePreprocessing's candidate set."""
+def eligible(contrast, thresholds, gate_light=True):
+    """
+    Rungs the size test may choose between — AdaptivePreprocessing's candidate set.
+
+    `gate_light=False` puts every rung on the ballot, which is only safe once the score can
+    see over-detection (see `agreement`'s extras term).
+    """
     _, _, light_below = thresholds
+    if not gate_light:
+        return list(RUNGS)
     return ["medium", "strong"] + (["light"] if contrast < light_below else [])
 
 
-def section_selection(thresholds, margin):
+def section_selection(thresholds, margin, gate_light=True, count_extras=True):
     print("\n3. SIZE-AGREEMENT SELECTION ON GATE-INTERCHANGEABLE PAIRS")
     print("   A = reference (its own noise-chosen rung), B = inspection under every rung.")
     print("   Each B rung is scored by how well its box sizes reproduce A's; the best is chosen")
@@ -368,11 +407,11 @@ def section_selection(thresholds, margin):
             prior = noise_rung(qb["noise"], qb["contrast"], thresholds)
             scores, counts = {}, {}
             for rung in RUNGS:
-                if rung not in eligible(qb["contrast"], thresholds):
+                if rung not in eligible(qb["contrast"], thresholds, gate_light):
                     continue
                 bx_b = boxes(img_b, LADDER[rung])
                 counts[rung] = len(bx_b)
-                scores[rung], _ = agreement(ref, ref_px, H, frac_boxes(bx_b, wb, hb))
+                scores[rung], _ = agreement(ref, ref_px, H, frac_boxes(bx_b, wb, hb), count_extras)
             usable = {r: v for r, v in scores.items() if v is not None}
             if not usable:
                 continue
@@ -492,6 +531,10 @@ def main():
                     help="noise sigma from which the strong rung is chosen; the p99 edge "
                          "contrast below which the light rung is; and the contrast below "
                          "which light is a candidate at all")
+    ap.add_argument("--no-light-gate", action="store_true",
+                    help="put every rung on the ballot (safe once extras are scored)")
+    ap.add_argument("--no-extras", action="store_true",
+                    help="score size only, as before the extras term")
     ap.add_argument("--margin", type=float, default=0.08,
                     help="ln-units by which another rung must beat the noise-chosen one")
     args = ap.parse_args()
@@ -504,7 +547,8 @@ def main():
     section_ladder(quality)
     section_merge_case()
     if not args.quick:
-        section_selection(tuple(args.thresholds), args.margin)
+        section_selection(tuple(args.thresholds), args.margin,
+                          gate_light=not args.no_light_gate, count_extras=not args.no_extras)
     section_cost()
     if args.alternatives:
         section_alternatives()

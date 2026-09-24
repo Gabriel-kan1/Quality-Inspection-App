@@ -8,6 +8,7 @@ import org.opencv.core.MatOfInt;
 import org.opencv.imgproc.Imgproc;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
@@ -56,13 +57,6 @@ public final class ImageQuality {
      * (24) v6 still wins.
      */
     public static final double SOFT_CONTRAST = 20.0;
-    /**
-     * Edge contrast below which the light rung may be <em>offered</em> to the size test at all.
-     * On anything sharp the light rung is catastrophic — 25 misses and 205 extras on the clean
-     * set — in a way a size score cannot see, because it judges the boxes at the slots and not
-     * the extras between them. Every clean asset sits above this.
-     */
-    public static final double LIGHT_ELIGIBLE_CONTRAST = 40.0;
 
     /**
      * For the 3x3 Laplacian kernel {@code [0 1 0; 1 -4 1; 0 1 0]}, white noise of standard
@@ -146,16 +140,20 @@ public final class ImageQuality {
     }
 
     /**
-     * The rungs a size test may choose between. Medium and strong are never harmful enough to
-     * exclude; light is offered only when the edges are genuinely weak. Always contains
-     * {@link #suggest()}.
+     * The rungs a size test may choose between: all of them.
+     *
+     * <p>{@link PreprocessingStrength#LIGHT} used to be withheld above an edge-contrast of 40,
+     * because it over-detects badly on a sharp photograph and the size score could not see
+     * that — it judged boxes at the layout's slots and was blind to what a rung scattered
+     * between them. The rule also withheld light on photographs where it was the only rung to
+     * find a feature at all: on {@code screws_none.jpg} (contrast 62) medium and strong both
+     * miss an out-of-focus bolt that light finds, and the layout then carries five slots
+     * instead of six. {@link SizePrior} now charges unmatched detections that lie on the part,
+     * so over-detection is scored directly and the blunt rule is no longer needed.
      */
     public List<PreprocessingStrength> candidates() {
-        List<PreprocessingStrength> out = new ArrayList<>();
-        if (edgeContrast < LIGHT_ELIGIBLE_CONTRAST) out.add(PreprocessingStrength.LIGHT);
-        out.add(PreprocessingStrength.MEDIUM);
-        out.add(PreprocessingStrength.STRONG);
-        return Collections.unmodifiableList(out);
+        return Collections.unmodifiableList(
+                Arrays.asList(PreprocessingStrength.values()));
     }
 
     /** Whether the photograph reads as soft: weak edges, the light rung's territory. */
