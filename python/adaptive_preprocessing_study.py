@@ -351,12 +351,13 @@ def noise_rung(noise, contrast, thresholds):
     return "medium"
 
 
-def eligible(contrast, thresholds, gate_light=True):
+def eligible(contrast, thresholds, gate_light=False):
     """
     Rungs the size test may choose between — AdaptivePreprocessing's candidate set.
 
-    `gate_light=False` puts every rung on the ballot, which is only safe once the score can
-    see over-detection (see `agreement`'s extras term).
+    Every rung, which is what ships: safe because `agreement`'s extras term charges
+    over-detection directly. `gate_light=True` restores the historical rule that withheld
+    light above an edge contrast of 40, for reproducing Table G of the findings document.
     """
     _, _, light_below = thresholds
     if not gate_light:
@@ -364,7 +365,7 @@ def eligible(contrast, thresholds, gate_light=True):
     return ["medium", "strong"] + (["light"] if contrast < light_below else [])
 
 
-def section_selection(thresholds, margin, gate_light=True, count_extras=True):
+def section_selection(thresholds, margin, gate_light=False, count_extras=True):
     print("\n3. SIZE-AGREEMENT SELECTION ON GATE-INTERCHANGEABLE PAIRS")
     print("   A = reference (its own noise-chosen rung), B = inspection under every rung.")
     print("   Each B rung is scored by how well its box sizes reproduce A's; the best is chosen")
@@ -531,8 +532,9 @@ def main():
                     help="noise sigma from which the strong rung is chosen; the p99 edge "
                          "contrast below which the light rung is; and the contrast below "
                          "which light is a candidate at all")
-    ap.add_argument("--no-light-gate", action="store_true",
-                    help="put every rung on the ballot (safe once extras are scored)")
+    ap.add_argument("--light-gate", action="store_true",
+                    help="withhold the light rung above the LIGHT_ELIGIBLE contrast, as the "
+                         "app did before the extras term. Historical: reproduces Table G")
     ap.add_argument("--no-extras", action="store_true",
                     help="score size only, as before the extras term")
     ap.add_argument("--margin", type=float, default=0.08,
@@ -548,7 +550,7 @@ def main():
     section_merge_case()
     if not args.quick:
         section_selection(tuple(args.thresholds), args.margin,
-                          gate_light=not args.no_light_gate, count_extras=not args.no_extras)
+                          gate_light=args.light_gate, count_extras=not args.no_extras)
     section_cost()
     if args.alternatives:
         section_alternatives()
