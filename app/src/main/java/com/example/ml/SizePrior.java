@@ -120,6 +120,14 @@ public final class SizePrior {
         return prior.expectedArea.isEmpty() ? null : prior;
     }
 
+    /**
+     * The method that drew the reference's boxes — the one an inspection runs unless another
+     * reproduces the reference measurably better. Null when unknowable.
+     */
+    public String referenceMethodId() {
+        return layout.referenceMethodId();
+    }
+
     /** Slots with an expected size to compare against. */
     public int judgedSlots() {
         return expectedArea.size();

@@ -295,6 +295,23 @@ public final class FeatureLayout {
 
     // ── Persistence ──────────────────────────────────────────────────────────
 
+    /**
+     * Parts with a layout file on this device, sorted. The names are the file stems, which
+     * {@link PartFiles#safeName} leaves unchanged for every id it can produce, so each loads
+     * back through {@link #load}.
+     */
+    public static java.util.List<String> savedPartIds(Context context) {
+        java.util.List<String> ids = new ArrayList<>();
+        File[] files = new File(context.getFilesDir(), DIR).listFiles();
+        if (files == null) return ids;
+        for (File f : files) {
+            String name = f.getName();
+            if (name.endsWith(".json")) ids.add(name.substring(0, name.length() - 5));
+        }
+        java.util.Collections.sort(ids, String.CASE_INSENSITIVE_ORDER);
+        return ids;
+    }
+
     public static File fileFor(Context context, String partId) {
         File dir = new File(context.getFilesDir(), DIR);
         if (!dir.exists()) dir.mkdirs();
@@ -381,6 +398,28 @@ public final class FeatureLayout {
 
     public void setPreprocessingRung(String label) {
         this.preprocessingRung = label;
+    }
+
+    /**
+     * Catalogue id of the edge method that actually drew this reference's boxes, or null
+     * when that cannot be known.
+     *
+     * <p>Under the adaptive stage the {@code preprocessing} field holds what ran: a rung label
+     * ({@code "light"}) for layouts written before every method was on the ballot, or a
+     * catalogue id ({@code "shipped-hybrid"}) since. Under a fixed method it is null and the
+     * method is {@code edgeMethod}; a layout that predates both was the shipped stack, the
+     * only method that existed. Adaptive with no record of what ran is the one unknowable
+     * case.
+     */
+    public String referenceMethodId() {
+        if (preprocessingRung != null) {
+            PreprocessingStrength rung = PreprocessingStrength.byLabel(preprocessingRung);
+            if (rung != null) return rung.id;
+            if (EdgeMethodLab.byId(preprocessingRung) != null) return preprocessingRung;
+        }
+        if (edgeMethodId == null) return EdgeMethodLab.SHIPPED_ID;
+        if (EdgeMethodLab.ADAPTIVE_ID.equals(edgeMethodId)) return null;
+        return EdgeMethodLab.byId(edgeMethodId) != null ? edgeMethodId : null;
     }
 
 

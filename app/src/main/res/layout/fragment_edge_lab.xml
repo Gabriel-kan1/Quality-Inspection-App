@@ -41,7 +41,7 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="6dp"
             android:lineSpacingExtra="2dp"
-            android:text="Runs one photograph through every edge operator at the same working resolution and scores each map through the detector's own geometry filter. Choose USE FOR INSPECTIONS on any card and every inspection and reference setup from then on runs that method — the comparison itself files nothing."
+            android:text="Runs one photograph through every edge operator at the same working resolution and scores each map through the detector's own geometry filter, showing the crops an inspection would take from it. Choose USE FOR INSPECTIONS on any card and every inspection and reference setup from then on runs that method — the comparison itself files nothing."
             android:textColor="@color/gray_text_secondary"
             android:textSize="12sp" />
 
@@ -94,6 +94,22 @@
                 app:cornerRadius="12dp" />
         </LinearLayout>
 
+        <!-- The part whose labelled reference every method is scored against. The operator's
+             labels are the only ground truth there is; without a part the lab can show the
+             adaptive stage's starting point but not its real choice. -->
+        <Button
+            android:id="@+id/btn_pick_part"
+            android:layout_width="match_parent"
+            android:layout_height="52dp"
+            android:layout_marginTop="8dp"
+            android:backgroundTint="@color/surface_card"
+            android:contentDescription="Choose a part whose reference every method is scored against"
+            android:text="SCORE AGAINST PART: NONE"
+            android:textColor="@color/white"
+            android:textSize="12sp"
+            android:textStyle="bold"
+            app:cornerRadius="12dp" />
+
         <!-- The source, kept on screen while the maps are read: judging an edge map without
              the photograph beside it is guesswork about what was in the frame. -->
         <com.google.android.material.card.MaterialCardView
@@ -141,6 +157,57 @@
                     android:contentDescription="The photograph every method below was run on"
                     android:scaleType="fitCenter"
                     tools:src="@android:drawable/ic_menu_gallery" />
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
+        <!-- What the photograph measures as, and so which rung the adaptive stage runs on it.
+             Stated once, above the cards, because it is a fact about the photo rather than
+             about any one method. -->
+        <com.google.android.material.card.MaterialCardView
+            android:id="@+id/card_quality"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:visibility="gone"
+            app:cardBackgroundColor="@color/surface_card"
+            app:cardCornerRadius="16dp"
+            app:strokeColor="@color/orange_warn"
+            app:strokeWidth="2dp"
+            tools:visibility="visible">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="16dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="WHAT ADAPTIVE WOULD RUN"
+                    android:textColor="@color/orange_warn"
+                    android:textSize="12sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/tv_quality_title"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:textColor="@color/white"
+                    android:textSize="15sp"
+                    android:textStyle="bold"
+                    tools:text="Adaptive runs: Hybrid v6 (medium)" />
+
+                <TextView
+                    android:id="@+id/tv_quality_body"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:lineSpacingExtra="3dp"
+                    android:textColor="@color/gray_text_secondary"
+                    android:textSize="12sp"
+                    tools:text="Noise 3.1: below 12, not grainy" />
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 
@@ -192,7 +259,7 @@
             android:background="#332B2930"
             android:lineSpacingExtra="2dp"
             android:padding="12dp"
-            android:text="Candidates are contours that survived the detector's aspect, area and nesting filters — not confirmed fasteners. A higher count is only better if the extra boxes are hardware rather than seams, shadows and glare, so compare the maps as well as the numbers."
+            android:text="Every method sees the photograph an inspection would: background outside the chassis painted out, calibration marker excluded. Candidates are contours that survived the detector's aspect, area and nesting filters — not confirmed fasteners. Each card shows where they fall and the crops the classifier would be given; a higher count is only better if the extra crops are hardware rather than seams, shadows and glare."
             android:textColor="@color/gray_text_secondary"
             android:textSize="11sp"
             android:visibility="gone"

@@ -606,11 +606,13 @@ public class ResultsFragment extends Fragment {
     private String describePreprocessing() {
         if (analysisResult == null || analysisResult.preprocessing == null) return null;
         StringBuilder sb = new StringBuilder(analysisResult.preprocessing.describe());
-        String referenceRung = referenceLayout == null ? null : referenceLayout.preprocessingRung();
-        if (referenceRung != null) {
-            sb.append(". Reference was detected with ").append(referenceRung);
-            sb.append(referenceRung.equals(analysisResult.preprocessing.rung.label)
-                    ? " as well." : " — sizes are compared across two strengths.");
+        String referenceMethod = referenceLayout == null ? null
+                : referenceLayout.referenceMethodId();
+        if (referenceMethod != null) {
+            sb.append(". Reference was detected with ")
+                    .append(EdgeMethodLab.nameOf(referenceMethod));
+            sb.append(referenceMethod.equals(analysisResult.preprocessing.methodId)
+                    ? " as well." : " — sizes are compared across two methods.");
         }
         return sb.toString();
     }
@@ -1704,7 +1706,7 @@ public class ResultsFragment extends Fragment {
         layout.setImageSize(refResult.workingWidth, refResult.workingHeight);
         layout.setEdgeMethodId(refResult.edgeMethodId);
         layout.setPreprocessingRung(refResult.preprocessing == null ? null
-                : refResult.preprocessing.rung.label);
+                : refResult.preprocessing.label());
         return layout.isEmpty() ? null : layout;
     }
 

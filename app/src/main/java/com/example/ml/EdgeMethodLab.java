@@ -2,6 +2,7 @@ package com.example.ml;
 
 import android.content.Context;
 import android.graphics.Bitmap;
+import android.graphics.RectF;
 import android.util.Log;
 
 import org.opencv.android.Utils;
@@ -9,14 +10,18 @@ import org.opencv.core.Core;
 import org.opencv.core.CvType;
 import org.opencv.core.Mat;
 import org.opencv.core.MatOfPoint;
+import org.opencv.core.Rect;
 import org.opencv.core.Size;
 import org.opencv.imgproc.CLAHE;
 import org.opencv.imgproc.Imgproc;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 
 /**
  * Runs one image through several edge/feature operators and reports what each one produced.
@@ -37,6 +42,11 @@ import java.util.Locale;
  *   <li><b>One scorer.</b> Every edge map is pushed through the detector's own
  *       {@link HardwareFeatureExtractor#findFeatureBoxes} geometry filter. Ranking by raw
  *       contour count would crown whichever method produced the most noise.
+ *   <li><b>The inspection's own input and output.</b> Every method sees the image after the
+ *       chassis mask has painted out the background, as an inspection's edge stage does, and
+ *       each card carries the boxes and crops an inspection would take from its map — padded,
+ *       sourced and numbered the same way — so a method is judged on what the classifier
+ *       would actually be handed.
  * </ul>
  *
  * <p>The shipped pipeline is included as one of the entries and is invoked through
@@ -100,6 +110,16 @@ public final class EdgeMethodLab {
      */
     static final int DISPLAY_MAX_DIM = 640;
 
+    /**
+     * Crops shown per card. The noisy operators find hundreds of candidates, and every
+     * thumbnail is a region decode plus a bitmap; past a few dozen the strip stops being
+     * readable anyway, and the box overlay above it still shows every one.
+     */
+    public static final int MAX_CROPS_SHOWN = 30;
+
+    /** Longest edge of a crop thumbnail. Enough to tell a screw from a shadow. */
+    static final int CROP_THUMB_DIM = 128;
+
     /** Gaussian window shared by the operators that need smoothing before differentiating. */
     private static final Size BLUR_5 = new Size(5, 5);
 
@@ -156,6 +176,30 @@ public final class EdgeMethodLab {
          * to work out which one it was.
          */
         public final String note;
+        /**
+         * Every box an inspection would crop from this map, as fractions of the frame, in the
+         * order the inspection numbers them: after the geometry filter, and with anything on
+         * the calibration marker dropped, exactly as {@code performDynamicDetection} does.
+         */
+        public final List<RectF> boxes;
+        /**
+         * Thumbnails of the first {@link #MAX_CROPS_SHOWN} of {@link #boxes}, framed with the
+         * inspection's own padding and cut from the same source it would cut them from. An
+         * entry is null where the crop could not be read; the inspection skips those too.
+         */
+        public final List<Bitmap> crops;
+        /**
+         * True on the card the adaptive stage would run for this photo: the method that best
+         * reproduces the chosen part's reference, or without a part, the image-quality
+         * starting point. Set once every method has been scored.
+         */
+        public boolean picked;
+        /**
+         * How far this method's boxes sit from the chosen part's reference ({@link
+         * SizePrior#agreement}, lower is better); NaN when no part was chosen or the boxes
+         * could not be aligned onto it. The number the adaptive stage decides on.
+         */
+        public double referenceScore = Double.NaN;
 
         MethodResult(String id, String name, String summary, Bitmap edgeMap,
                      double edgeDensityPercent, int contourCount, int candidateBoxes,
@@ -168,6 +212,19 @@ public final class EdgeMethodLab {
                      double edgeDensityPercent, int contourCount, int candidateBoxes,
                      long elapsedMs, boolean isShippedPipeline, boolean inUse, String failure,
                      String note) {
+            this(id, name, summary, edgeMap, edgeDensityPercent, contourCount, candidateBoxes,
+                    elapsedMs, isShippedPipeline, inUse, failure, note,
+                    Collections.<RectF>emptyList(), Collections.<Bitmap>emptyList(), false);
+        }
+
+        MethodResult(String id, String name, String summary, Bitmap edgeMap,
+                     double edgeDensityPercent, int contourCount, int candidateBoxes,
+                     long elapsedMs, boolean isShippedPipeline, boolean inUse, String failure,
+                     String note, List<RectF> boxes, List<Bitmap> crops,
+                     boolean picked) {
+            this.boxes = Collections.unmodifiableList(new ArrayList<>(boxes));
+            this.crops = Collections.unmodifiableList(new ArrayList<>(crops));
+            this.picked = picked;
             this.note = note;
             this.id = id;
             this.inUse = inUse;
@@ -184,6 +241,19 @@ public final class EdgeMethodLab {
 
         public boolean failed() {
             return failure != null;
+        }
+
+        /** How many crops the card shows against how many the inspection would make. */
+        public String cropsLine() {
+            if (failed()) return "";
+            if (boxes.isEmpty()) return "An inspection would crop nothing from this map.";
+            if (crops.size() < boxes.size()) {
+                return String.format(Locale.US,
+                        "An inspection would crop and classify %d features; first %d shown:",
+                        boxes.size(), crops.size());
+            }
+            return String.format(Locale.US, "An inspection would crop and classify %d %s:",
+                    boxes.size(), boxes.size() == 1 ? "feature" : "features");
         }
 
         /** One line of numbers for the card, in the order they are worth reading. */
@@ -481,14 +551,16 @@ public final class EdgeMethodLab {
         // would read as a second method. See PreprocessingStrength for why the rungs move
         // CLAHE's clip limit and not the filter apertures, and
         // python/adaptive_preprocessing_study.py for every number below.
-        methods.add(new Method(PreprocessingStrength.LIGHT.id, "Adaptive rung: light (soft photos)",
+        methods.add(new Method(PreprocessingStrength.LIGHT.id, "Adaptive rung: light (soft photos, small hardware)",
                 "Hybrid v6 with twice the CLAHE contrast boost and a 3px Gaussian instead of "
                         + "5px, so a faint edge survives to Canny. The rung the adaptive stage "
                         + "runs when the photograph's edges are weak (99th-percentile Laplacian "
                         + "response under 20): on the bundled set blurred 9px it scores 24 "
                         + "against v6's 41. On anything sharp it is catastrophic — 25 misses "
-                        + "and 205 extras on the clean set — which is why the adaptive stage "
-                        + "will not even offer it above a contrast of 40.",
+                        + "and 205 extras on the clean set. Also run when a sharp photo's "
+                        + "hardware is small (the medium rung's boxes under 25px on the short "
+                        + "side), where v6's closing welds neighbours together: corner.jpg goes "
+                        + "from 6 to 9 of its 10.",
                 false,
                 (gray, srcRgba, forceGlare, glareOut, noteOut) ->
                         strengthEdges(srcRgba, forceGlare, glareOut, PreprocessingStrength.LIGHT)));
@@ -506,21 +578,21 @@ public final class EdgeMethodLab {
                 (gray, srcRgba, forceGlare, glareOut, noteOut) ->
                         strengthEdges(srcRgba, forceGlare, glareOut, PreprocessingStrength.STRONG)));
 
-        methods.add(new Method(ADAPTIVE_ID, "Adaptive (chooses a rung per photograph)",
-                "Measures the photograph — a robust noise estimate and how strong its edges "
-                        + "are — and runs the rung that evidence supports: strong for grain and "
-                        + "texture, light for a soft image, v6 otherwise. During an inspection "
-                        + "of a part with a labelled reference it goes further: every eligible "
-                        + "rung is run and the one whose boxes come closest to the sizes the "
-                        + "reference has learned for each feature wins, because a shadow merged "
-                        + "into a box or a fastener half-cropped is a size error before it is "
-                        + "anything else. The default. This card shows the image-quality choice "
-                        + "only, since the lab has no reference to size against.",
+        methods.add(new Method(ADAPTIVE_ID, "Adaptive (chooses a method per photograph)",
+                "On every inspection photograph, runs every other method on this screen and "
+                        + "scores each one's boxes against the part's labelled reference: a "
+                        + "box the wrong size, a slot nothing matched and a box invented on "
+                        + "the part all count against it. The method that best reproduces "
+                        + "what the operator labelled runs; the reference's own method is kept "
+                        + "unless another beats it clearly. Without a reference (reference "
+                        + "setup itself) it starts from the photo's noise and contrast, and the "
+                        + "operator can re-run with any method. Pick a part at the top of this "
+                        + "screen to see the real choice on this card.",
                 false,
                 (gray, srcRgba, forceGlare, glareOut, noteOut) -> {
                     AdaptivePreprocessing.Choice[] choice = new AdaptivePreprocessing.Choice[1];
                     HardwareFeatureExtractor.Edges edges =
-                            AdaptivePreprocessing.compute(srcRgba, forceGlare, null, choice);
+                            AdaptivePreprocessing.compute(srcRgba, forceGlare, null, choice, null);
                     try {
                         glareOut[0] = edges.glareCorrectionApplied;
                         if (choice[0] != null) noteOut[0] = choice[0].describe();
@@ -872,53 +944,349 @@ public final class EdgeMethodLab {
     }
 
     /**
-     * Runs every catalogued method over one image.
+     * Everything one lab run produced: a result per method, what the photograph measured as,
+     * and — when a part was chosen — how every method scored against that part's reference
+     * and which one the adaptive stage would therefore run.
+     */
+    public static final class Comparison {
+        public final List<MethodResult> results;
+        /** Null when the image could not be read. */
+        public final ImageQuality quality;
+        /** Fraction of the frame the chassis mask excluded before any method saw it. */
+        public final double backgroundFraction;
+        /** Whether a calibration marker was found, so boxes on it were dropped as inspections do. */
+        public final boolean markerFound;
+        /** The method inspections currently run. */
+        public final String selectedId;
+        /** The part scored against, or null. */
+        public final String partId;
+        /** Why no part could be scored against, when one was asked for; else null. */
+        public final String partProblem;
+        /** What the prior is built from, for the header; null without one. */
+        public final String priorDescription;
+        /** Score per competing method; empty without a part. */
+        public final Map<String, Double> scores;
+        /** What runs unless beaten: the reference's method, or the image-quality start. */
+        public final String incumbentId;
+        /** What the adaptive stage would run on this photo. */
+        public final String chosenId;
+
+        Comparison(List<MethodResult> results, ImageQuality quality, double backgroundFraction,
+                   boolean markerFound, String selectedId, String partId, String partProblem,
+                   String priorDescription, Map<String, Double> scores, String incumbentId,
+                   String chosenId) {
+            this.results = results;
+            this.quality = quality;
+            this.backgroundFraction = backgroundFraction;
+            this.markerFound = markerFound;
+            this.selectedId = selectedId;
+            this.partId = partId;
+            this.partProblem = partProblem;
+            this.priorDescription = priorDescription;
+            this.scores = scores;
+            this.incumbentId = incumbentId;
+            this.chosenId = chosenId;
+        }
+
+        static Comparison empty(String selectedId, String partId) {
+            return new Comparison(new ArrayList<>(), null, 0, false, selectedId, partId, null,
+                    null, new LinkedHashMap<>(), null, null);
+        }
+
+        public boolean isEmpty() {
+            return results.isEmpty();
+        }
+
+        /** The header's explanation of the choice. See {@link EdgeMethodLab#verdict}. */
+        public List<String> verdict() {
+            return EdgeMethodLab.verdict(quality, selectedId, partId, partProblem,
+                    priorDescription, scores, incumbentId, chosenId);
+        }
+
+        /**
+         * Every bitmap this run holds, for a caller that has to free them. A crop found by
+         * several methods is one bitmap shared between their cards, so it appears once.
+         */
+        public List<Bitmap> bitmaps() {
+            List<Bitmap> out = new ArrayList<>();
+            java.util.Set<Bitmap> seen =
+                    java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+            for (MethodResult r : results) {
+                if (r.edgeMap != null && seen.add(r.edgeMap)) out.add(r.edgeMap);
+                for (Bitmap b : r.crops) if (b != null && seen.add(b)) out.add(b);
+            }
+            return out;
+        }
+    }
+
+    /**
+     * Parts with a labelled reference layout on this device: the parts the lab can score
+     * methods against.
+     */
+    public static List<String> partsWithReference(Context context) {
+        return FeatureLayout.savedPartIds(context);
+    }
+
+    /**
+     * The prior an inspection of {@code partId} would score methods against: its labelled
+     * layout, critical slots only, exactly as the results screen builds it, except that the
+     * reference-URI guard is skipped, since the lab's photograph is by definition not the
+     * reference. Null when the part cannot be scored against.
+     */
+    static SizePrior priorForPart(Context context, String partId) {
+        FeatureLayout layout = FeatureLayout.load(context, partId);
+        if (layout == null) return null;
+        FeatureLayout critical = layout.retaining(s -> FeatureTypeRegistry.severityOf(
+                context, s.type) == FeatureTypeRegistry.Severity.CRITICAL);
+        return SizePrior.from(critical.isEmpty() ? null : critical);
+    }
+
+    private static String priorProblem(Context context, String partId) {
+        FeatureLayout layout = FeatureLayout.load(context, partId);
+        if (layout == null) return "it has no labelled reference layout";
+        return "its reference has too few critical slots with a usable box to score against ("
+                + layout.slots().size() + " slots; at least 4 critical ones of 30 px or more "
+                + "are needed)";
+    }
+
+    /**
+     * Runs every catalogued method over one image, the way an inspection would.
      *
-     * <p>Returns an empty list when OpenCV is unavailable or the image cannot be read. A
+     * <p>The photograph goes through the steps {@code extractFeatures} takes before its edge
+     * stage (calibration marker detection on the raw pixels, then the chassis mask filling
+     * the background with the plate's grey), so each card's map, box count and crops are what
+     * that method would produce if it were chosen. Boxes on the marker are dropped as the
+     * inspection drops them, and each crop is padded by
+     * {@link HardwareFeatureExtractor#cropPaddingFor} and cut from the source photo when that
+     * has more detail than the working copy: the pixels the encoder would be handed.
+     *
+     * <p>With a part, every method's boxes are also scored against that part's labelled
+     * reference, the same {@link SizePrior#agreement} an inspection decides on, and the
+     * adaptive card runs exactly as an inspection of that part would, so the lab shows the
+     * real per-photograph choice rather than a fallback.
+     *
+     * <p>Returns an empty comparison when OpenCV is unavailable or the image cannot be read. A
      * method that throws comes back as a {@link MethodResult} carrying its failure rather than
      * being dropped, because a method that cannot run on this photo is a result about the
      * method.
      *
-     * <p>Blocking and heavy — several seconds on a full-resolution photo. Call it off the main
+     * <p>Blocking and heavy: several seconds on a full-resolution photo. Call it off the main
      * thread.
+     *
+     * @param partId a part to score against, or null
      */
-    public static List<MethodResult> runAll(Context context, String uriString) {
+    public static Comparison runAll(Context context, String uriString, String partId) {
         List<MethodResult> results = new ArrayList<>();
+        String inUse = selectedId(context);
         if (!HardwareFeatureExtractor.isAvailable()) {
             Log.e(TAG, "OpenCV unavailable — no method can run.");
-            return results;
+            return Comparison.empty(inUse, partId);
         }
 
         Bitmap bitmap = HardwareFeatureExtractor.loadBitmap(
                 context, uriString, HardwareFeatureExtractor.WORKING_MAX_DIM);
         if (bitmap == null) {
             Log.e(TAG, "Could not load " + uriString);
-            return results;
+            return Comparison.empty(inUse, partId);
         }
+
+        final SizePrior prior = partId == null ? null : priorForPart(context, partId);
+        String partProblem = partId != null && prior == null ? priorProblem(context, partId) : null;
 
         Mat src = new Mat();
         Mat gray = new Mat();
-        String inUse = selectedId(context);
+        ImageQuality quality = null;
+        double backgroundFraction = 0;
+        ScaleCalibration calibration = null;
+        CropSource crops = null;
+        Map<String, Double> scores = new LinkedHashMap<>();
+        String incumbent = null;
+        String chosen = null;
         try {
             Utils.bitmapToMat(bitmap, src);
-            Imgproc.cvtColor(src, gray, Imgproc.COLOR_RGBA2GRAY);
-            for (Method method : catalogue()) {
-                results.add(run(method, gray, src, method.id.equals(inUse)));
+            // Same order as extractFeatures: the marker is found on real pixels, then what is
+            // not the chassis is painted out before any edge operator sees it.
+            calibration = ScaleCalibration.detect(src);
+            if (HardwareFeatureExtractor.MASK_BACKGROUND) {
+                ChassisMask.Result bg = ChassisMask.of(src);
+                try {
+                    ChassisMask.fillWithPlate(src, bg);
+                    backgroundFraction = bg.fraction;
+                } finally {
+                    bg.release();
+                }
             }
+            Imgproc.cvtColor(src, gray, Imgproc.COLOR_RGBA2GRAY);
+            quality = ImageQuality.assess(gray);
+
+            List<String> ballot = AdaptivePreprocessing.ballot();
+            incumbent = quality.suggest().id;
+            if (prior != null && prior.referenceMethodId() != null
+                    && ballot.contains(prior.referenceMethodId())) {
+                incumbent = prior.referenceMethodId();
+            }
+
+            crops = new CropSource(SourceCropper.open(
+                    context, uriString, bitmap.getWidth(), bitmap.getHeight()), src);
+            for (Method method : catalogue()) {
+                Method toRun = method;
+                if (ADAPTIVE_ID.equals(method.id) && prior != null) {
+                    // What an inspection of this part would run: every method scored against
+                    // its reference. Not the catalogue entry, which has no part to score
+                    // against and so could only show the starting point.
+                    toRun = new Method(method.id, method.name, method.summary, false,
+                            (g, s, fg, go, no) -> {
+                                AdaptivePreprocessing.Choice[] choice =
+                                        new AdaptivePreprocessing.Choice[1];
+                                HardwareFeatureExtractor.Edges e = AdaptivePreprocessing
+                                        .compute(s, fg, prior, choice, null);
+                                try {
+                                    go[0] = e.glareCorrectionApplied;
+                                    if (choice[0] != null) no[0] = choice[0].describe();
+                                    return e.edgesClosed.clone();
+                                } finally {
+                                    e.release();
+                                }
+                            });
+                }
+                MethodResult r = run(toRun, gray, src, method.id.equals(inUse), calibration,
+                        crops, prior);
+                results.add(r);
+                if (prior != null && ballot.contains(r.id)) scores.put(r.id, r.referenceScore);
+            }
+            chosen = prior != null
+                    ? AdaptivePreprocessing.choose(incumbent, scores,
+                            AdaptivePreprocessing.AGREEMENT_MARGIN)
+                    : incumbent;
+            for (MethodResult r : results) r.picked = r.id.equals(chosen);
         } catch (Throwable t) {
             // UnsatisfiedLinkError is an Error, not an Exception: catching only Exception here
             // is what let an ABI mismatch kill a worker thread silently elsewhere in this app.
             Log.e(TAG, "Edge comparison failed outright", t);
         } finally {
+            if (crops != null) crops.close();
             src.release();
             gray.release();
             bitmap.recycle();
         }
-        return results;
+        return new Comparison(results, quality, backgroundFraction, calibration != null, inUse,
+                partId, partProblem, prior == null ? null : prior.describe(), scores, incumbent,
+                chosen);
     }
 
-    /** Runs one method, measures it, and converts its map for display. */
-    private static MethodResult run(Method method, Mat gray, Mat src, boolean inUse) {
+    /**
+     * What the adaptive stage would do with this photograph and why, as plain lines for the
+     * lab's header. Pure, so the wording of the decision is testable without OpenCV.
+     *
+     * @param quality          the photograph's measurements
+     * @param selectedId       the method inspections currently run
+     * @param partId           the part scored against, or null
+     * @param partProblem      why that part could not be scored against, or null
+     * @param priorDescription what the part's prior is built from, or null
+     * @param scores           each competing method's score against the part; empty without
+     * @param incumbentId      what runs unless beaten
+     * @param chosenId         what the adaptive stage would run
+     */
+    public static List<String> verdict(ImageQuality quality, String selectedId, String partId,
+                                       String partProblem, String priorDescription,
+                                       Map<String, Double> scores, String incumbentId,
+                                       String chosenId) {
+        List<String> lines = new ArrayList<>();
+        if (quality == null || chosenId == null) return lines;
+        if (scores != null && !scores.isEmpty()) {
+            lines.add("Every method scored against " + partId + "'s labelled reference ("
+                    + priorDescription + "). Lower is closer to what the operator labelled: a "
+                    + "wrong-sized box, a missed slot and an invented box on the part all "
+                    + "count against a method.");
+            List<Map.Entry<String, Double>> ranked = new ArrayList<>(scores.entrySet());
+            ranked.sort((a, b) -> Double.compare(orInf(a.getValue()), orInf(b.getValue())));
+            int shown = 0;
+            for (Map.Entry<String, Double> e : ranked) {
+                if (shown++ == 5) break;
+                double v = orInf(e.getValue());
+                lines.add(String.format(Locale.US, "   %s   %s%s",
+                        Double.isInfinite(v) ? "  —  " : String.format(Locale.US, "%.3f", v),
+                        nameOf(e.getKey()), e.getKey().equals(incumbentId)
+                                ? "   (reference's method)" : ""));
+            }
+            if (chosenId.equals(incumbentId)) {
+                lines.add("The reference's method stands: nothing beat it by more than "
+                        + fmt(AdaptivePreprocessing.AGREEMENT_MARGIN) + ".");
+            } else {
+                lines.add(nameOf(chosenId) + " reproduces the reference better than "
+                        + (incumbentId == null ? "the starting point" : nameOf(incumbentId))
+                        + " by more than " + fmt(AdaptivePreprocessing.AGREEMENT_MARGIN)
+                        + ", so it runs.");
+            }
+        } else {
+            if (partProblem != null) {
+                lines.add("Cannot score against " + partId + ": " + partProblem + ".");
+            }
+            lines.add("No reference to score against, so this is only the starting point, from "
+                    + "the photo's statistics (" + quality.describe() + "). Pick a part above to "
+                    + "see what an inspection of it would actually run: every method scored "
+                    + "against the operator's labelled reference.");
+        }
+        if (!ADAPTIVE_ID.equals(selectedId)) {
+            lines.add("Note: inspections are set to " + nameOf(selectedId) + ", which does not "
+                    + "adapt. Choose USE FOR INSPECTIONS on the Adaptive card for any of this "
+                    + "to happen.");
+        }
+        return lines;
+    }
+
+    private static double orInf(Double v) {
+        return v == null || Double.isNaN(v) ? Double.POSITIVE_INFINITY : v;
+    }
+
+    private static String fmt(double v) {
+        return v == Math.rint(v) ? String.valueOf((long) v) : String.valueOf(v);
+    }
+
+    /**
+     * Cuts crop thumbnails the way the inspection cuts crops, once per distinct box.
+     *
+     * <p>Many methods find many of the same boxes (the three rungs especially), and the region
+     * decode is the expensive part, so each distinct rectangle is decoded once and its
+     * thumbnail shared between the cards that found it.
+     */
+    private static final class CropSource {
+        private final SourceCropper cropper;
+        private final Mat src;
+        private final Map<String, Bitmap> cache = new HashMap<>();
+
+        CropSource(SourceCropper cropper, Mat src) {
+            this.cropper = cropper;
+            this.src = src;
+        }
+
+        Bitmap thumbnail(Rect r) {
+            String key = r.x + "," + r.y + "," + r.width + "," + r.height;
+            if (cache.containsKey(key)) return cache.get(key);
+            Bitmap full = HardwareFeatureExtractor.cropFeature(cropper, src, r);
+            Bitmap thumb = full == null ? null : shrink(full, CROP_THUMB_DIM);
+            if (full != null && thumb != full) full.recycle();
+            cache.put(key, thumb);
+            return thumb;
+        }
+
+        void close() {
+            if (cropper != null) cropper.close();
+        }
+
+        private static Bitmap shrink(Bitmap full, int maxDim) {
+            int longest = Math.max(full.getWidth(), full.getHeight());
+            if (longest <= maxDim) return full;
+            float f = (float) maxDim / longest;
+            return Bitmap.createScaledBitmap(full, Math.max(1, Math.round(full.getWidth() * f)),
+                    Math.max(1, Math.round(full.getHeight() * f)), true);
+        }
+    }
+
+    /** Runs one method, measures it, cuts its crops and converts its map for display. */
+    private static MethodResult run(Method method, Mat gray, Mat src, boolean inUse,
+                                    ScaleCalibration calibration, CropSource cropSource,
+                                    SizePrior prior) {
         Mat edges = null;
         try {
             long startedAt = System.currentTimeMillis();
@@ -932,22 +1300,43 @@ public final class EdgeMethodLab {
             // findFeatureBoxes gets a clone: it is the detector's own code and is entitled to
             // consume what it is handed, while this map still has to be measured and drawn.
             Mat forBoxes = edges.clone();
-            int boxes;
+            List<Rect> found;
             try {
-                boxes = HardwareFeatureExtractor
-                        .findFeatureBoxes(forBoxes, edges.cols(), edges.rows()).size();
+                found = HardwareFeatureExtractor
+                        .findFeatureBoxes(forBoxes, edges.cols(), edges.rows());
             } finally {
                 forBoxes.release();
             }
 
-            return new MethodResult(method.id, method.name, method.summary,
-                    toDisplayBitmap(edges), density, contours, boxes, elapsedMs,
-                    method.shipped, inUse, null, note[0]);
+            float w = edges.cols(), h = edges.rows();
+            List<RectF> boxes = new ArrayList<>();
+            List<Bitmap> crops = new ArrayList<>();
+            for (Rect r : found) {
+                // The marker is scenery, not hardware; the inspection never crops it.
+                if (calibration != null && calibration.overlapsMarker(r)) continue;
+                boxes.add(new RectF(r.x / w, r.y / h, (r.x + r.width) / w, (r.y + r.height) / h));
+                if (crops.size() < MAX_CROPS_SHOWN) crops.add(cropSource.thumbnail(r));
+            }
+
+            MethodResult result = new MethodResult(method.id, method.name, method.summary,
+                    toDisplayBitmap(edges), density, contours, boxes.size(), elapsedMs,
+                    method.shipped, inUse, null, note[0], boxes, crops, false);
+            if (prior != null) {
+                // Every box, marker included, exactly as AdaptivePreprocessing scores them.
+                List<RectF> all = new ArrayList<>();
+                for (Rect r : found) {
+                    all.add(new RectF(r.x / w, r.y / h, (r.x + r.width) / w,
+                            (r.y + r.height) / h));
+                }
+                result.referenceScore = prior.agreement(all);
+            }
+            return result;
         } catch (Throwable t) {
             Log.e(TAG, method.name + " failed", t);
             String reason = t.getMessage() == null ? t.getClass().getSimpleName() : t.getMessage();
             return new MethodResult(method.id, method.name, method.summary, null, 0, 0, 0, 0,
-                    method.shipped, inUse, reason);
+                    method.shipped, inUse, reason, null, Collections.<RectF>emptyList(),
+                    Collections.<Bitmap>emptyList(), false);
         } finally {
             if (edges != null) edges.release();
         }

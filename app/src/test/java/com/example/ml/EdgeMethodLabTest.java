@@ -141,6 +141,56 @@ public class EdgeMethodLabTest {
     }
 
     @Test
+    public void cropsLineSaysHowManyTheInspectionWouldTakeAndHowManyAreShown() {
+        List<android.graphics.RectF> boxes = new java.util.ArrayList<>();
+        List<android.graphics.Bitmap> crops = new java.util.ArrayList<>();
+        for (int i = 0; i < 40; i++) {
+            boxes.add(new android.graphics.RectF(0, 0, 0.1f, 0.1f));
+            if (i < EdgeMethodLab.MAX_CROPS_SHOWN) crops.add(null);
+        }
+        EdgeMethodLab.MethodResult many = new EdgeMethodLab.MethodResult("m", "M", "S", null,
+                1.0, 50, 40, 10, false, false, null, null, boxes, crops, false);
+        String line = many.cropsLine();
+        assertTrue(line, line.contains("40 features"));
+        assertTrue(line, line.contains("first " + EdgeMethodLab.MAX_CROPS_SHOWN + " shown"));
+
+        EdgeMethodLab.MethodResult none = result(0, 5, 0.1, 3);
+        assertTrue(none.cropsLine().contains("nothing"));
+        assertFalse(none.picked);
+        assertTrue(Double.isNaN(none.referenceScore));
+    }
+
+    @Test
+    public void verdictWithAReferenceRanksTheMethodsAndNamesTheWinner() {
+        java.util.Map<String, Double> scores = new java.util.LinkedHashMap<>();
+        scores.put(EdgeMethodLab.SHIPPED_ID, 0.02);
+        scores.put(PreprocessingStrength.MEDIUM.id, 0.31);
+        scores.put("canny-fixed", Double.NaN);
+        String all = String.join("\n", EdgeMethodLab.verdict(new ImageQuality(2.7, 62),
+                EdgeMethodLab.ADAPTIVE_ID, "PART-1", null, "6 slots sized",
+                scores, PreprocessingStrength.MEDIUM.id, EdgeMethodLab.SHIPPED_ID));
+        assertTrue(all, all.contains("PART-1"));
+        assertTrue("best first: " + all, all.indexOf("0.020") < all.indexOf("0.310"));
+        assertTrue(all, all.contains("(reference's method)"));
+        assertTrue(all, all.contains(EdgeMethodLab.nameOf(EdgeMethodLab.SHIPPED_ID)
+                + " reproduces the reference better"));
+        assertFalse("image statistics are not the reason when a reference exists: " + all,
+                all.contains("starting point"));
+    }
+
+    @Test
+    public void verdictWithoutAReferenceSaysItIsOnlyAStartingPoint() {
+        String all = String.join("\n", EdgeMethodLab.verdict(new ImageQuality(3.0, 90),
+                EdgeMethodLab.SHIPPED_ID, "P", "it has no labelled reference layout", null,
+                new java.util.LinkedHashMap<>(), PreprocessingStrength.MEDIUM.id,
+                PreprocessingStrength.MEDIUM.id));
+        assertTrue(all, all.contains("starting point"));
+        assertTrue(all, all.contains("Cannot score against P"));
+        assertTrue("a fixed method is named as not adapting: " + all,
+                all.contains("does not adapt"));
+    }
+
+    @Test
     public void everyTunedVariantIsNumberedAndDistinct() {
         Set<String> variants = new HashSet<>();
         for (EdgeMethodLab.Method method : EdgeMethodLab.catalogue()) {

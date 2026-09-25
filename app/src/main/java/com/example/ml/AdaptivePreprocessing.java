@@ -15,42 +15,50 @@ import java.util.Locale;
 import java.util.Map;
 
 /**
- * The edge stage that chooses its own preprocessing strength, per photograph.
+ * The edge stage that chooses its edge method per photograph, by scoring what each method
+ * actually produced against what the operator said the part looks like.
  *
- * <p>Two sources of evidence, in order:
- * <ol>
- *   <li><b>The photograph itself.</b> {@link ImageQuality} measures how noisy it is and how
- *       much edge it has, and names the rung that evidence supports: strong for grain and
- *       dense texture, light for a soft image whose faint edges a harder stage would lose,
- *       medium — Hybrid v6 exactly — for everything else. This is always computed and is
- *       the answer when nothing else is known, e.g. during reference setup.</li>
- *   <li><b>The part's expected sizes.</b> When a labelled reference layout exists,
- *       {@link SizePrior} knows how big each critical feature should be — from the reference
- *       box, refined by every inspection filed since. Each eligible rung is run, its boxes
- *       aligned onto the layout, and the rung whose boxes come closest to those sizes wins,
- *       provided it beats the image-quality rung by {@link #AGREEMENT_MARGIN}. A shadow merged
- *       into a box, or a fastener half-cropped, is a size error before it is anything else,
- *       and this is the one test that sees it.</li>
- * </ol>
+ * <h3>The only ground truth is the operator's</h3>
+ * Nothing in a photograph says which edge method is right for it. The earlier design tried to
+ * infer it from statistics of the pixels — a noise estimate, an edge-contrast estimate — with
+ * thresholds fitted offline against hand counts of the bundled photographs. That put a
+ * hard-coded ground truth into the runtime by the back door, it only ever chose between three
+ * strengths of one method, and on 23 of 26 photographs it chose the same one. It adapted to
+ * nothing.
  *
- * <p>The margin matters. Size jitter between two genuine detections of the same hardware is a
- * median 0.058 in the same units ({@code python/size_ratio_study.py}), so a smaller advantage
- * is noise; and at 0.03 the rule made bad overrides — a light rung winning on size while
- * over-detecting everywhere else, which the size score cannot see. At 0.08 it never chose
- * worse than the image-quality rung over the same-scene pairs and improved count accuracy in
- * every degraded condition ({@code python/adaptive_preprocessing_study.py}, section 3).
+ * <p>The ground truth a real deployment has is the reference layout: during reference setup
+ * the operator labels every detection, and the critical ones become slots with a position and
+ * a box. So when a labelled layout exists, <b>every method in the Edge Lab catalogue runs on
+ * the photograph</b>, each one's boxes are aligned onto the layout by {@link LayoutMatcher}
+ * and scored by {@link SizePrior} — a box the wrong size, a slot nothing matched and a box
+ * invented on the part all cost on one scale — and the method that reproduces the operator's
+ * part best runs. The shipped stack, the tuned hybrids, the bare operators and the three
+ * strengths all compete on equal terms, on every image.
  *
- * <p>Cost: every rung shares the same bilateral and median apertures, so three of them cost
- * three times one — about 60ms of edge work on a desktop plus three geometry passes and three
- * alignments, against several seconds of embedding for the crops that follow.
+ * <p>The incumbent is the method that drew the reference's own boxes
+ * ({@link SizePrior#referenceMethodId}); another displaces it only by beating it by
+ * {@link #AGREEMENT_MARGIN}. Size jitter between two genuine detections of the same hardware
+ * is a median 0.058 in these units ({@code python/size_ratio_study.py}), so a smaller
+ * advantage is not evidence.
+ *
+ * <h3>Without a layout</h3>
+ * Reference setup is the step that creates the layout, so there it has nothing to score
+ * against. {@link ImageQuality}'s suggestion runs as a starting point only, and the operator
+ * — the one party who can see which boxes are hardware — is shown what every other method
+ * finds and can re-run with any of them ({@link #survey}). Whatever they settle on is recorded
+ * in the layout and becomes the incumbent for every inspection that follows.
+ *
+ * <p>Cost: every catalogued method runs its edge stage and the geometry filter, plus one
+ * alignment each — measured on the emulator in the results log. The crops and the encoder,
+ * which dominate an inspection, run once, for the winner only.
  */
 public final class AdaptivePreprocessing {
 
     private static final String TAG = "AdaptivePreprocessing";
 
     /**
-     * How much lower (in {@code |ln ratio|} units) another rung's size deviation must be
-     * before it displaces the rung the image quality chose.
+     * How much lower (in {@code |ln ratio|} units) another method's score must be before it
+     * displaces the incumbent.
      */
     public static final double AGREEMENT_MARGIN = 0.08;
 
@@ -58,98 +66,119 @@ public final class AdaptivePreprocessing {
 
     /** What ran and why, for the results banner and the log. */
     public static final class Choice {
-        public final PreprocessingStrength rung;
+        /** Catalogue id of the method that ran. */
+        public final String methodId;
+        /**
+         * What would have run without evidence against it: the reference's own method when a
+         * layout names one, otherwise the image-quality suggestion.
+         */
+        public final String incumbentId;
         public final ImageQuality quality;
-        /** The rung the image quality alone suggested. */
-        public final PreprocessingStrength suggested;
-        /** Size agreement per rung tried, NaN where the rung could not be aligned; empty when no prior. */
-        public final Map<PreprocessingStrength, Double> agreement;
-        /** The prior the rungs were scored against, or null. */
+        /** Score per method tried, NaN where it could not be aligned; empty when no prior. */
+        public final Map<String, Double> agreement;
+        /** The prior the methods were scored against, or null. */
         public final SizePrior sizePrior;
+        /** True when the operator pinned the method, so nothing was compared. */
+        public final boolean pinned;
 
-        Choice(PreprocessingStrength rung, ImageQuality quality, PreprocessingStrength suggested,
-               Map<PreprocessingStrength, Double> agreement, SizePrior sizePrior) {
-            this.rung = rung;
+        Choice(String methodId, String incumbentId, ImageQuality quality,
+               Map<String, Double> agreement, SizePrior sizePrior, boolean pinned) {
+            this.methodId = methodId;
+            this.incumbentId = incumbentId;
             this.quality = quality;
-            this.suggested = suggested;
             this.agreement = Collections.unmodifiableMap(new LinkedHashMap<>(agreement));
             this.sizePrior = sizePrior;
+            this.pinned = pinned;
         }
 
-        /** Whether the size test overrode the image-quality rung. */
+        /** The strength that ran when it was one of the three rungs, else null. */
+        public PreprocessingStrength rung() {
+            return PreprocessingStrength.byId(methodId);
+        }
+
+        /**
+         * What a layout records in its {@code preprocessing} field: the rung label for a rung
+         * (as layouts always have), the catalogue id for any other method.
+         */
+        public String label() {
+            PreprocessingStrength rung = rung();
+            return rung != null ? rung.label : methodId;
+        }
+
+        /** Whether the scoring displaced the incumbent. */
         public boolean overridden() {
-            return rung != suggested;
+            return !methodId.equals(incumbentId);
         }
 
-        /** One sentence naming the rung and the evidence, for a banner. */
+        /** One sentence naming the method and the evidence, for a banner. */
         public String describe() {
-            StringBuilder sb = new StringBuilder();
-            sb.append(rung.label.toUpperCase(Locale.US)).append(" preprocessing — ")
-                    .append(quality.describe());
+            StringBuilder sb = new StringBuilder(EdgeMethodLab.nameOf(methodId));
+            if (pinned) {
+                return sb.append(" — chosen by the operator").toString();
+            }
             if (agreement.isEmpty()) {
-                sb.append(" (no reference sizes to test against)");
-                return sb.toString();
+                return sb.append(" — no labelled reference to score against, so the image-")
+                        .append("quality starting point (").append(quality.describe())
+                        .append(')').toString();
             }
-            sb.append("; ").append(suggested.label).append(" by image quality");
+            int scored = 0;
+            for (Double v : agreement.values()) if (v != null && !Double.isNaN(v)) scored++;
+            sb.append(" — best of ").append(agreement.size()).append(" methods against the ")
+                    .append("reference (").append(sizePrior.describe()).append("; ")
+                    .append(scored).append(" aligned)");
+            Double own = agreement.get(methodId);
+            if (own != null && !Double.isNaN(own)) {
+                sb.append(String.format(Locale.US, ", score %.2f", own));
+            }
             if (overridden()) {
-                sb.append(", overridden by size agreement");
+                Double inc = agreement.get(incumbentId);
+                sb.append("; the reference's method, ").append(EdgeMethodLab.nameOf(incumbentId))
+                        .append(inc == null || Double.isNaN(inc) ? ", could not be aligned"
+                                : String.format(Locale.US, ", scored %.2f", inc));
             } else {
-                sb.append(", confirmed by size agreement");
+                sb.append("; nothing beat it by ").append(AGREEMENT_MARGIN);
             }
-            sb.append(" (");
-            boolean first = true;
-            for (Map.Entry<PreprocessingStrength, Double> e : agreement.entrySet()) {
-                if (!first) sb.append(", ");
-                first = false;
-                sb.append(e.getKey().label).append(' ');
-                sb.append(Double.isNaN(e.getValue()) ? "unaligned"
-                        : String.format(Locale.US, "%.2f", e.getValue()));
-            }
-            sb.append("; ").append(sizePrior.describe()).append(')');
             return sb.toString();
         }
     }
 
+    /** Catalogue ids of every method that competes: the whole catalogue but this stage. */
+    public static List<String> ballot() {
+        List<String> ids = new ArrayList<>();
+        for (EdgeMethodLab.Method m : EdgeMethodLab.catalogue()) {
+            if (!EdgeMethodLab.ADAPTIVE_ID.equals(m.id)) ids.add(m.id);
+        }
+        return ids;
+    }
+
     /**
-     * How many detections each strength would find in this image.
+     * How many detections every competing method finds in this image, in catalogue order.
      *
-     * <p>For reference setup, which has no prior to arbitrate with: the app cannot tell which
-     * strength is right without something to compare against, but the operator is looking at
-     * the photograph and can. Running the edge stage and the geometry filter per strength is
-     * cheap — no crops, no encoder — so the counts can simply be shown.
+     * <p>For reference setup, which has nothing to score against: the counts, and the
+     * operator's own eye on the crops, are all there is. Edge stage and geometry filter only.
      *
      * @param src working-resolution RGBA; not modified
      */
-    public static Map<PreprocessingStrength, Integer> survey(Mat src, Boolean forceGlare) {
-        Map<PreprocessingStrength, Integer> out = new LinkedHashMap<>();
-        float w = src.width(), h = src.height();
-        for (PreprocessingStrength rung : PreprocessingStrength.values()) {
-            Mat map = null;
-            try {
-                map = EdgeMethodLab.strengthEdges(src, forceGlare, new boolean[1], rung);
-                out.put(rung, HardwareFeatureExtractor.findFeatureBoxes(map, w, h).size());
-            } catch (Throwable t) {
-                Log.e(TAG, "Strength " + rung.label + " failed during survey", t);
-            } finally {
-                if (map != null) map.release();
-            }
+    public static Map<String, Integer> survey(Mat src, Boolean forceGlare) {
+        Map<String, Integer> out = new LinkedHashMap<>();
+        for (String id : ballot()) {
+            List<RectF> rects = boxesFor(id, src, forceGlare, null);
+            if (rects != null) out.put(id, rects.size());
         }
         return out;
     }
 
     /**
-     * The decision, separated from the OpenCV work so it can be tested: the suggested rung
-     * stands unless some other rung's deviation is lower by more than {@code margin}. A rung
-     * that could not be aligned (NaN) is never chosen. If the suggested rung itself could not
-     * be aligned, the best aligned rung wins outright — a rung whose boxes cannot be registered
-     * onto the part found something other than the part.
+     * The decision, separated from the OpenCV work so it can be tested: the incumbent stands
+     * unless some other candidate's score is lower by more than {@code margin}. A candidate
+     * that could not be aligned (NaN) is never chosen. If the incumbent itself could not be
+     * aligned, or was not scored, the best aligned candidate wins outright — boxes that cannot
+     * be registered onto the part found something other than the part.
      */
-    static PreprocessingStrength choose(PreprocessingStrength suggested,
-                                        Map<PreprocessingStrength, Double> scores,
-                                        double margin) {
-        PreprocessingStrength best = null;
+    static <K> K choose(K incumbent, Map<K, Double> scores, double margin) {
+        K best = null;
         double bestScore = Double.POSITIVE_INFINITY;
-        for (Map.Entry<PreprocessingStrength, Double> e : scores.entrySet()) {
+        for (Map.Entry<K, Double> e : scores.entrySet()) {
             double v = e.getValue() == null ? Double.NaN : e.getValue();
             if (Double.isNaN(v)) continue;
             if (v < bestScore) {
@@ -157,10 +186,10 @@ public final class AdaptivePreprocessing {
                 best = e.getKey();
             }
         }
-        if (best == null) return suggested;
-        Double own = scores.get(suggested);
+        if (best == null) return incumbent;
+        Double own = scores.get(incumbent);
         if (own == null || Double.isNaN(own)) return best;
-        return bestScore < own - margin ? best : suggested;
+        return bestScore < own - margin ? best : incumbent;
     }
 
     /**
@@ -168,75 +197,125 @@ public final class AdaptivePreprocessing {
      *
      * @param src        working-resolution RGBA image; not modified
      * @param forceGlare pins the black-hat glare branch, as for every other method
-     * @param sizePrior  expected sizes to arbitrate with, or null to decide on image quality
-     *                   alone
+     * @param sizePrior  the operator's labelled part to score against, or null
      * @param choiceOut  one-element array that receives what was chosen and why; may be null
+     * @param pinnedId   a catalogue id the operator chose, run without comparison; or null
      * @return the maps, owned by the caller
-     */
-    static HardwareFeatureExtractor.Edges compute(Mat src, Boolean forceGlare,
-                                                  SizePrior sizePrior, Choice[] choiceOut) {
-        return compute(src, forceGlare, sizePrior, choiceOut, null);
-    }
-
-    /**
-     * As above, with {@code forced} pinning the strength instead of letting the evidence
-     * choose. Used by reference setup, where the operator can see the photograph and the app
-     * has no prior to arbitrate with — see {@link #survey}.
+     * @throws IllegalStateException when the method that has to run produced nothing
      */
     static HardwareFeatureExtractor.Edges compute(Mat src, Boolean forceGlare,
                                                   SizePrior sizePrior, Choice[] choiceOut,
-                                                  PreprocessingStrength forced) {
+                                                  String pinnedId) {
+        ImageQuality quality;
         Mat gray = new Mat();
-        Map<PreprocessingStrength, Mat> maps = new LinkedHashMap<>();
-        boolean ok = false;
         try {
             Imgproc.cvtColor(src, gray, Imgproc.COLOR_RGBA2GRAY);
-            ImageQuality quality = ImageQuality.assess(gray);
-            PreprocessingStrength suggested = forced != null ? forced : quality.suggest();
+            quality = ImageQuality.assess(gray);
+        } finally {
+            gray.release();
+        }
+        List<String> ballot = ballot();
+        if (pinnedId != null && !ballot.contains(pinnedId)) pinnedId = null;
 
-            List<PreprocessingStrength> candidates = (forced != null || sizePrior == null)
-                    ? Collections.singletonList(suggested) : quality.candidates();
-            Map<PreprocessingStrength, Double> scores = new LinkedHashMap<>();
-            boolean glare = false;
-            float w = src.width(), h = src.height();
-            for (PreprocessingStrength rung : candidates) {
-                boolean[] glareOut = new boolean[1];
-                Mat map = EdgeMethodLab.strengthEdges(src, forceGlare, glareOut, rung);
-                maps.put(rung, map);
-                // Identical for every rung — the decision is made on the same gray with the
-                // same pin — so the last one read is the one that ran.
-                glare = glareOut[0];
-                if (sizePrior == null) continue;
+        String incumbent = quality.suggest().id;
+        if (sizePrior != null && sizePrior.referenceMethodId() != null
+                && ballot.contains(sizePrior.referenceMethodId())) {
+            incumbent = sizePrior.referenceMethodId();
+        }
 
-                // The detector's own geometry stage, so the boxes scored are the boxes the
-                // inspection would get. Cloned because it is entitled to consume its input.
-                Mat forBoxes = map.clone();
-                List<RectF> rects = new ArrayList<>();
-                try {
-                    for (Rect r : HardwareFeatureExtractor.findFeatureBoxes(forBoxes, w, h)) {
-                        rects.add(new RectF(r.x / w, r.y / h, (r.x + r.width) / w,
-                                (r.y + r.height) / h));
-                    }
-                } finally {
-                    forBoxes.release();
+        boolean compare = pinnedId == null && sizePrior != null;
+        List<String> candidates = pinnedId != null ? Collections.singletonList(pinnedId)
+                : compare ? ballot : Collections.singletonList(incumbent);
+
+        Map<String, HardwareFeatureExtractor.Edges> edgesById = new LinkedHashMap<>();
+        Map<String, Double> scores = new LinkedHashMap<>();
+        long startedAt = System.currentTimeMillis();
+        try {
+            for (String id : candidates) {
+                HardwareFeatureExtractor.Edges e =
+                        EdgeMethodLab.computeWith(EdgeMethodLab.byId(id), src, forceGlare);
+                if (e == null) {
+                    if (compare) scores.put(id, Double.NaN);
+                    continue;
                 }
-                scores.put(rung, sizePrior.agreement(rects));
+                edgesById.put(id, e);
+                if (!compare) continue;
+                List<RectF> rects = boxesOf(e.edgesClosed, src.width(), src.height());
+                scores.put(id, sizePrior.agreement(rects));
+                // Only the winner's maps are needed afterwards, and each costs three
+                // working-resolution Mats; keep the incumbent and the current best only.
+                pruneLosers(edgesById, scores, incumbent);
             }
 
-            PreprocessingStrength chosen = (forced != null || sizePrior == null) ? suggested
-                    : choose(suggested, scores, AGREEMENT_MARGIN);
-            Choice choice = new Choice(chosen, quality, suggested, scores, sizePrior);
+            String chosen = compare ? choose(incumbent, scores, AGREEMENT_MARGIN)
+                    : candidates.get(0);
+            Choice choice = new Choice(chosen, pinnedId != null ? pinnedId : incumbent,
+                    quality, scores, compare ? sizePrior : null, pinnedId != null);
             if (choiceOut != null && choiceOut.length > 0) choiceOut[0] = choice;
-            Log.d(TAG, choice.describe());
+            Log.d(TAG, choice.describe() + String.format(Locale.US, " [%d ms for %d method%s]",
+                    System.currentTimeMillis() - startedAt, candidates.size(),
+                    candidates.size() == 1 ? "" : "s"));
 
-            Mat map = maps.remove(chosen);
-            HardwareFeatureExtractor.Edges edges = new HardwareFeatureExtractor.Edges(
-                    gray, map, map.clone(), map.clone(), glare);
-            ok = true;
-            return edges;
+            HardwareFeatureExtractor.Edges out = edgesById.remove(chosen);
+            if (out == null) {
+                throw new IllegalStateException(EdgeMethodLab.nameOf(chosen) + " produced no map");
+            }
+            return out;
         } finally {
-            for (Mat m : maps.values()) m.release();
-            if (!ok) gray.release();
+            for (HardwareFeatureExtractor.Edges e : edgesById.values()) e.release();
         }
+    }
+
+    /** Frees every held map that can no longer win: all but the incumbent and the best. */
+    private static void pruneLosers(Map<String, HardwareFeatureExtractor.Edges> held,
+                                    Map<String, Double> scores, String incumbent) {
+        String best = null;
+        double bestScore = Double.POSITIVE_INFINITY;
+        for (Map.Entry<String, Double> e : scores.entrySet()) {
+            Double v = e.getValue();
+            if (v != null && !Double.isNaN(v) && v < bestScore) {
+                bestScore = v;
+                best = e.getKey();
+            }
+        }
+        List<String> drop = new ArrayList<>();
+        for (String id : held.keySet()) {
+            if (!id.equals(incumbent) && !id.equals(best)) drop.add(id);
+        }
+        for (String id : drop) held.remove(id).release();
+    }
+
+    /**
+     * The boxes one method would hand the inspection, in fractional coordinates, or null when
+     * the method failed. Also yields the edge map's ownership to nobody: it is released here.
+     */
+    static List<RectF> boxesFor(String id, Mat src, Boolean forceGlare, boolean[] glareOut) {
+        HardwareFeatureExtractor.Edges e =
+                EdgeMethodLab.computeWith(EdgeMethodLab.byId(id), src, forceGlare);
+        if (e == null) return null;
+        try {
+            if (glareOut != null && glareOut.length > 0) glareOut[0] = e.glareCorrectionApplied;
+            return boxesOf(e.edgesClosed, src.width(), src.height());
+        } finally {
+            e.release();
+        }
+    }
+
+    /**
+     * The detector's own geometry stage over a map, as fractions — the boxes an inspection
+     * would get. The map is cloned because the geometry stage is entitled to consume it.
+     */
+    static List<RectF> boxesOf(Mat closed, float w, float h) {
+        Mat forBoxes = closed.clone();
+        List<RectF> rects = new ArrayList<>();
+        try {
+            for (Rect r : HardwareFeatureExtractor.findFeatureBoxes(forBoxes, w, h)) {
+                rects.add(new RectF(r.x / w, r.y / h, (r.x + r.width) / w,
+                        (r.y + r.height) / h));
+            }
+        } finally {
+            forBoxes.release();
+        }
+        return rects;
     }
 }

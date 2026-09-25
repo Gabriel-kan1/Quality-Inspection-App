@@ -9,7 +9,11 @@ import android.os.Looper;
 import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
+import android.view.Gravity;
 import android.view.ViewGroup;
+import android.widget.ImageView;
+import android.widget.LinearLayout;
+import android.widget.TextView;
 import android.widget.Toast;
 
 import androidx.activity.result.ActivityResultLauncher;
@@ -17,8 +21,10 @@ import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AlertDialog;
+import androidx.core.content.ContextCompat;
 import androidx.fragment.app.Fragment;
 
+import com.example.R;
 import com.example.databinding.FragmentEdgeLabBinding;
 import com.example.databinding.ItemEdgeMethodBinding;
 import com.example.ml.EdgeMethodLab;
@@ -29,13 +35,18 @@ import java.util.List;
 import java.util.Locale;
 
 /**
- * Debug screen: one photograph, every edge operator, side by side.
+ * Debug screen: one photograph, every edge operator, side by side — and for each, the boxes
+ * and crops an inspection would take from its map.
  *
  * <p>The detector's edge stage has never been visible anywhere in the app. An inspection shows
  * the boxes that came out the far end, which is the last place a bad edge map is diagnosable —
  * by then a missed fastener and a fastener rejected on aspect ratio look identical. This screen
  * shows the stage itself, and shows it for the alternatives at the same time, so "Canny is
  * struggling with this lighting" becomes something to look at rather than something to assert.
+ * Each card then follows its map through to what an inspection would do with it — where the
+ * surviving boxes fall on the photograph and the crops the classifier would be handed — and a
+ * header card states what the photograph measures as, and so which rung the adaptive stage
+ * would run on it.
  *
  * <p>The comparison itself files nothing and touches no part record: it takes an image from
  * the gallery or from the bundled test photographs, and everything it produces lives until the
@@ -77,6 +88,19 @@ public class EdgeLabFragment extends Fragment {
     private final List<ItemEdgeMethodBinding> cards = new ArrayList<>();
     private final List<EdgeMethodLab.MethodResult> shownResults = new ArrayList<>();
 
+    /** The shown run, so the verdict can be restated after a choice. */
+    @Nullable private EdgeMethodLab.Comparison shownComparison;
+    /**
+     * The part every method is scored against, or null. Kept across runs: an operator
+     * comparing photographs of one part should not have to pick it every time.
+     */
+    @Nullable private String scoringPart;
+    /** The photograph on screen, so changing the part can re-run it. */
+    @Nullable private String shownUri;
+    @Nullable private String shownLabel;
+    /** The notes about masking and the marker that follow the verdict; empty when neither. */
+    private String shownQualityExtra = "";
+
     private final ActivityResultLauncher<String> pickImageLauncher =
             registerForActivityResult(new ActivityResultContracts.GetContent(), uri -> {
                 if (uri != null) compare(uri.toString(), fileNameOf(uri));
@@ -96,6 +120,8 @@ public class EdgeLabFragment extends Fragment {
 
         binding.btnPickImage.setOnClickListener(v -> pickImageLauncher.launch("image/*"));
         binding.btnPickAsset.setOnClickListener(v -> showAssetChooser());
+        binding.btnPickPart.setOnClickListener(v -> showPartChooser());
+        showPart();
         showActiveMethod();
 
         if (!HardwareFeatureExtractor.isAvailable()) {
@@ -129,6 +155,7 @@ public class EdgeLabFragment extends Fragment {
             markInUse(cards.get(i), shownResults.get(i), active);
         }
         showActiveMethod();
+        showQuality();
         Toast.makeText(getContext(), "Inspections and reference setup now use: " + result.name
                 + ". Re-run reference setup for parts whose reference was made with another"
                 + " method.", Toast.LENGTH_LONG).show();
@@ -144,6 +171,36 @@ public class EdgeLabFragment extends Fragment {
         // In use outranks shipped for the stroke: the operator wants to find the card that is
         // running, and the SHIPPED badge still says which one that would be by default.
         card.cardMethod.setStrokeWidth(inUse ? 3 : (result.isShippedPipeline ? 2 : 0));
+    }
+
+    private void showPart() {
+        binding.btnPickPart.setText(scoringPart == null ? "SCORE AGAINST PART: NONE"
+                : "SCORE AGAINST PART: " + scoringPart);
+    }
+
+    /**
+     * Offers the parts that have a labelled reference. Choosing one re-runs the photograph on
+     * screen, since every method's score changes with it.
+     */
+    private void showPartChooser() {
+        List<String> parts = EdgeMethodLab.partsWithReference(requireContext());
+        if (parts.isEmpty()) {
+            Toast.makeText(getContext(), "No part has a labelled reference yet. Set one up from "
+                    + "a new inspection first.", Toast.LENGTH_LONG).show();
+            return;
+        }
+        List<String> items = new ArrayList<>();
+        items.add("None (starting point only)");
+        items.addAll(parts);
+        new AlertDialog.Builder(requireContext())
+                .setTitle("Score every method against")
+                .setItems(items.toArray(new String[0]), (d, which) -> {
+                    scoringPart = which == 0 ? null : parts.get(which - 1);
+                    showPart();
+                    if (shownUri != null) compare(shownUri, shownLabel);
+                })
+                .setNegativeButton("Cancel", null)
+                .show();
     }
 
     /** Offers the photographs bundled in assets, which are the images the studies were run on. */
@@ -184,14 +241,18 @@ public class EdgeLabFragment extends Fragment {
     /** Runs every method over one image and rebuilds the cards from the results. */
     private void compare(String uriString, String label) {
         final int generation = ++runGeneration;
+        shownUri = uriString;
+        shownLabel = label;
+        final String part = scoringPart;
 
         clearResults();
         binding.tvSourceName.setText(label);
         binding.cardSource.setVisibility(View.VISIBLE);
         binding.tvEmpty.setVisibility(View.GONE);
         binding.layoutProgress.setVisibility(View.VISIBLE);
-        binding.tvStatus.setText(String.format(Locale.US, "Running %d methods on %s…",
-                EdgeMethodLab.catalogueSize(), label));
+        binding.tvStatus.setText(String.format(Locale.US, "Running %d methods on %s%s…",
+                EdgeMethodLab.catalogueSize(), label,
+                part == null ? "" : " and scoring each against " + part));
 
         // Resolved here, on the main thread, and captured. requireContext() from the worker
         // would throw the moment the tab is left mid-comparison — which is exactly when a
@@ -201,28 +262,45 @@ public class EdgeLabFragment extends Fragment {
         new Thread(() -> {
             Bitmap preview = HardwareFeatureExtractor.loadBitmap(
                     context, uriString, SOURCE_PREVIEW_PX);
-            List<EdgeMethodLab.MethodResult> results = EdgeMethodLab.runAll(context, uriString);
+            EdgeMethodLab.Comparison comparison = EdgeMethodLab.runAll(context, uriString, part);
 
             mainHandler.post(() -> {
                 if (binding == null || !isAdded() || generation != runGeneration) {
                     // Superseded or gone. These bitmaps will never reach a view, and nothing
                     // else holds them, so they have to be freed here.
                     recycle(preview);
-                    for (EdgeMethodLab.MethodResult r : results) recycle(r.edgeMap);
+                    for (Bitmap b : comparison.bitmaps()) recycle(b);
                     return;
                 }
-                render(preview, results);
+                render(preview, comparison);
             });
         }, "edge-method-lab").start();
     }
 
-    private void render(@Nullable Bitmap preview, List<EdgeMethodLab.MethodResult> results) {
+    private void render(@Nullable Bitmap preview, EdgeMethodLab.Comparison comparison) {
         binding.layoutProgress.setVisibility(View.GONE);
+        List<EdgeMethodLab.MethodResult> results = comparison.results;
 
         if (preview != null) {
             binding.ivSource.setImageBitmap(preview);
             displayedBitmaps.add(preview);
         }
+        // Edge maps and crops, each once: a crop several methods found is one shared bitmap.
+        displayedBitmaps.addAll(comparison.bitmaps());
+
+        StringBuilder extra = new StringBuilder();
+        if (comparison.backgroundFraction > 0) {
+            extra.append(String.format(Locale.US, "\n\n%.1f%% of the frame was background and "
+                    + "was painted out before any method ran, as an inspection does.",
+                    100 * comparison.backgroundFraction));
+        }
+        if (comparison.markerFound) {
+            extra.append("\n\nA calibration marker is in frame; boxes on it are left out of "
+                    + "every card, as an inspection leaves them out.");
+        }
+        shownComparison = comparison;
+        shownQualityExtra = extra.toString();
+        showQuality();
 
         if (results.isEmpty()) {
             binding.tvEmpty.setText("Nothing came back for that image — it could not be decoded, "
@@ -240,13 +318,24 @@ public class EdgeLabFragment extends Fragment {
                     ItemEdgeMethodBinding.inflate(inflater, binding.containerResults, false);
 
             card.tvMethodName.setText(result.name);
-            card.tvMethodMetrics.setText(result.metricsLine());
+            String metrics = result.metricsLine();
+            if (!comparison.scores.isEmpty() && !result.failed()
+                    && comparison.scores.containsKey(result.id)) {
+                metrics += Double.isNaN(result.referenceScore)
+                        ? "  ·  not alignable to reference"
+                        : String.format(Locale.US, "  ·  vs reference %.3f", result.referenceScore);
+            }
+            card.tvMethodMetrics.setText(metrics);
             // What a per-photograph method decided here — the adaptive card names its rung.
             card.tvMethodNote.setText(result.note);
             card.tvMethodNote.setVisibility(result.note == null ? View.GONE : View.VISIBLE);
             card.tvMethodSummary.setText(result.summary);
             card.tvMethodBadge.setVisibility(
                     result.isShippedPipeline ? View.VISIBLE : View.GONE);
+            card.tvMethodPicked.setText(comparison.scores.isEmpty()
+                    ? "ADAPTIVE STARTS HERE (NO REFERENCE TO SCORE AGAINST)"
+                    : "ADAPTIVE RUNS THIS: CLOSEST TO THE REFERENCE");
+            card.tvMethodPicked.setVisibility(result.picked ? View.VISIBLE : View.GONE);
             // A stroke rather than a different fill: the shipped row has to stand out without
             // reading as a verdict about which method won.
             markInUse(card, result, active);
@@ -256,16 +345,114 @@ public class EdgeLabFragment extends Fragment {
 
             if (result.edgeMap != null) {
                 card.ivMethodEdges.setImageBitmap(result.edgeMap);
-                displayedBitmaps.add(result.edgeMap);
             } else {
                 card.ivMethodEdges.setVisibility(View.GONE);
             }
+            showCrops(card, result, preview);
 
             binding.containerResults.addView(card.getRoot());
         }
     }
 
+    /**
+     * States which method the adaptive stage would run on this photo and why. Restated after a
+     * USE FOR INSPECTIONS tap, since its last line depends on the choice.
+     */
+    private void showQuality() {
+        if (binding == null) return;
+        EdgeMethodLab.Comparison c = shownComparison;
+        if (c == null || c.quality == null || c.chosenId == null) {
+            binding.cardQuality.setVisibility(View.GONE);
+            return;
+        }
+        binding.tvQualityTitle.setText(c.scores.isEmpty()
+                ? "Adaptive starts with: " + EdgeMethodLab.nameOf(c.chosenId)
+                : "Adaptive runs: " + EdgeMethodLab.nameOf(c.chosenId));
+        StringBuilder body = new StringBuilder();
+        for (String line : EdgeMethodLab.verdict(c.quality,
+                EdgeMethodLab.selectedId(requireContext()), c.partId, c.partProblem,
+                c.priorDescription, c.scores, c.incumbentId, c.chosenId)) {
+            if (body.length() > 0) body.append('\n');
+            body.append(line);
+        }
+        body.append(shownQualityExtra);
+        binding.tvQualityBody.setText(body);
+        binding.cardQuality.setVisibility(View.VISIBLE);
+    }
+
+    /**
+     * Fills a card's crop section: the photograph with this method's boxes over it, then the
+     * crops themselves, numbered alike. Both reuse bitmaps already tracked for recycling.
+     */
+    private void showCrops(ItemEdgeMethodBinding card, EdgeMethodLab.MethodResult result,
+                           @Nullable Bitmap preview) {
+        if (result.failed()) {
+            card.tvCropsHeading.setVisibility(View.GONE);
+            card.tvCropsLine.setVisibility(View.GONE);
+            card.ivMethodBoxes.setVisibility(View.GONE);
+            card.scrollCrops.setVisibility(View.GONE);
+            return;
+        }
+        card.tvCropsLine.setText(result.cropsLine());
+        if (preview != null) {
+            card.ivMethodBoxes.setImageBitmap(preview);
+            card.ivMethodBoxes.setBoxes(result.boxes);
+        } else {
+            card.ivMethodBoxes.setVisibility(View.GONE);
+        }
+        if (result.crops.isEmpty()) {
+            card.scrollCrops.setVisibility(View.GONE);
+            return;
+        }
+
+        Context context = requireContext();
+        float density = getResources().getDisplayMetrics().density;
+        int tile = Math.round(72 * density);
+        int gap = Math.round(6 * density);
+        int black = ContextCompat.getColor(context, R.color.black);
+        int grey = ContextCompat.getColor(context, R.color.gray_text_secondary);
+        for (int i = 0; i < result.crops.size(); i++) {
+            LinearLayout cell = new LinearLayout(context);
+            cell.setOrientation(LinearLayout.VERTICAL);
+            cell.setGravity(Gravity.CENTER_HORIZONTAL);
+            LinearLayout.LayoutParams cellParams = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            cellParams.setMarginEnd(gap);
+
+            Bitmap crop = result.crops.get(i);
+            View picture;
+            if (crop != null) {
+                ImageView image = new ImageView(context);
+                image.setScaleType(ImageView.ScaleType.FIT_CENTER);
+                image.setImageBitmap(crop);
+                image.setContentDescription("Crop " + (i + 1));
+                picture = image;
+            } else {
+                // The inspection skips a crop it cannot read; say so rather than leave a gap.
+                TextView none = new TextView(context);
+                none.setGravity(Gravity.CENTER);
+                none.setText("no crop");
+                none.setTextSize(10);
+                none.setTextColor(grey);
+                picture = none;
+            }
+            picture.setBackgroundColor(black);
+            cell.addView(picture, new LinearLayout.LayoutParams(tile, tile));
+
+            TextView number = new TextView(context);
+            number.setText(String.valueOf(i + 1));
+            number.setTextSize(10);
+            number.setTextColor(grey);
+            cell.addView(number);
+
+            card.containerCrops.addView(cell, cellParams);
+        }
+    }
+
     private void clearResults() {
+        shownComparison = null;
+        shownQualityExtra = "";
+        binding.cardQuality.setVisibility(View.GONE);
         binding.containerResults.removeAllViews();
         cards.clear();
         shownResults.clear();

@@ -76,6 +76,23 @@
                 tools:visibility="visible" />
         </LinearLayout>
 
+        <!-- Only on the rung the photograph's own measurements pick, so the operator can find
+             the card an adaptive inspection would actually run without matching numbers. -->
+        <TextView
+            android:id="@+id/tv_method_picked"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:background="#33FBBF24"
+            android:paddingHorizontal="8dp"
+            android:paddingVertical="3dp"
+            android:text="ADAPTIVE RUNS THIS FOR THIS PHOTO"
+            android:textColor="@color/orange_warn"
+            android:textSize="10sp"
+            android:textStyle="bold"
+            android:visibility="gone"
+            tools:visibility="visible" />
+
         <TextView
             android:id="@+id/tv_method_metrics"
             android:layout_width="match_parent"
@@ -121,6 +138,52 @@
             android:contentDescription="Edge map produced by this method"
             android:scaleType="fitCenter"
             tools:src="@android:drawable/ic_menu_gallery" />
+
+        <!-- What an inspection would do with this map: where its boxes fall on the photograph,
+             then the crops it would hand the encoder, numbered alike. The map alone does not
+             say which blobs survive the geometry filter, or what the classifier would see. -->
+        <TextView
+            android:id="@+id/tv_crops_heading"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            android:text="WHAT THE INSPECTION WOULD CROP"
+            android:textColor="@color/blue_primary"
+            android:textSize="11sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/tv_crops_line"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:textColor="@color/gray_text_secondary"
+            android:textSize="11sp"
+            tools:text="An inspection would crop and classify 6 features:" />
+
+        <com.example.ui.view.BoxOverlayImageView
+            android:id="@+id/iv_method_boxes"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:adjustViewBounds="true"
+            android:background="@color/black"
+            android:contentDescription="The photograph with this method's detections outlined"
+            android:scaleType="fitCenter" />
+
+        <HorizontalScrollView
+            android:id="@+id/scroll_crops"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:scrollbars="none">
+
+            <LinearLayout
+                android:id="@+id/container_crops"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal" />
+        </HorizontalScrollView>
 
         <!-- Makes this method the edge stage for every inspection and reference setup that
              follows. Disabled on the card already in use, so the state reads from the button

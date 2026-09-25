@@ -27,8 +27,8 @@ import com.example.data.entity.ReferenceProfile;
 import com.example.ui.util.AssetBitmaps;
 import com.example.databinding.FragmentReferenceSetupBinding;
 import com.example.ml.HardwareFeatureExtractor;
-import com.example.ml.PreprocessingStrength;
 import com.example.ml.FeatureEmbedder;
+import com.example.ml.EdgeMethodLab;
 import com.example.ml.FeatureLayout;
 import com.example.ml.FeatureTypeRegistry;
 import com.example.ml.LayoutMatcher;
@@ -63,10 +63,11 @@ public class ReferenceSetupFragment extends Fragment {
      */
     private int analysisToken = 0;
     /**
-     * The preprocessing strength the operator pinned for this reference, or null to let the
-     * adaptive stage choose. Only meaningful during setup — see {@code showStrengthSurvey}.
+     * The edge method the operator pinned for this reference, or null to let the adaptive
+     * stage start from its own suggestion. Only meaningful during setup; see
+     * {@code showMethodSurvey}.
      */
-    private PreprocessingStrength pendingStrength;
+    private String pendingMethod;
 
     /** Last analysed reference: its detections, and one crop per detection for labelling. */
     private HardwareFeatureExtractor.AnalysisResult pendingResult = null;
@@ -188,16 +189,16 @@ public class ReferenceSetupFragment extends Fragment {
     }
 
     /**
-     * @param forcedStrength the preprocessing strength to pin, or null to let the adaptive
-     *        stage decide. Reference setup is the one place an operator may pin one: the
-     *        size-agreement test needs a reference layout to arbitrate with, and this is the
-     *        step that creates it, so there is nothing to compare against yet. The operator
-     *        can see the photograph, so they are offered the choice instead.
+     * @param pinnedMethod the catalogue id of the edge method to run, or null to let the
+     *        adaptive stage start from its suggestion. Reference setup is the one place an
+     *        operator picks one: the adaptive stage chooses by scoring methods against a
+     *        labelled reference, and this is the step that creates it, so there is nothing to
+     *        score against yet. The operator can see the photograph, so they choose instead.
      */
-    private void analyseReference(String uriString, PreprocessingStrength forcedStrength) {
+    private void analyseReference(String uriString, String pinnedMethod) {
         final int token = ++analysisToken;
         final android.content.Context context = requireContext().getApplicationContext();
-        pendingStrength = forcedStrength;
+        pendingMethod = pinnedMethod;
 
         binding.cardReferenceAnalysis.setVisibility(View.VISIBLE);
         binding.tvReferenceAnalysisStatus.setText("Analysing reference image...");
@@ -225,14 +226,14 @@ public class ReferenceSetupFragment extends Fragment {
                                 Bitmap kept = scaleForKeeping(crop);
                                 if (kept != null) crops.put(index, kept);
                                 return null;
-                            }, null, null, forcedStrength);
+                            }, null, null, pinnedMethod);
             if (result.processedBitmap != null) result.processedBitmap.recycle();
 
-            // What the other strengths would have found. Cheap — edge stage and geometry
-            // filter only, no crops and no encoder — and it is the only evidence available
-            // at setup time, since there is no reference layout to score against yet.
-            final java.util.Map<PreprocessingStrength, Integer> survey =
-                    HardwareFeatureExtractor.surveyStrengths(context, uriString);
+            // What every other method would have found. Edge stage and geometry filter only,
+            // no crops and no encoder, and it is the only evidence available at setup time,
+            // since there is no reference layout to score against yet.
+            final java.util.Map<String, Integer> survey =
+                    HardwareFeatureExtractor.surveyMethods(context, uriString);
 
             requireActivity().runOnUiThread(() -> {
                 if (!isAdded() || binding == null || token != analysisToken) {
@@ -245,68 +246,75 @@ public class ReferenceSetupFragment extends Fragment {
                 pendingMarginThreshold = marginThreshold;
                 pendingCrops.putAll(crops);
                 showReferenceAnalysis(uriString, result);
-                showStrengthSurvey(uriString, result, survey);
+                showMethodSurvey(uriString, result, survey);
             });
         }).start();
     }
 
     /**
-     * Offers the operator the strengths that would find more here than the one that ran.
+     * Shows what every edge method finds in this photo and lets the operator re-run with any
+     * of them.
      *
-     * <p>The adaptive stage arbitrates between strengths by how well their boxes reproduce a
-     * reference layout's known sizes — but this screen is what creates that layout, so there
-     * is nothing to arbitrate with. The image-quality heuristic alone picked the strength that
-     * ran, and on a photograph where a feature is barely above the plate it can pick one that
-     * misses it. Measured case: {@code screws_none.jpg} reads noise 2.65 / contrast 62, so
-     * MEDIUM runs and finds five features, while LIGHT finds six — the sixth being an
-     * out-of-focus bolt at 4.7 grey levels. Nothing in the photograph tells the app which
-     * count is right. The operator can see it, so they are shown the disagreement.
+     * <p>The adaptive stage chooses a method by scoring each one against a labelled reference,
+     * but this screen is what creates that reference, so there is nothing to score against.
+     * The photo's own statistics only give a starting point. The operator is the one party
+     * who can see which boxes are hardware, so they are shown every method's count and can
+     * try any of them; the crops below are what they judge by. Whatever they settle on is
+     * recorded in the layout and is what every later inspection has to beat.
      *
-     * <p>Shown only when a strength would find <em>more</em> than the one that ran: fewer is
-     * what the strengths are supposed to do when they suppress noise, and every count is
-     * reviewable crop by crop below anyway.
+     * <p>Measured case: {@code screws_none.jpg} starts on Hybrid v6, which finds five and
+     * misses an out-of-focus bolt; the shipped stack and the light strength find all six.
      */
-    private void showStrengthSurvey(String uriString,
-                                    HardwareFeatureExtractor.AnalysisResult result,
-                                    java.util.Map<PreprocessingStrength, Integer> survey) {
+    private void showMethodSurvey(String uriString,
+                                  HardwareFeatureExtractor.AnalysisResult result,
+                                  java.util.Map<String, Integer> survey) {
         if (binding == null || survey == null || survey.isEmpty()) return;
-        PreprocessingStrength ran = result.preprocessing == null ? null
-                : result.preprocessing.rung;
+        final String ran = result.preprocessing == null ? null : result.preprocessing.methodId;
         if (ran == null) return;
 
-        Integer ranCount = survey.get(ran);
-        if (ranCount == null) ranCount = result.features.size();
+        int ranCount = survey.containsKey(ran) ? survey.get(ran) : result.features.size();
+        int more = 0;
+        for (Integer c : survey.values()) if (c != null && c > ranCount) more++;
 
-        PreprocessingStrength best = null;
-        int bestCount = ranCount;
-        for (java.util.Map.Entry<PreprocessingStrength, Integer> e : survey.entrySet()) {
-            if (e.getValue() != null && e.getValue() > bestCount) {
-                bestCount = e.getValue();
-                best = e.getKey();
-            }
+        StringBuilder sb = new StringBuilder();
+        sb.append(pendingMethod != null ? "You chose " : "Started with ")
+                .append(EdgeMethodLab.nameOf(ran))
+                .append(String.format(Locale.getDefault(), ": %d features.", ranCount));
+        if (pendingMethod == null) {
+            sb.append(" That is only a starting point from the photo's noise and contrast;"
+                    + " there is no reference to score methods against yet, because this is"
+                    + " where you create it.");
         }
-        if (best == null) return;
-
-        StringBuilder sb = new StringBuilder("Preprocessing strengths disagree on this photo: ");
-        boolean first = true;
-        for (java.util.Map.Entry<PreprocessingStrength, Integer> e : survey.entrySet()) {
-            if (!first) sb.append(", ");
-            first = false;
-            sb.append(e.getKey().label).append(' ').append(e.getValue());
-            if (e.getKey() == ran) sb.append(" (ran)");
+        if (more > 0) {
+            sb.append(String.format(Locale.getDefault(),
+                    " %d other method%s find%s more here. If a fastener below has no crop, try"
+                            + " one of them.", more, more == 1 ? "" : "s", more == 1 ? "s" : ""));
         }
-        sb.append(". There is no reference to compare against yet — you are creating it — so"
-                + " the app cannot tell which is right. Check the crops below; if a feature is"
-                + " missing, re-analyse with the stronger-detecting option.");
+        sb.append(" The method you save with becomes the one every inspection of this part is"
+                + " measured against.");
         binding.tvReferenceStrengthNote.setText(sb);
         binding.tvReferenceStrengthNote.setVisibility(View.VISIBLE);
 
-        final PreprocessingStrength target = best;
-        binding.btnReferenceStrength.setText(String.format(Locale.getDefault(),
-                "RE-ANALYSE WITH %s (%d FEATURES)",
-                target.label.toUpperCase(Locale.getDefault()), bestCount));
+        binding.btnReferenceStrength.setText("TRY ANOTHER EDGE METHOD");
         binding.btnReferenceStrength.setVisibility(View.VISIBLE);
-        binding.btnReferenceStrength.setOnClickListener(v -> analyseReference(uriString, target));
+        binding.btnReferenceStrength.setOnClickListener(v -> {
+            final java.util.List<String> ids = new java.util.ArrayList<>(survey.keySet());
+            String[] labels = new String[ids.size()];
+            for (int i = 0; i < ids.size(); i++) {
+                String id = ids.get(i);
+                labels[i] = String.format(Locale.getDefault(), "%s — %d%s",
+                        EdgeMethodLab.nameOf(id), survey.get(id),
+                        id.equals(ran) ? "  (showing)" : "");
+            }
+            new androidx.appcompat.app.AlertDialog.Builder(requireContext())
+                    .setTitle("Features each method finds")
+                    .setItems(labels, (d, which) -> {
+                        String id = ids.get(which);
+                        if (!id.equals(ran)) analyseReference(uriString, id);
+                    })
+                    .setNegativeButton("Cancel", null)
+                    .show();
+        });
     }
 
     /** Aspect-preserving copy bounded to {@link #CROP_KEEP_PX}, or the original if already small. */
@@ -844,10 +852,10 @@ public class ReferenceSetupFragment extends Fragment {
         final int workingWidth = pendingResult.workingWidth;
         final int workingHeight = pendingResult.workingHeight;
         final String edgeMethodId = pendingResult.edgeMethodId;
-        // Under the adaptive method, which rung the reference's boxes came out of. An
-        // inspection may legitimately run another; the results screen names both.
+        // Under the adaptive method, which method the reference's boxes came out of. It is the
+        // incumbent every inspection of this part scores the other methods against.
         final String preprocessingRung = pendingResult.preprocessing == null ? null
-                : pendingResult.preprocessing.rung.label;
+                : pendingResult.preprocessing.label();
         final float simThreshold = pendingSimilarityThreshold;
         final float marginThreshold = pendingMarginThreshold;
 

@@ -153,7 +153,7 @@ public class HardwareFeatureExtractor {
      * counts: false positives fall from 13 to 3 over 26 photographs and the weighted score
      * from 19 to 11, at the cost of one miss. See {@code python/background_mask_study.py}.
      */
-    private static final boolean MASK_BACKGROUND = true;
+    static final boolean MASK_BACKGROUND = true;
     /**
      * Logs every box before and after merging. Verbose — for tuning detection, not normal use.
      *
@@ -538,15 +538,15 @@ public class HardwareFeatureExtractor {
     }
 
     /**
-     * As above, with {@code forcedStrength} pinning the adaptive stage's rung instead of
-     * letting it choose. Reference setup uses it once the operator has picked one from
-     * {@link #surveyStrengths}; every other caller passes null.
+     * As above, with {@code pinnedMethodId} pinning the adaptive stage to one catalogue method
+     * instead of letting it compare. Reference setup uses it once the operator has picked one
+     * from {@link #surveyMethods}; every other caller passes null.
      */
     public static AnalysisResult extractFeatures(Context context, String uriString,
                                                  ReferenceLibrary library, CropSink sink,
                                                  Boolean forceGlareCorrection,
                                                  SizePrior sizePrior,
-                                                 PreprocessingStrength forcedStrength) {
+                                                 String pinnedMethodId) {
         List<ExtractedFeature> features = new ArrayList<>();
         Bitmap diagnosticBitmap = null;
 
@@ -613,7 +613,7 @@ public class HardwareFeatureExtractor {
             // STEP 2 — preprocessing + edge detection (shared with extractCrops()), by
             // whichever method the operator chose in the Edge Lab.
             e = computeEdges(context, src, forceGlareCorrection, sizePrior, preprocessing,
-                    forcedStrength);
+                    pinnedMethodId);
             if (e == null) {
                 Log.e(TAG, "Edge stage produced nothing for " + filename + " — no detections.");
                 AnalysisResult empty = new AnalysisResult(features, null, null, false);
@@ -931,7 +931,7 @@ public class HardwareFeatureExtractor {
      * {@link #WORKING_MAX_DIM}, and a region decode can fail on a stream the platform will
      * not seek. Either way the pipeline continues with the crop it can get.
      */
-    private static Bitmap cropFeature(SourceCropper cropper, Mat src, Rect r) {
+    static Bitmap cropFeature(SourceCropper cropper, Mat src, Rect r) {
         int padding = cropPaddingFor(r);
         if (cropper != null) {
             Bitmap fromSource = cropper.crop(
@@ -985,15 +985,15 @@ public class HardwareFeatureExtractor {
         return computeEdges(context, src, forceGlareCorrection, sizePrior, choiceOut, null);
     }
 
-    /** As above, with the adaptive stage's rung pinned. */
+    /** As above, with the adaptive stage pinned to one catalogue method. */
     static Edges computeEdges(Context context, Mat src, Boolean forceGlareCorrection,
                               SizePrior sizePrior, AdaptivePreprocessing.Choice[] choiceOut,
-                              PreprocessingStrength forcedStrength) {
+                              String pinnedMethodId) {
         EdgeMethodLab.Method method = EdgeMethodLab.selected(context);
         if (EdgeMethodLab.ADAPTIVE_ID.equals(method.id)) {
             try {
                 return AdaptivePreprocessing.compute(src, forceGlareCorrection, sizePrior,
-                        choiceOut, forcedStrength);
+                        choiceOut, pinnedMethodId);
             } catch (Throwable t) {
                 // Same contract as computeWith: a method that throws yields no detections,
                 // reported as such, rather than a silent switch to a different method.
@@ -1362,16 +1362,18 @@ public class HardwareFeatureExtractor {
     }
 
     /**
-     * How many detections each preprocessing strength would find in this image.
+     * How many detections every competing edge method would find in this image, by catalogue
+     * id, in catalogue order.
      *
-     * <p>Reference setup shows these because it has nothing to arbitrate with: the
-     * size-agreement test needs a reference layout, and this is the step that creates one.
+     * <p>Reference setup shows these because it has nothing to score against: the scoring
+     * needs a labelled layout, and this is the step that creates one. The operator is the
+     * ground truth here, so they are shown every method's count and may run any of them.
      * Empty when OpenCV is unavailable, the image cannot be read, or the operator has pinned
      * a specific edge method in the Edge Lab rather than leaving it adaptive.
      */
-    public static java.util.Map<PreprocessingStrength, Integer> surveyStrengths(
+    public static java.util.Map<String, Integer> surveyMethods(
             Context context, String uriString) {
-        java.util.Map<PreprocessingStrength, Integer> empty = new java.util.LinkedHashMap<>();
+        java.util.Map<String, Integer> empty = new java.util.LinkedHashMap<>();
         if (!OPENCV_READY || uriString == null || uriString.isEmpty()) return empty;
         if (!EdgeMethodLab.ADAPTIVE_ID.equals(EdgeMethodLab.selectedId(context))) return empty;
 
