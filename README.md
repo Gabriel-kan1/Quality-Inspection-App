@@ -221,7 +221,7 @@ Legend: ✅ done · 🟡 partial · ❌ not started
 | Area | What exists | What's missing |
 |---|---|---|
 | **Dimensions** | `ScaleCalibration` finds a printed square marker geometrically; `FeatureMeasurement` reports mm sizes when one is in frame | Stage B: a single uniform mm/px is applied everywhere, valid only for a perpendicular camera and coplanar features. Homography rectification from the marker's four corners is designed but not built |
-| **Evaluation** | Encoder LOO, detector stability A/B, gate threshold sweeps | No per-type precision/recall for the shipped app. Brief Phase 4 is effectively empty |
+| **Evaluation** | Encoder LOO, detector stability A/B, gate threshold sweeps; a box-level labelling tool (`python/label_boxes.py`) whose output, `python/detection_boxes.json`, replaces counts with typed boxes | The boxes themselves are not drawn yet. No per-type precision/recall for the shipped app. Brief Phase 4 is effectively empty |
 | **Lighting robustness** | Glare suppression and adaptive denoising implemented | Never quantified, despite matched pairs sitting in assets (`whole.jpg`/`whole_light.jpg`, `screws_flash.jpg`/`screws_none.jpg`) |
 | **Layout drift** | Fixed for operator-labelled references | References made before labelling, or via **SKIP SETUP**, still re-classify and still drift |
 
