@@ -169,6 +169,26 @@ public final class AdaptivePreprocessing {
     }
 
     /**
+     * The method whose count is nearest the number the operator said the part has. Ties go to
+     * the first in {@code counts}' order, so the caller's ordering is the tie-break. Null when
+     * {@code counts} is empty or the target is not positive.
+     */
+    public static String closestToCount(Map<String, Integer> counts, int target) {
+        if (counts == null || target <= 0) return null;
+        String best = null;
+        int bestGap = Integer.MAX_VALUE;
+        for (Map.Entry<String, Integer> e : counts.entrySet()) {
+            if (e.getValue() == null) continue;
+            int gap = Math.abs(e.getValue() - target);
+            if (gap < bestGap) {
+                bestGap = gap;
+                best = e.getKey();
+            }
+        }
+        return best;
+    }
+
+    /**
      * The decision, separated from the OpenCV work so it can be tested: the incumbent stands
      * unless some other candidate's score is lower by more than {@code margin}. A candidate
      * that could not be aligned (NaN) is never chosen. If the incumbent itself could not be

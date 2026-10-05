@@ -34,6 +34,19 @@ public class AdaptivePreprocessingTest {
     }
 
     @Test
+    public void theMethodNearestTheOperatorsCountIsPickedAndTiesGoToTheFirst() {
+        Map<String, Integer> counts = new LinkedHashMap<>();
+        counts.put("a", 5);
+        counts.put("b", 7);
+        counts.put("c", 9);
+        assertEquals("b", AdaptivePreprocessing.closestToCount(counts, 8));
+        assertEquals("c", AdaptivePreprocessing.closestToCount(counts, 12));
+        assertEquals("a", AdaptivePreprocessing.closestToCount(counts, 6));
+        assertNull(AdaptivePreprocessing.closestToCount(counts, 0));
+        assertNull(AdaptivePreprocessing.closestToCount(new LinkedHashMap<>(), 6));
+    }
+
+    @Test
     public void theSuggestedRungStandsWhenNothingBeatsItByTheMargin() {
         // Strong is better, but by less than size jitter between two photographs of the same
         // hardware (median 0.058): not evidence.

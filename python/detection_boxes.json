@@ -1,0 +1,9 @@
+{
+  "format": 1,
+  "types": ["bolt_head", "hole", "rivet_head", "screw", "stud", "other"],
+  "images": {
+    "defected.jpg": {"size": [959, 719], "sha256": "733548fe9f4b5663", "done": false, "boxes": [
+      {"type": "hole", "xyxy": [442, 273, 558, 366], "optional": false}
+    ]}
+  }
+}

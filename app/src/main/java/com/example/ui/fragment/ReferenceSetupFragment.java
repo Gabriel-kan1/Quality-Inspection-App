@@ -26,6 +26,7 @@ import com.example.data.entity.ClassificationEvent;
 import com.example.data.entity.ReferenceProfile;
 import com.example.ui.util.AssetBitmaps;
 import com.example.databinding.FragmentReferenceSetupBinding;
+import com.example.ml.AdaptivePreprocessing;
 import com.example.ml.HardwareFeatureExtractor;
 import com.example.ml.FeatureEmbedder;
 import com.example.ml.EdgeMethodLab;
@@ -68,6 +69,13 @@ public class ReferenceSetupFragment extends Fragment {
      * {@code showMethodSurvey}.
      */
     private String pendingMethod;
+    /**
+     * How many features the operator said this reference photo holds, or 0 if they did not say.
+     * When set, setup runs every method and starts from the one whose count is nearest it.
+     */
+    private int expectedCount = 0;
+    /** Whether the method on screen was picked by {@code expectedCount} rather than the operator. */
+    private boolean pendingAutoPicked = false;
 
     /** Last analysed reference: its detections, and one crop per detection for labelling. */
     private HardwareFeatureExtractor.AnalysisResult pendingResult = null;
@@ -189,6 +197,38 @@ public class ReferenceSetupFragment extends Fragment {
     }
 
     /**
+     * Asks how many features the part is supposed to show, then analyses. The answer steers the
+     * edge method (see {@code analyseReference}); skipping keeps the photo-statistics start.
+     */
+    private void askExpectedCountThenAnalyse(String uriString) {
+        final android.widget.EditText input = new android.widget.EditText(requireContext());
+        input.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
+        input.setHint("e.g. 6");
+        if (expectedCount > 0) input.setText(String.valueOf(expectedCount));
+        new androidx.appcompat.app.AlertDialog.Builder(requireContext())
+                .setTitle("How many features should this part have?")
+                .setMessage("Count the fasteners and hardware on the reference photo. The system"
+                        + " tries every edge method and starts from the one that finds the number"
+                        + " closest to yours.")
+                .setView(input)
+                .setCancelable(false)
+                .setPositiveButton("OK", (d, w) -> {
+                    int n = 0;
+                    try {
+                        n = Integer.parseInt(input.getText().toString().trim());
+                    } catch (NumberFormatException ignored) {
+                    }
+                    expectedCount = Math.max(0, n);
+                    analyseReference(uriString);
+                })
+                .setNegativeButton("Skip", (d, w) -> {
+                    expectedCount = 0;
+                    analyseReference(uriString);
+                })
+                .show();
+    }
+
+    /**
      * @param pinnedMethod the catalogue id of the edge method to run, or null to let the
      *        adaptive stage start from its suggestion. Reference setup is the one place an
      *        operator picks one: the adaptive stage chooses by scoring methods against a
@@ -199,6 +239,8 @@ public class ReferenceSetupFragment extends Fragment {
         final int token = ++analysisToken;
         final android.content.Context context = requireContext().getApplicationContext();
         pendingMethod = pinnedMethod;
+        pendingAutoPicked = false;
+        final int target = pinnedMethod == null ? expectedCount : 0;
 
         binding.cardReferenceAnalysis.setVisibility(View.VISIBLE);
         binding.tvReferenceAnalysisStatus.setText("Analysing reference image...");
@@ -220,20 +262,24 @@ public class ReferenceSetupFragment extends Fragment {
             final java.util.Map<Integer, Bitmap> crops = new java.util.LinkedHashMap<>();
             final float simThreshold = library.getSimilarityThreshold();
             final float marginThreshold = library.getMarginThreshold();
+
+            // What every method would find. Edge stage and geometry filter only, no crops and
+            // no encoder. With nothing to score against yet, the operator's own count (when
+            // given) is the target; otherwise this is only shown to them.
+            final java.util.Map<String, Integer> survey =
+                    HardwareFeatureExtractor.surveyMethods(context, uriString);
+            final String counted = AdaptivePreprocessing.closestToCount(survey, target);
+            final String runMethod = counted != null ? counted : pinnedMethod;
+            final boolean autoPicked = counted != null;
+
             HardwareFeatureExtractor.AnalysisResult result =
                     HardwareFeatureExtractor.extractFeatures(context, uriString, library,
                             (crop, index) -> {
                                 Bitmap kept = scaleForKeeping(crop);
                                 if (kept != null) crops.put(index, kept);
                                 return null;
-                            }, null, null, pinnedMethod);
+                            }, null, null, runMethod);
             if (result.processedBitmap != null) result.processedBitmap.recycle();
-
-            // What every other method would have found. Edge stage and geometry filter only,
-            // no crops and no encoder, and it is the only evidence available at setup time,
-            // since there is no reference layout to score against yet.
-            final java.util.Map<String, Integer> survey =
-                    HardwareFeatureExtractor.surveyMethods(context, uriString);
 
             requireActivity().runOnUiThread(() -> {
                 if (!isAdded() || binding == null || token != analysisToken) {
@@ -242,6 +288,7 @@ public class ReferenceSetupFragment extends Fragment {
                 }
                 releasePendingCrops();
                 pendingResult = result;
+                pendingAutoPicked = autoPicked;
                 pendingSimilarityThreshold = simThreshold;
                 pendingMarginThreshold = marginThreshold;
                 pendingCrops.putAll(crops);
@@ -277,10 +324,15 @@ public class ReferenceSetupFragment extends Fragment {
         for (Integer c : survey.values()) if (c != null && c > ranCount) more++;
 
         StringBuilder sb = new StringBuilder();
-        sb.append(pendingMethod != null ? "You chose " : "Started with ")
+        sb.append(pendingAutoPicked ? "Closest to your count of " + expectedCount + ": "
+                        : pendingMethod != null ? "You chose " : "Started with ")
                 .append(EdgeMethodLab.nameOf(ran))
                 .append(String.format(Locale.getDefault(), ": %d features.", ranCount));
-        if (pendingMethod == null) {
+        if (pendingAutoPicked && ranCount != expectedCount) {
+            sb.append(" No method found exactly ").append(expectedCount)
+                    .append("; check the crops below.");
+        }
+        if (pendingMethod == null && !pendingAutoPicked) {
             sb.append(" That is only a starting point from the photo's noise and contrast;"
                     + " there is no reference to score methods against yet, because this is"
                     + " where you create it.");
@@ -1138,7 +1190,7 @@ public class ReferenceSetupFragment extends Fragment {
             binding.layoutUploadPlaceholder.setVisibility(View.GONE);
             binding.btnCaptureReference.setText("SAVE REFERENCE");
             binding.btnCaptureReference.setBackgroundColor(ContextCompat.getColor(requireContext(), R.color.green_pass_header));
-            analyseReference(selectedImageExternalUri.toString());
+            askExpectedCountThenAnalyse(selectedImageExternalUri.toString());
         } catch (Exception e) {
             Toast.makeText(getContext(), "Failed to load asset: " + e.getMessage(), Toast.LENGTH_SHORT).show();
         }
@@ -1360,7 +1412,7 @@ public class ReferenceSetupFragment extends Fragment {
             binding.layoutUploadPlaceholder.setVisibility(View.GONE);
             binding.btnCaptureReference.setText("SAVE REFERENCE");
             binding.btnCaptureReference.setBackgroundColor(ContextCompat.getColor(requireContext(), R.color.green_pass_header));
-            analyseReference(selectedImageExternalUri.toString());
+            askExpectedCountThenAnalyse(selectedImageExternalUri.toString());
             Toast.makeText(getContext(), "Image uploaded successfully!", Toast.LENGTH_SHORT).show();
         } catch (Exception e) {
             Log.e(TAG, "Failed to copy reference image", e);
