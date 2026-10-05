@@ -194,6 +194,16 @@
         </LinearLayout>
     </FrameLayout>
 
+    <!-- The highest the analysis card may reach. The photo above it is what the operator counts
+         the hardware on and judges the boxes by, so a long analysis scrolls inside its card
+         rather than squeezing the photo to a strip. -->
+    <androidx.constraintlayout.widget.Guideline
+        android:id="@+id/guide_analysis_top"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        app:layout_constraintGuide_percent="0.55" />
+
     <!-- What this reference actually contributes: the same detection + classification pass an
          inspection runs, so the operator can see the expected features before saving. -->
     <com.google.android.material.card.MaterialCardView
@@ -206,9 +216,17 @@
         android:visibility="gone"
         app:cardBackgroundColor="@color/surface_card"
         app:cardCornerRadius="12dp"
+        app:layout_constrainedHeight="true"
+        app:layout_constraintTop_toTopOf="@id/guide_analysis_top"
         app:layout_constraintBottom_toTopOf="@id/card_action_deck"
+        app:layout_constraintVertical_bias="1.0"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent">
+
+        <androidx.core.widget.NestedScrollView
+            android:id="@+id/scroll_reference_analysis"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content">
 
         <LinearLayout
             android:layout_width="match_parent"
@@ -224,6 +242,162 @@
                 android:textSize="11sp"
                 android:textStyle="bold"
                 android:layout_marginBottom="6dp" />
+
+            <!-- How many features the part should have, asked on the card as soon as a photo
+                 is chosen. FIND BEST METHOD tries every edge method and analyses with the one
+                 whose count is closest; the row stays, so the count can be corrected and
+                 matched again. -->
+            <LinearLayout
+                android:id="@+id/layout_expected_count"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="8dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <com.google.android.material.card.MaterialCardView
+                    android:layout_width="0dp"
+                    android:layout_height="44dp"
+                    android:layout_weight="1"
+                    app:cardBackgroundColor="@color/background_dark"
+                    app:cardCornerRadius="8dp"
+                    app:strokeColor="@color/color_border"
+                    app:strokeWidth="1dp">
+
+                    <EditText
+                        android:id="@+id/et_expected_count"
+                        android:layout_width="match_parent"
+                        android:layout_height="match_parent"
+                        android:background="@null"
+                        android:hint="Feature count"
+                        android:imeOptions="actionDone"
+                        android:importantForAutofill="no"
+                        android:inputType="number"
+                        android:maxLength="3"
+                        android:maxLines="1"
+                        android:paddingHorizontal="12dp"
+                        android:textColor="@color/white"
+                        android:textColorHint="@color/gray_text_secondary"
+                        android:textSize="14sp" />
+                </com.google.android.material.card.MaterialCardView>
+
+                <Button
+                    android:id="@+id/btn_find_method"
+                    android:layout_width="wrap_content"
+                    android:layout_height="44dp"
+                    android:layout_marginStart="8dp"
+                    android:backgroundTint="@color/blue_primary"
+                    android:text="FIND BEST METHOD"
+                    android:textColor="@color/white"
+                    android:textSize="12sp" />
+
+                <Button
+                    android:id="@+id/btn_skip_count"
+                    style="@style/Widget.Material3.Button.TextButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="44dp"
+                    android:text="SKIP"
+                    android:textColor="@color/gray_text_secondary"
+                    android:textSize="12sp" />
+            </LinearLayout>
+
+            <!-- Flips the photo between every edge method's boxes, instantly, so the operator
+                 can compare them by eye: nearest their count first. The middle shows which is
+                 on the photo and opens the full list. First after the count, so it is in view
+                 without scrolling the card. -->
+            <LinearLayout
+                android:id="@+id/layout_method_switcher"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:visibility="gone"
+                tools:visibility="visible">
+
+                <Button
+                    android:id="@+id/btn_method_prev"
+                    android:layout_width="52dp"
+                    android:layout_height="52dp"
+                    android:minWidth="0dp"
+                    android:paddingStart="0dp"
+                    android:paddingEnd="0dp"
+                    android:backgroundTint="@color/background_dark"
+                    android:contentDescription="Previous edge method"
+                    android:text="&#9664;"
+                    android:textColor="@color/blue_primary"
+                    android:textSize="16sp" />
+
+                <LinearLayout
+                    android:id="@+id/layout_method_label"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:background="?attr/selectableItemBackground"
+                    android:gravity="center"
+                    android:orientation="vertical"
+                    android:paddingHorizontal="4dp"
+                    android:paddingVertical="4dp">
+
+                    <TextView
+                        android:id="@+id/tv_method_name"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:gravity="center"
+                        android:textColor="@color/white"
+                        android:textSize="13sp"
+                        android:textStyle="bold"
+                        tools:text="Shipped hybrid pipeline" />
+
+                    <TextView
+                        android:id="@+id/tv_method_detail"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="2dp"
+                        android:gravity="center"
+                        android:textColor="@color/green_pass"
+                        android:textSize="11sp"
+                        tools:text="IN USE · finds 6 · 1 of 16 ▾" />
+                </LinearLayout>
+
+                <Button
+                    android:id="@+id/btn_method_next"
+                    android:layout_width="52dp"
+                    android:layout_height="52dp"
+                    android:minWidth="0dp"
+                    android:paddingStart="0dp"
+                    android:paddingEnd="0dp"
+                    android:backgroundTint="@color/background_dark"
+                    android:contentDescription="Next edge method"
+                    android:text="&#9654;"
+                    android:textColor="@color/blue_primary"
+                    android:textSize="16sp" />
+            </LinearLayout>
+
+            <!-- Shown while another method's boxes are on the photo: analyses with it, making
+                 it the method this reference is saved with. -->
+            <Button
+                android:id="@+id/btn_use_method"
+                android:layout_width="match_parent"
+                android:layout_height="44dp"
+                android:backgroundTint="@color/blue_primary"
+                android:text="USE THIS METHOD"
+                android:textColor="@color/white"
+                android:textSize="12sp"
+                android:visibility="gone"
+                tools:visibility="visible" />
+
+            <TextView
+                android:id="@+id/tv_reference_strength_note"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:layout_marginBottom="6dp"
+                android:textColor="@color/orange_warn"
+                android:textSize="11sp"
+                android:lineSpacingExtra="2dp"
+                android:visibility="gone"
+                tools:visibility="visible"
+                tools:text="Matches your count of 6. Use the arrows to compare the other methods' boxes on the photo. The method you save with becomes the one every inspection of this part is measured against." />
 
             <TextView
                 android:id="@+id/tv_reference_analysis_status"
@@ -249,34 +423,9 @@
                 android:textSize="11sp"
                 android:lineSpacingExtra="2dp" />
 
-            <!-- What each preprocessing strength would find here. Reference setup has no
-                 reference to arbitrate with, so the operator decides; shown only when the
-                 strengths actually disagree. -->
-            <TextView
-                android:id="@+id/tv_reference_strength_note"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="10dp"
-                android:textColor="@color/orange_warn"
-                android:textSize="11sp"
-                android:lineSpacingExtra="2dp"
-                android:visibility="gone"
-                tools:visibility="visible"
-                tools:text="Preprocessing strengths disagree here: light would find 6, medium 5, strong 5." />
-
-            <Button
-                android:id="@+id/btn_reference_strength"
-                android:layout_width="match_parent"
-                android:layout_height="44dp"
-                android:layout_marginTop="8dp"
-                android:backgroundTint="@color/blue_primary"
-                android:textColor="@color/white"
-                android:textSize="12sp"
-                android:visibility="gone"
-                tools:visibility="visible"
-                tools:text="RE-ANALYSE WITH LIGHT (6 FEATURES)" />
-
         </LinearLayout>
+
+        </androidx.core.widget.NestedScrollView>
 
     </com.google.android.material.card.MaterialCardView>
 

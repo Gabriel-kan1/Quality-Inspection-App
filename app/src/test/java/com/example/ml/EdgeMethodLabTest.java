@@ -89,7 +89,7 @@ public class EdgeMethodLabTest {
         assertTrue("the production pipeline must be in the catalogue", shippedAt >= 0);
 
         // A v2 shown above the stack it improves on reads as just another operator. The
-        // ordering is the argument: bare operators, then what ships, then what could replace
+        // ordering is the argument: Canny baselines, then what ships, then what could replace
         // it — the tuned variants, and after them the adaptive stage built on the last of them.
         List<String> after = new ArrayList<>();
         for (int i = shippedAt + 1; i < methods.size(); i++) after.add(methods.get(i).name);
@@ -165,7 +165,7 @@ public class EdgeMethodLabTest {
         java.util.Map<String, Double> scores = new java.util.LinkedHashMap<>();
         scores.put(EdgeMethodLab.SHIPPED_ID, 0.02);
         scores.put(PreprocessingStrength.MEDIUM.id, 0.31);
-        scores.put("canny-fixed", Double.NaN);
+        scores.put("canny-otsu", Double.NaN);
         String all = String.join("\n", EdgeMethodLab.verdict(new ImageQuality(2.7, 62),
                 EdgeMethodLab.ADAPTIVE_ID, "PART-1", null, "6 slots sized",
                 scores, PreprocessingStrength.MEDIUM.id, EdgeMethodLab.SHIPPED_ID));
@@ -311,5 +311,10 @@ public class EdgeMethodLabTest {
         assertEquals(EdgeMethodLab.DEFAULT_ID, EdgeMethodLab.selected(ctx()).id);
         assertNull(EdgeMethodLab.byId("from-a-future-build"));
         assertEquals("from-a-future-build", EdgeMethodLab.nameOf("from-a-future-build"));
+
+        // A method chosen under an earlier build and since removed stops running too.
+        ctx().getSharedPreferences(EdgeMethodLab.PREFS, Context.MODE_PRIVATE).edit()
+                .putString(EdgeMethodLab.KEY_SELECTED, "sobel").apply();
+        assertEquals(EdgeMethodLab.DEFAULT_ID, EdgeMethodLab.selectedId(ctx()));
     }
 }

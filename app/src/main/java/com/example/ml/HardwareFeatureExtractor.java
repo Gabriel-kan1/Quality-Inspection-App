@@ -1362,18 +1362,18 @@ public class HardwareFeatureExtractor {
     }
 
     /**
-     * How many detections every competing edge method would find in this image, by catalogue
-     * id, in catalogue order.
+     * The boxes every competing edge method would find in this image, by catalogue id, in
+     * catalogue order, as fractions of the image.
      *
      * <p>Reference setup shows these because it has nothing to score against: the scoring
      * needs a labelled layout, and this is the step that creates one. The operator is the
-     * ground truth here, so they are shown every method's count and may run any of them.
-     * Empty when OpenCV is unavailable, the image cannot be read, or the operator has pinned
-     * a specific edge method in the Edge Lab rather than leaving it adaptive.
+     * ground truth here, so they flip between every method's boxes on the photo and may run
+     * any of them. Empty when OpenCV is unavailable, the image cannot be read, or the operator
+     * has pinned a specific edge method in the Edge Lab rather than leaving it adaptive.
      */
-    public static java.util.Map<String, Integer> surveyMethods(
+    public static java.util.Map<String, java.util.List<RectF>> surveyMethods(
             Context context, String uriString) {
-        java.util.Map<String, Integer> empty = new java.util.LinkedHashMap<>();
+        java.util.Map<String, java.util.List<RectF>> empty = new java.util.LinkedHashMap<>();
         if (!OPENCV_READY || uriString == null || uriString.isEmpty()) return empty;
         if (!EdgeMethodLab.ADAPTIVE_ID.equals(EdgeMethodLab.selectedId(context))) return empty;
 
@@ -1382,8 +1382,8 @@ public class HardwareFeatureExtractor {
         Mat src = new Mat();
         try {
             Utils.bitmapToMat(bitmap, src);
-            // The same exclusion the real pass applies, or the counts shown to the operator
-            // would not be the counts they get: on a wide shot the survey would report the
+            // The same exclusion the real pass applies, or the boxes shown to the operator
+            // would not be the boxes they get: on a wide shot the survey would report the
             // background's contours as features the strength "would find".
             if (MASK_BACKGROUND) {
                 ChassisMask.Result bg = ChassisMask.of(src);

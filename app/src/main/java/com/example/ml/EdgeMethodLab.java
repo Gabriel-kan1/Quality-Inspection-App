@@ -7,7 +7,6 @@ import android.util.Log;
 
 import org.opencv.android.Utils;
 import org.opencv.core.Core;
-import org.opencv.core.CvType;
 import org.opencv.core.Mat;
 import org.opencv.core.MatOfPoint;
 import org.opencv.core.Rect;
@@ -305,31 +304,24 @@ public final class EdgeMethodLab {
     /**
      * The methods compared, in the order they are shown.
      *
-     * <p>Ordered as an argument rather than alphabetically: the bare operators first, so the
-     * later entries read as answers to what the earlier ones got wrong; then the shipped
-     * stack, where its extra cost can be weighed against what the cheap methods already
-     * managed; then the tuned variants proposed to replace it.
+     * <p>Ordered as an argument rather than alphabetically: the two Canny baselines first, so
+     * the later entries read as answers to what they got wrong; then the shipped stack, where
+     * its extra cost can be weighed against what the cheap methods already managed; then the
+     * tuned variants proposed to replace it.
+     *
+     * <p>The bare operators that used to open the list — Canny at fixed thresholds, Sobel and
+     * Scharr gradient magnitude, Laplacian of Gaussian, morphological gradient and adaptive
+     * threshold — were removed: on screws_none.jpg, six fasteners, they found 13, 12, 121, 68,
+     * 12 and 69 boxes, and none was ever a method worth running.
      */
     static List<Method> catalogue() {
         List<Method> methods = new ArrayList<>();
 
-        methods.add(new Method("canny-fixed", "Canny (fixed thresholds)",
-                "Textbook Canny at 50/150 on the raw grayscale, with no preprocessing at all. "
-                        + "The baseline every other entry has to beat. Fixed thresholds are "
-                        + "what makes it fragile: the pair that finds a bolt head in even light "
-                        + "goes blank on an underexposed photo and solid on a bright one.",
-                false,
-                (gray, srcRgba, forceGlare, glareOut, noteOut) -> {
-                    Mat out = new Mat();
-                    Imgproc.Canny(gray, out, 50, 150);
-                    return out;
-                }));
-
         methods.add(new Method("canny-otsu", "Canny (Otsu-adaptive)",
-                "The same operator with its two thresholds derived per image from Otsu's "
-                        + "method instead of hard-coded, after a 5x5 Gaussian. This is the "
-                        + "single change that lets one setting survive a change of lighting, "
-                        + "and the difference against the row above is what it is worth.",
+                "Canny with its two thresholds derived per image from Otsu's method rather "
+                        + "than hard-coded, after a 5x5 Gaussian, and no other preprocessing. "
+                        + "Deriving the thresholds is the single change that lets one setting "
+                        + "survive a change of lighting; everything below adds to it.",
                 false,
                 (gray, srcRgba, forceGlare, glareOut, noteOut) -> {
                     Mat blurred = new Mat();
@@ -344,91 +336,6 @@ public final class EdgeMethodLab {
                     } finally {
                         blurred.release();
                         otsuMask.release();
-                    }
-                }));
-
-        methods.add(new Method("sobel", "Sobel gradient magnitude",
-                "First derivatives in x and y from a 3x3 Sobel kernel, combined into a "
-                        + "gradient magnitude and cut at Otsu. No non-maximum suppression and "
-                        + "no hysteresis, so edges come out several pixels thick and every weak "
-                        + "gradient survives — expect fat outlines and a high edge density.",
-                false,
-                (gray, srcRgba, forceGlare, glareOut, noteOut) -> gradientMagnitude(gray, false)));
-
-        methods.add(new Method("scharr", "Scharr gradient magnitude",
-                "Sobel's 3x3 kernel is a coarse approximation of a derivative and is "
-                        + "noticeably wrong on diagonals; Scharr is the 3x3 kernel with the "
-                        + "best rotational symmetry. Worth reading directly against the Sobel "
-                        + "row, because fastener heads are round and their gradients point "
-                        + "every way at once.",
-                false,
-                (gray, srcRgba, forceGlare, glareOut, noteOut) -> gradientMagnitude(gray, true)));
-
-        methods.add(new Method("laplacian-of-gaussian", "Laplacian of Gaussian",
-                "Second derivative after a Gaussian, rectified and cut at Otsu. Responds to "
-                        + "intensity ridges rather than to steps, which picks up the machined "
-                        + "crown of a bolt head that a first-derivative operator can miss — and "
-                        + "amplifies sensor noise for exactly the same reason.",
-                false,
-                (gray, srcRgba, forceGlare, glareOut, noteOut) -> {
-                    Mat blurred = new Mat();
-                    Mat lap = new Mat();
-                    Mat absLap = new Mat();
-                    Mat out = new Mat();
-                    try {
-                        Imgproc.GaussianBlur(gray, blurred, BLUR_5, 0);
-                        Imgproc.Laplacian(blurred, lap, CvType.CV_16S, 3);
-                        Core.convertScaleAbs(lap, absLap);
-                        Imgproc.threshold(absLap, out, 0, 255,
-                                Imgproc.THRESH_BINARY | Imgproc.THRESH_OTSU);
-                        return out;
-                    } finally {
-                        blurred.release();
-                        lap.release();
-                        absLap.release();
-                    }
-                }));
-
-        methods.add(new Method("morphological-gradient", "Morphological gradient",
-                "Dilation minus erosion over a 3x3 ellipse — the local intensity range, which "
-                        + "is large exactly where a boundary sits. Costs no convolution and no "
-                        + "threshold tuning, and it is the cheapest thing on this list, so it "
-                        + "is here to answer whether the expensive stack is buying anything.",
-                false,
-                (gray, srcRgba, forceGlare, glareOut, noteOut) -> {
-                    Mat kernel = Imgproc.getStructuringElement(
-                            Imgproc.MORPH_ELLIPSE, new Size(3, 3));
-                    Mat grad = new Mat();
-                    Mat out = new Mat();
-                    try {
-                        Imgproc.morphologyEx(gray, grad, Imgproc.MORPH_GRADIENT, kernel);
-                        Imgproc.threshold(grad, out, 0, 255,
-                                Imgproc.THRESH_BINARY | Imgproc.THRESH_OTSU);
-                        return out;
-                    } finally {
-                        kernel.release();
-                        grad.release();
-                    }
-                }));
-
-        methods.add(new Method("adaptive-threshold", "Adaptive threshold (Gaussian)",
-                "Not a gradient operator: it segments each pixel against a local mean, so what "
-                        + "comes out is filled dark regions rather than outlines. Included "
-                        + "because uneven workshop lighting is the failure this app keeps "
-                        + "meeting and this is the standard answer to it — read the contour "
-                        + "count here as a region count, not as an edge count.",
-                false,
-                (gray, srcRgba, forceGlare, glareOut, noteOut) -> {
-                    Mat blurred = new Mat();
-                    Mat out = new Mat();
-                    try {
-                        Imgproc.GaussianBlur(gray, blurred, BLUR_5, 0);
-                        Imgproc.adaptiveThreshold(blurred, out, 255,
-                                Imgproc.ADAPTIVE_THRESH_GAUSSIAN_C,
-                                Imgproc.THRESH_BINARY_INV, 25, 5);
-                        return out;
-                    } finally {
-                        blurred.release();
                     }
                 }));
 
@@ -901,46 +808,6 @@ public final class EdgeMethodLab {
      */
     public static int catalogueSize() {
         return catalogue().size();
-    }
-
-    /**
-     * Sobel and Scharr differ only in the kernel, so they share a body — otherwise the two
-     * rows would be comparing an implementation difference as well as a kernel difference.
-     */
-    private static Mat gradientMagnitude(Mat gray, boolean scharr) {
-        Mat blurred = new Mat();
-        Mat gx = new Mat();
-        Mat gy = new Mat();
-        Mat absGx = new Mat();
-        Mat absGy = new Mat();
-        Mat magnitude = new Mat();
-        Mat out = new Mat();
-        try {
-            Imgproc.GaussianBlur(gray, blurred, BLUR_5, 0);
-            if (scharr) {
-                Imgproc.Scharr(blurred, gx, CvType.CV_16S, 1, 0);
-                Imgproc.Scharr(blurred, gy, CvType.CV_16S, 0, 1);
-            } else {
-                Imgproc.Sobel(blurred, gx, CvType.CV_16S, 1, 0, 3);
-                Imgproc.Sobel(blurred, gy, CvType.CV_16S, 0, 1, 3);
-            }
-            Core.convertScaleAbs(gx, absGx);
-            Core.convertScaleAbs(gy, absGy);
-            // The L1 approximation OpenCV's own tutorials use. sqrt(gx^2 + gy^2) is the true
-            // magnitude, but it saturates an 8-bit destination on strong edges, and a
-            // saturated gradient is one Otsu cannot separate from its neighbours.
-            Core.addWeighted(absGx, 0.5, absGy, 0.5, 0, magnitude);
-            Imgproc.threshold(magnitude, out, 0, 255,
-                    Imgproc.THRESH_BINARY | Imgproc.THRESH_OTSU);
-            return out;
-        } finally {
-            blurred.release();
-            gx.release();
-            gy.release();
-            absGx.release();
-            absGy.release();
-            magnitude.release();
-        }
     }
 
     /**

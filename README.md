@@ -150,11 +150,13 @@ Legend: ✅ done · 🟡 partial · ❌ not started
   printout's digest no longer matches the filed record. A code from another device resolves to
   nothing and says so, because the code identifies a record rather than containing one.
 - **Edge Method Lab** (`Edge Lab` tab) — a debugging screen that runs one photograph through
-  nine edge/feature operators at the same working resolution and scores every map through the
-  detector's own geometry filter: Canny at fixed thresholds, Canny with Otsu-derived
-  thresholds, Sobel and Scharr gradient magnitude, Laplacian of Gaussian, morphological
-  gradient, adaptive Gaussian threshold, a CLAHE+bilateral+Canny partial, and the shipped
-  hybrid itself — called through `HardwareFeatureExtractor.computeEdges` rather than copied,
+  every edge method at the same working resolution and scores every map through the
+  detector's own geometry filter: Canny with Otsu-derived thresholds, a CLAHE+bilateral+Canny
+  partial, the shipped hybrid itself, the tuned hybrids and the adaptive rungs. The bare
+  operators it first compared — Canny at fixed thresholds, Sobel and Scharr gradient magnitude,
+  Laplacian of Gaussian, morphological gradient and adaptive Gaussian threshold — were removed:
+  on `screws_none.jpg`, six fasteners, they found 13, 12, 121, 68, 12 and 69 boxes. The shipped
+  hybrid is called through `HardwareFeatureExtractor.computeEdges` rather than copied,
   so the screen cannot drift from the code it is evidence about. The edge stage was previously
   invisible: an inspection showed only the boxes that came out the far end, where a missed
   fastener and one rejected on aspect ratio look identical.

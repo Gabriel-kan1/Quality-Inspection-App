@@ -85,7 +85,8 @@
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 
-        <!-- Canny Edges & Filtering Card (collapsible — diagnostic view, off by default) -->
+        <!-- Edge map card (collapsible — diagnostic view, off by default). Titled with the
+             preprocessing method that produced the map, set by ResultsFragment. -->
         <com.google.android.material.card.MaterialCardView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -113,10 +114,11 @@
                     android:paddingBottom="4dp">
 
                     <TextView
+                        android:id="@+id/tv_canny_edges_title"
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
                         android:layout_weight="1"
-                        android:text="CANNY EDGES &amp; FILTERING"
+                        android:text="EDGE MAP"
                         android:textColor="@color/gray_text_secondary"
                         android:textSize="12sp"
                         android:textStyle="bold"

@@ -26,6 +26,7 @@ import com.example.data.entity.ClassificationEvent;
 import com.example.data.entity.ReferenceProfile;
 import com.example.ui.util.AssetBitmaps;
 import com.example.databinding.FragmentReferenceSetupBinding;
+import com.example.ml.AdaptivePreprocessing;
 import com.example.ml.HardwareFeatureExtractor;
 import com.example.ml.FeatureEmbedder;
 import com.example.ml.EdgeMethodLab;
@@ -65,9 +66,40 @@ public class ReferenceSetupFragment extends Fragment {
     /**
      * The edge method the operator pinned for this reference, or null to let the adaptive
      * stage start from its own suggestion. Only meaningful during setup; see
-     * {@code showMethodSurvey}.
+     * {@code showMethodChoice}.
      */
     private String pendingMethod;
+    /**
+     * How many features the operator said this reference photo holds, or 0 if they did not say.
+     * When set, setup runs every method and starts from the one whose count is nearest it.
+     */
+    private int expectedCount = 0;
+    /** Whether the method on screen was picked by {@code expectedCount} rather than the operator. */
+    private boolean pendingAutoPicked = false;
+    /**
+     * A photo is chosen but not analysed: the card is asking for the count, which decides the
+     * edge method the analysis runs with.
+     */
+    private boolean awaitingCount = false;
+    /**
+     * Every method's boxes for the photo at {@link #surveyUri}, as fractions. They depend on
+     * the photo alone, so changing the count, flipping between methods or using another one
+     * reuses them instead of running every method again.
+     */
+    private String surveyUri;
+    private java.util.Map<String, java.util.List<android.graphics.RectF>> methodBoxes;
+    /** The order the arrows step through the methods in: nearest the count first. */
+    private final java.util.List<String> methodOrder = new ArrayList<>();
+    /**
+     * The method whose boxes are on the photo: the analysed one in use, or another being
+     * previewed. Null until an analysis has finished.
+     */
+    private String shownMethod;
+    /** Why the method in use is in use; shown whenever its boxes are on the photo. */
+    private CharSequence inUseNote;
+    private boolean inUseExact;
+    /** An analysis is running: its result, not the one on screen, is what would be saved. */
+    private boolean analysing = false;
 
     /** Last analysed reference: its detections, and one crop per detection for labelling. */
     private HardwareFeatureExtractor.AnalysisResult pendingResult = null;
@@ -134,11 +166,33 @@ public class ReferenceSetupFragment extends Fragment {
         binding.btnCaptureReference.setOnClickListener(v -> {
             if (selectedImageExternalUri == null) {
                 launchImageChooser();
-            } else if (pendingResult == null) {
-                Toast.makeText(getContext(), "Still analysing this image — one moment.",
-                        Toast.LENGTH_SHORT).show();
-            } else {
+            } else if (analysisReady()) {
                 showClassifyAllDialog(this::proceedToInspection);
+            }
+        });
+
+        binding.btnFindMethod.setOnClickListener(v -> findMethodForCount());
+        binding.btnSkipCount.setOnClickListener(v -> skipCount());
+        binding.etExpectedCount.setOnEditorActionListener((field, actionId, event) -> {
+            // Done on the soft keyboard, or Enter on a hardware one (which arrives twice, as
+            // the key goes down and up, and should run the match once).
+            boolean enter = event != null
+                    && event.getKeyCode() == android.view.KeyEvent.KEYCODE_ENTER;
+            if (actionId != android.view.inputmethod.EditorInfo.IME_ACTION_DONE && !enter) {
+                return false;
+            }
+            if (!enter || event.getAction() == android.view.KeyEvent.ACTION_DOWN) {
+                findMethodForCount();
+            }
+            return true;
+        });
+
+        binding.btnMethodPrev.setOnClickListener(v -> stepMethod(-1));
+        binding.btnMethodNext.setOnClickListener(v -> stepMethod(1));
+        binding.layoutMethodLabel.setOnClickListener(v -> chooseMethodFromList());
+        binding.btnUseMethod.setOnClickListener(v -> {
+            if (shownMethod != null && selectedImageExternalUri != null) {
+                analyseReference(selectedImageExternalUri.toString(), shownMethod);
             }
         });
 
@@ -158,17 +212,110 @@ public class ReferenceSetupFragment extends Fragment {
             if (selectedImageExternalUri == null) {
                 Toast.makeText(getContext(), "Choose or load a reference image first.", Toast.LENGTH_SHORT).show();
                 launchImageChooser();
-            } else if (pendingResult == null) {
-                Toast.makeText(getContext(), "Still analysing this image — one moment.",
-                        Toast.LENGTH_SHORT).show();
-            } else {
+            } else if (analysisReady()) {
                 showClassifyAllDialog(this::proceedToInspection);
             }
         });
     }
 
+    /**
+     * Whether what is on screen is what would be saved; if not, says what is still to happen.
+     * A previewed method's boxes are not saved — they have not been classified — so saving
+     * waits until the operator either uses that method or steps back to the one in use.
+     */
+    private boolean analysisReady() {
+        String message = null;
+        if (awaitingCount) {
+            message = "Enter how many features this part has, then press FIND BEST METHOD"
+                    + " (or SKIP).";
+        } else if (analysing || pendingResult == null) {
+            message = "Still analysing this image — one moment.";
+        } else if (shownMethod != null && !shownMethod.equals(inUseMethod())) {
+            message = "The photo is showing " + EdgeMethodLab.nameOf(shownMethod) + ". Press USE"
+                    + " THIS METHOD to save with it, or step back to "
+                    + EdgeMethodLab.nameOf(inUseMethod()) + ".";
+        }
+        if (message == null) return true;
+        Toast.makeText(getContext(), message, Toast.LENGTH_LONG).show();
+        return false;
+    }
+
 
     // ── Reference preview: the same pass an inspection runs ──────────────
+
+    /**
+     * A photo has been chosen: the card asks how many features the part should have, on the
+     * screen beside the photo the operator counts them from. Nothing is analysed until they
+     * answer (FIND BEST METHOD) or decline (SKIP), because the answer decides which edge method
+     * the analysis runs with, and an analysis run first would only be thrown away. The count
+     * already in the field is kept: a second photo of the same part has the same hardware.
+     */
+    private void awaitExpectedCount() {
+        ++analysisToken;                   // a pass still running for the previous photo is stale
+        releasePendingCrops();
+        pendingMethod = null;
+        pendingAutoPicked = false;
+        awaitingCount = true;
+        analysing = false;
+        shownMethod = null;
+        methodOrder.clear();
+
+        binding.cardReferenceAnalysis.setVisibility(View.VISIBLE);
+        binding.tvReferenceAnalysisStatus.setText("How many features should this part have?"
+                + " Count them on the photo, enter the number and press FIND BEST METHOD: every"
+                + " edge method is tried, and the one whose count is closest is used. SKIP starts"
+                + " from the photo's own noise and contrast instead.");
+        binding.layoutReferenceTypeRows.removeAllViews();
+        binding.tvReferenceLocalisationReadiness.setText("");
+        hideMethodChoice();
+        binding.scrollReferenceAnalysis.scrollTo(0, 0);
+    }
+
+    private void hideMethodChoice() {
+        binding.layoutMethodSwitcher.setVisibility(View.GONE);
+        binding.btnUseMethod.setVisibility(View.GONE);
+        binding.tvReferenceStrengthNote.setVisibility(View.GONE);
+    }
+
+    /** FIND BEST METHOD: analyses with the edge method whose count is nearest the operator's. */
+    private void findMethodForCount() {
+        if (selectedImageExternalUri == null) {
+            Toast.makeText(getContext(), "Choose a reference image first.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        int n;
+        try {
+            n = Integer.parseInt(binding.etExpectedCount.getText().toString().trim());
+        } catch (NumberFormatException e) {
+            n = 0;
+        }
+        if (n <= 0) {
+            binding.etExpectedCount.setError("Enter how many features: 1 or more");
+            return;
+        }
+        expectedCount = n;
+        dismissKeyboard();
+        analyseReference(selectedImageExternalUri.toString());
+    }
+
+    /** SKIP: analyses from the image-quality starting point, with no count to match. */
+    private void skipCount() {
+        if (selectedImageExternalUri == null) {
+            Toast.makeText(getContext(), "Choose a reference image first.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        expectedCount = 0;
+        binding.etExpectedCount.setError(null);
+        dismissKeyboard();
+        analyseReference(selectedImageExternalUri.toString());
+    }
+
+    private void dismissKeyboard() {
+        android.view.inputmethod.InputMethodManager imm = requireContext()
+                .getSystemService(android.view.inputmethod.InputMethodManager.class);
+        if (imm != null) imm.hideSoftInputFromWindow(binding.etExpectedCount.getWindowToken(), 0);
+        binding.etExpectedCount.clearFocus();
+    }
 
     /**
      * Detects and classifies the chosen reference exactly as an inspection would, then draws
@@ -199,13 +346,23 @@ public class ReferenceSetupFragment extends Fragment {
         final int token = ++analysisToken;
         final android.content.Context context = requireContext().getApplicationContext();
         pendingMethod = pinnedMethod;
+        pendingAutoPicked = false;
+        awaitingCount = false;
+        analysing = true;
+        final int target = pinnedMethod == null ? expectedCount : 0;
+        final java.util.Map<String, java.util.List<android.graphics.RectF>> cachedBoxes =
+                uriString.equals(surveyUri) ? methodBoxes : null;
 
         binding.cardReferenceAnalysis.setVisibility(View.VISIBLE);
-        binding.tvReferenceAnalysisStatus.setText("Analysing reference image...");
+        binding.tvReferenceAnalysisStatus.setText(target > 0
+                ? "Trying every edge method against your count of " + target + "..."
+                : pinnedMethod != null
+                        ? "Analysing with " + EdgeMethodLab.nameOf(pinnedMethod) + "..."
+                        : "Analysing reference image...");
         binding.layoutReferenceTypeRows.removeAllViews();
         binding.tvReferenceLocalisationReadiness.setText("");
-        binding.tvReferenceStrengthNote.setVisibility(View.GONE);
-        binding.btnReferenceStrength.setVisibility(View.GONE);
+        hideMethodChoice();
+        binding.scrollReferenceAnalysis.scrollTo(0, 0);
 
         new Thread(() -> {
             ReferenceLibrary library = ReferenceLibraryProvider.effectiveFor(context, partId);
@@ -220,20 +377,26 @@ public class ReferenceSetupFragment extends Fragment {
             final java.util.Map<Integer, Bitmap> crops = new java.util.LinkedHashMap<>();
             final float simThreshold = library.getSimilarityThreshold();
             final float marginThreshold = library.getMarginThreshold();
+
+            // What every method would find. Edge stage and geometry filter only, no crops and
+            // no encoder. With nothing to score against yet, the operator's own count (when
+            // given) is the target, and the operator flips between these boxes on the photo.
+            final java.util.Map<String, java.util.List<android.graphics.RectF>> boxes =
+                    cachedBoxes != null ? cachedBoxes
+                            : HardwareFeatureExtractor.surveyMethods(context, uriString);
+            final String counted = AdaptivePreprocessing.closestToCount(
+                    AdaptivePreprocessing.counts(boxes), target);
+            final String runMethod = counted != null ? counted : pinnedMethod;
+            final boolean autoPicked = counted != null;
+
             HardwareFeatureExtractor.AnalysisResult result =
                     HardwareFeatureExtractor.extractFeatures(context, uriString, library,
                             (crop, index) -> {
                                 Bitmap kept = scaleForKeeping(crop);
                                 if (kept != null) crops.put(index, kept);
                                 return null;
-                            }, null, null, pinnedMethod);
+                            }, null, null, runMethod);
             if (result.processedBitmap != null) result.processedBitmap.recycle();
-
-            // What every other method would have found. Edge stage and geometry filter only,
-            // no crops and no encoder, and it is the only evidence available at setup time,
-            // since there is no reference layout to score against yet.
-            final java.util.Map<String, Integer> survey =
-                    HardwareFeatureExtractor.surveyMethods(context, uriString);
 
             requireActivity().runOnUiThread(() -> {
                 if (!isAdded() || binding == null || token != analysisToken) {
@@ -241,80 +404,166 @@ public class ReferenceSetupFragment extends Fragment {
                     return;
                 }
                 releasePendingCrops();
+                analysing = false;
+                surveyUri = uriString;
+                methodBoxes = boxes;
                 pendingResult = result;
+                pendingAutoPicked = autoPicked;
                 pendingSimilarityThreshold = simThreshold;
                 pendingMarginThreshold = marginThreshold;
                 pendingCrops.putAll(crops);
                 showReferenceAnalysis(uriString, result);
-                showMethodSurvey(uriString, result, survey);
+                showMethodChoice(result);
+                binding.scrollReferenceAnalysis.scrollTo(0, 0);
             });
         }).start();
     }
 
     /**
-     * Shows what every edge method finds in this photo and lets the operator re-run with any
-     * of them.
+     * Sets up the method switcher after an analysis: the method that ran is in use and on the
+     * photo, and the arrows step through every other method's boxes from there.
      *
      * <p>The adaptive stage chooses a method by scoring each one against a labelled reference,
      * but this screen is what creates that reference, so there is nothing to score against.
-     * The photo's own statistics only give a starting point. The operator is the one party
-     * who can see which boxes are hardware, so they are shown every method's count and can
-     * try any of them; the crops below are what they judge by. Whatever they settle on is
-     * recorded in the layout and is what every later inspection has to beat.
+     * The operator's count, when given, picks the starting method. After that the operator is
+     * the one party who can see which boxes are hardware, so they flip between every method's
+     * boxes on the photo itself and keep the best. Whatever they settle on is recorded in the
+     * layout and is what every later inspection has to beat.
      *
      * <p>Measured case: {@code screws_none.jpg} starts on Hybrid v6, which finds five and
      * misses an out-of-focus bolt; the shipped stack and the light strength find all six.
      */
-    private void showMethodSurvey(String uriString,
-                                  HardwareFeatureExtractor.AnalysisResult result,
-                                  java.util.Map<String, Integer> survey) {
-        if (binding == null || survey == null || survey.isEmpty()) return;
-        final String ran = result.preprocessing == null ? null : result.preprocessing.methodId;
-        if (ran == null) return;
+    private void showMethodChoice(HardwareFeatureExtractor.AnalysisResult result) {
+        if (binding == null) return;
+        final String ran = inUseMethod();
+        methodOrder.clear();
+        shownMethod = null;
+        if (ran == null || methodBoxes == null || methodBoxes.isEmpty()) {
+            // A method pinned in the Edge Lab runs for every photo, here and in inspections,
+            // so there is nothing to compare or choose on this screen.
+            String lab = result.edgeMethodId;
+            if (lab == null || EdgeMethodLab.ADAPTIVE_ID.equals(lab)) return;
+            binding.tvReferenceStrengthNote.setText("Edge method: " + EdgeMethodLab.nameOf(lab)
+                    + ", set in the Edge Lab, so it runs for every photo and the methods are not"
+                    + " compared" + (expectedCount > 0
+                    ? "; your count of " + expectedCount + " was not used" : "")
+                    + ". Set the Edge Lab back to Adaptive to choose here.");
+            binding.tvReferenceStrengthNote.setTextColor(
+                    ContextCompat.getColor(requireContext(), R.color.orange_warn));
+            binding.tvReferenceStrengthNote.setVisibility(View.VISIBLE);
+            return;
+        }
 
-        int ranCount = survey.containsKey(ran) ? survey.get(ran) : result.features.size();
-        int more = 0;
-        for (Integer c : survey.values()) if (c != null && c > ranCount) more++;
-
+        int ranCount = countOf(ran);
+        inUseExact = pendingAutoPicked && ranCount == expectedCount;
         StringBuilder sb = new StringBuilder();
-        sb.append(pendingMethod != null ? "You chose " : "Started with ")
-                .append(EdgeMethodLab.nameOf(ran))
-                .append(String.format(Locale.getDefault(), ": %d features.", ranCount));
-        if (pendingMethod == null) {
-            sb.append(" That is only a starting point from the photo's noise and contrast;"
-                    + " there is no reference to score methods against yet, because this is"
-                    + " where you create it.");
+        if (pendingAutoPicked) {
+            sb.append(inUseExact ? "Matches your count of " + expectedCount + "."
+                    : "No method finds exactly " + expectedCount + "; this one is closest.");
+        } else if (pendingMethod != null) {
+            sb.append("You chose this method.");
+            if (expectedCount > 0) sb.append(" Your count is ").append(expectedCount).append('.');
+        } else {
+            sb.append("No count given, so this is a starting point from the photo's noise and"
+                    + " contrast; there is no reference to score methods against yet, because"
+                    + " this is where you create it.");
         }
-        if (more > 0) {
-            sb.append(String.format(Locale.getDefault(),
-                    " %d other method%s find%s more here. If a fastener below has no crop, try"
-                            + " one of them.", more, more == 1 ? "" : "s", more == 1 ? "s" : ""));
-        }
-        sb.append(" The method you save with becomes the one every inspection of this part is"
-                + " measured against.");
-        binding.tvReferenceStrengthNote.setText(sb);
-        binding.tvReferenceStrengthNote.setVisibility(View.VISIBLE);
+        sb.append(" Use the arrows to compare every method's boxes on the photo, and keep the"
+                + " one that boxes each fastener once. The method you save with becomes the one"
+                + " every inspection of this part is measured against.");
+        inUseNote = sb;
 
-        binding.btnReferenceStrength.setText("TRY ANOTHER EDGE METHOD");
-        binding.btnReferenceStrength.setVisibility(View.VISIBLE);
-        binding.btnReferenceStrength.setOnClickListener(v -> {
-            final java.util.List<String> ids = new java.util.ArrayList<>(survey.keySet());
-            String[] labels = new String[ids.size()];
-            for (int i = 0; i < ids.size(); i++) {
-                String id = ids.get(i);
-                labels[i] = String.format(Locale.getDefault(), "%s — %d%s",
-                        EdgeMethodLab.nameOf(id), survey.get(id),
-                        id.equals(ran) ? "  (showing)" : "");
-            }
-            new androidx.appcompat.app.AlertDialog.Builder(requireContext())
-                    .setTitle("Features each method finds")
-                    .setItems(labels, (d, which) -> {
-                        String id = ids.get(which);
-                        if (!id.equals(ran)) analyseReference(uriString, id);
-                    })
-                    .setNegativeButton("Cancel", null)
-                    .show();
-        });
+        methodOrder.addAll(AdaptivePreprocessing.byCloseness(
+                AdaptivePreprocessing.counts(methodBoxes), expectedCount));
+        if (!methodOrder.contains(ran)) methodOrder.add(0, ran);
+        shownMethod = ran;
+        renderMethod();
+    }
+
+    /** The method the analysis on screen ran with: the one this reference would be saved with. */
+    private String inUseMethod() {
+        return pendingResult == null || pendingResult.preprocessing == null ? null
+                : pendingResult.preprocessing.methodId;
+    }
+
+    /** How many boxes a method finds here; the analysis' own count where the survey has none. */
+    private int countOf(String id) {
+        java.util.List<android.graphics.RectF> boxes = methodBoxes == null ? null
+                : methodBoxes.get(id);
+        if (boxes != null) return boxes.size();
+        return pendingResult != null && id.equals(inUseMethod()) ? pendingResult.features.size() : 0;
+    }
+
+    /** ◀ ▶: puts the previous or next method's boxes on the photo. Instant — nothing is run. */
+    private void stepMethod(int step) {
+        if (methodOrder.isEmpty() || shownMethod == null) return;
+        int n = methodOrder.size();
+        int i = Math.max(0, methodOrder.indexOf(shownMethod));
+        shownMethod = methodOrder.get(((i + step) % n + n) % n);
+        renderMethod();
+    }
+
+    /** The method's name: jump straight to any method, nearest the count first. */
+    private void chooseMethodFromList() {
+        if (methodOrder.isEmpty()) return;
+        final String inUse = inUseMethod();
+        String[] labels = new String[methodOrder.size()];
+        for (int i = 0; i < labels.length; i++) {
+            String id = methodOrder.get(i);
+            labels[i] = String.format(Locale.getDefault(), "%s — %d%s", EdgeMethodLab.nameOf(id),
+                    countOf(id), id.equals(inUse) ? "  (in use)" : "");
+        }
+        new androidx.appcompat.app.AlertDialog.Builder(requireContext())
+                .setTitle(expectedCount > 0
+                        ? "Features each method finds, nearest " + expectedCount + " first"
+                        : "Features each method finds")
+                .setItems(labels, (d, which) -> {
+                    shownMethod = methodOrder.get(which);
+                    renderMethod();
+                })
+                .setNegativeButton("Cancel", null)
+                .show();
+    }
+
+    /**
+     * Shows {@link #shownMethod}: its boxes on the photo, its name and count on the switcher,
+     * and what the operator can do about it. The method in use shows the classified analysis;
+     * any other shows its bare boxes, which is all that can be had without running it.
+     */
+    private void renderMethod() {
+        if (binding == null || shownMethod == null || pendingResult == null) return;
+        final String inUse = inUseMethod();
+        final boolean isInUse = shownMethod.equals(inUse);
+        if (isInUse) {
+            binding.overlayReferencePreview.setFeatures(pendingResult.features);
+        } else {
+            binding.overlayReferencePreview.setPreviewBoxes(methodBoxes.get(shownMethod),
+                    ContextCompat.getColor(requireContext(), R.color.blue_primary));
+        }
+
+        binding.tvMethodName.setText(EdgeMethodLab.nameOf(shownMethod));
+        binding.tvMethodDetail.setText(String.format(Locale.getDefault(),
+                "%s · finds %d · %d of %d  ▾", isInUse ? "IN USE" : "PREVIEW",
+                countOf(shownMethod), methodOrder.indexOf(shownMethod) + 1, methodOrder.size()));
+        binding.tvMethodDetail.setTextColor(ContextCompat.getColor(requireContext(),
+                isInUse ? R.color.green_pass : R.color.orange_warn));
+        binding.layoutMethodSwitcher.setVisibility(View.VISIBLE);
+        binding.btnUseMethod.setVisibility(isInUse ? View.GONE : View.VISIBLE);
+
+        if (isInUse) {
+            binding.tvReferenceStrengthNote.setText(inUseNote);
+            binding.tvReferenceStrengthNote.setTextColor(ContextCompat.getColor(requireContext(),
+                    inUseExact ? R.color.green_pass : R.color.orange_warn));
+        } else {
+            binding.tvReferenceStrengthNote.setText(String.format(Locale.getDefault(),
+                    "Boxes only, not yet classified. In use: %s, which finds %d.%s USE THIS"
+                            + " METHOD analyses the photo with this one instead.",
+                    EdgeMethodLab.nameOf(inUse), countOf(inUse), expectedCount > 0
+                            ? " Your count is " + expectedCount + "." : ""));
+            binding.tvReferenceStrengthNote.setTextColor(
+                    ContextCompat.getColor(requireContext(), R.color.orange_warn));
+        }
+        binding.tvReferenceStrengthNote.setVisibility(View.VISIBLE);
     }
 
     /** Aspect-preserving copy bounded to {@link #CROP_KEEP_PX}, or the original if already small. */
@@ -1131,14 +1380,14 @@ public class ReferenceSetupFragment extends Fragment {
             Bitmap bitmap = AssetBitmaps.decodeSampled(
                     requireContext(), "chassis_images/" + filename, 1080);
             if (bitmap != null) binding.ivReferencePreview.setImageBitmap(bitmap);
-            // Plain preview first so the choice registers immediately; the overlay replaces it
-            // when the classification pass finishes a second or two later.
+            // Plain preview first, which the operator counts the hardware on; the overlay
+            // replaces it once the count is in and the classification pass has run.
             binding.ivReferencePreview.setVisibility(View.VISIBLE);
             binding.overlayReferencePreview.setVisibility(View.GONE);
             binding.layoutUploadPlaceholder.setVisibility(View.GONE);
             binding.btnCaptureReference.setText("SAVE REFERENCE");
             binding.btnCaptureReference.setBackgroundColor(ContextCompat.getColor(requireContext(), R.color.green_pass_header));
-            analyseReference(selectedImageExternalUri.toString());
+            awaitExpectedCount();
         } catch (Exception e) {
             Toast.makeText(getContext(), "Failed to load asset: " + e.getMessage(), Toast.LENGTH_SHORT).show();
         }
@@ -1360,7 +1609,7 @@ public class ReferenceSetupFragment extends Fragment {
             binding.layoutUploadPlaceholder.setVisibility(View.GONE);
             binding.btnCaptureReference.setText("SAVE REFERENCE");
             binding.btnCaptureReference.setBackgroundColor(ContextCompat.getColor(requireContext(), R.color.green_pass_header));
-            analyseReference(selectedImageExternalUri.toString());
+            awaitExpectedCount();
             Toast.makeText(getContext(), "Image uploaded successfully!", Toast.LENGTH_SHORT).show();
         } catch (Exception e) {
             Log.e(TAG, "Failed to copy reference image", e);

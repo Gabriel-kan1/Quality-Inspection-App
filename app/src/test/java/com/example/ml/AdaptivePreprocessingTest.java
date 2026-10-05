@@ -34,6 +34,41 @@ public class AdaptivePreprocessingTest {
     }
 
     @Test
+    public void theMethodNearestTheOperatorsCountIsPickedAndTiesGoToTheFirst() {
+        Map<String, Integer> counts = new LinkedHashMap<>();
+        counts.put("a", 5);
+        counts.put("b", 7);
+        counts.put("c", 9);
+        assertEquals("b", AdaptivePreprocessing.closestToCount(counts, 8));
+        assertEquals("c", AdaptivePreprocessing.closestToCount(counts, 12));
+        assertEquals("a", AdaptivePreprocessing.closestToCount(counts, 6));
+        assertNull(AdaptivePreprocessing.closestToCount(counts, 0));
+        assertNull(AdaptivePreprocessing.closestToCount(new LinkedHashMap<>(), 6));
+    }
+
+    @Test
+    public void methodsAreSteppedThroughNearestTheCountFirst() {
+        // screws_none.jpg's measured counts, abridged, in catalogue order — from before the
+        // bare operators were removed, which is why two of them are here.
+        Map<String, Integer> counts = new LinkedHashMap<>();
+        counts.put("canny-fixed", 13);
+        counts.put("canny-otsu", 5);
+        counts.put("scharr", 121);
+        counts.put("shipped", 6);
+        counts.put("v6", 5);
+        counts.put("light", 6);
+        assertEquals(java.util.Arrays.asList("shipped", "light", "canny-otsu", "v6",
+                        "canny-fixed", "scharr"),
+                AdaptivePreprocessing.byCloseness(counts, 6));
+        // The first is always the method the count picks.
+        assertEquals(AdaptivePreprocessing.closestToCount(counts, 6),
+                AdaptivePreprocessing.byCloseness(counts, 6).get(0));
+        // Without a count there is nothing to be near: catalogue order.
+        assertEquals(new java.util.ArrayList<>(counts.keySet()),
+                AdaptivePreprocessing.byCloseness(counts, 0));
+    }
+
+    @Test
     public void theSuggestedRungStandsWhenNothingBeatsItByTheMargin() {
         // Strong is better, but by less than size jitter between two photographs of the same
         // hardware (median 0.058): not evidence.
@@ -119,7 +154,14 @@ public class AdaptivePreprocessingTest {
         assertEquals(EdgeMethodLab.catalogueSize() - 1, ballot.size());
         assertTrue(ballot.contains(EdgeMethodLab.SHIPPED_ID));
         assertTrue(ballot.contains(LIGHT.id));
+        assertTrue(ballot.contains("canny-otsu"));
+        assertTrue(ballot.contains("clahe-bilateral-canny"));
         assertFalse(ballot.contains(EdgeMethodLab.ADAPTIVE_ID));
+        // The bare operators were removed: they buried a six-fastener plate in 12 to 121 boxes.
+        for (String id : new String[]{"canny-fixed", "sobel", "scharr", "laplacian-of-gaussian",
+                "morphological-gradient", "adaptive-threshold"}) {
+            assertFalse(id + " was removed", ballot.contains(id));
+        }
     }
 
     @Test

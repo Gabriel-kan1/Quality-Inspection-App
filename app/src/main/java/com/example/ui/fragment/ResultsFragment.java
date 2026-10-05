@@ -439,6 +439,8 @@ public class ResultsFragment extends Fragment {
         if (activeResult.processedBitmap != null) {
             binding.ivCannyEdges.setImageBitmap(activeResult.processedBitmap);
         }
+        binding.tvCannyEdgesTitle.setText(edgeMapTitle(activeResult.preprocessing != null
+                ? activeResult.preprocessing.methodId : activeResult.edgeMethodId));
         binding.chassisOverlayView.setResultData(imageUri, activeResult.features,
                 activeResult.backgroundOverlay);
         // Slot markers are set inside recomputeAndRender, which is where localisation is
@@ -448,6 +450,16 @@ public class ResultsFragment extends Fragment {
         binding.chassisOverlayView.setOnFeatureClickListener((index, f) -> correctFeatureAt(index));
 
         recomputeAndRender();
+    }
+
+    /**
+     * The edge-map card's heading: the preprocessing method that produced this photo's map.
+     * Under the adaptive stage that is the method it chose for this photo, which the caller
+     * passes, not "adaptive" itself.
+     */
+    static String edgeMapTitle(String methodId) {
+        return methodId == null ? "EDGE MAP"
+                : "PREPROCESSING: " + EdgeMethodLab.nameOf(methodId).toUpperCase(Locale.ROOT);
     }
 
     /** Whether a feature type drives pass/fail. Injected so the rule below stays testable. */

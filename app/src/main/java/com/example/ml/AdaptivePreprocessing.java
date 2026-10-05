@@ -28,11 +28,11 @@ import java.util.Map;
  *
  * <p>The ground truth a real deployment has is the reference layout: during reference setup
  * the operator labels every detection, and the critical ones become slots with a position and
- * a box. So when a labelled layout exists, <b>every method in the Edge Lab catalogue runs on
+ * a box. So when a labelled layout exists, <b>every method on the {@link #ballot} runs on
  * the photograph</b>, each one's boxes are aligned onto the layout by {@link LayoutMatcher}
  * and scored by {@link SizePrior} — a box the wrong size, a slot nothing matched and a box
  * invented on the part all cost on one scale — and the method that reproduces the operator's
- * part best runs. The shipped stack, the tuned hybrids, the bare operators and the three
+ * part best runs. The shipped stack, the tuned hybrids, the two Canny baselines and the three
  * strengths all compete on equal terms, on every image.
  *
  * <p>The incumbent is the method that drew the reference's own boxes
@@ -152,20 +152,66 @@ public final class AdaptivePreprocessing {
     }
 
     /**
-     * How many detections every competing method finds in this image, in catalogue order.
+     * The boxes every competing method finds in this image, in catalogue order, as fractions.
      *
-     * <p>For reference setup, which has nothing to score against: the counts, and the
-     * operator's own eye on the crops, are all there is. Edge stage and geometry filter only.
+     * <p>For reference setup, which has nothing to score against: the operator flips between
+     * these on the photo and their eye is the judge. Edge stage and geometry filter only — the
+     * boxes an analysis would cut crops from, before anything classifies them.
      *
      * @param src working-resolution RGBA; not modified
      */
-    public static Map<String, Integer> survey(Mat src, Boolean forceGlare) {
-        Map<String, Integer> out = new LinkedHashMap<>();
+    public static Map<String, List<RectF>> survey(Mat src, Boolean forceGlare) {
+        Map<String, List<RectF>> out = new LinkedHashMap<>();
         for (String id : ballot()) {
             List<RectF> rects = boxesFor(id, src, forceGlare, null);
-            if (rects != null) out.put(id, rects.size());
+            if (rects != null) out.put(id, rects);
         }
         return out;
+    }
+
+    /** How many boxes each method in a {@link #survey} found, in the same order. */
+    public static Map<String, Integer> counts(Map<String, List<RectF>> boxes) {
+        Map<String, Integer> out = new LinkedHashMap<>();
+        for (Map.Entry<String, List<RectF>> e : boxes.entrySet()) {
+            out.put(e.getKey(), e.getValue().size());
+        }
+        return out;
+    }
+
+    /**
+     * The order reference setup steps through the methods in: nearest the operator's count
+     * first, so the plausible ones come before the ones that buried the part in boxes.
+     * {@code counts}' own order among equals and throughout when there is no count, so the
+     * first is always {@link #closestToCount}'s pick.
+     */
+    public static List<String> byCloseness(Map<String, Integer> counts, int target) {
+        List<String> ids = new ArrayList<>(counts.keySet());
+        if (target > 0) {
+            // List.sort is stable, so equals keep the order they came in.
+            ids.sort((a, b) -> Integer.compare(Math.abs(counts.get(a) - target),
+                    Math.abs(counts.get(b) - target)));
+        }
+        return ids;
+    }
+
+    /**
+     * The method whose count is nearest the number the operator said the part has. Ties go to
+     * the first in {@code counts}' order, so the caller's ordering is the tie-break. Null when
+     * {@code counts} is empty or the target is not positive.
+     */
+    public static String closestToCount(Map<String, Integer> counts, int target) {
+        if (counts == null || target <= 0) return null;
+        String best = null;
+        int bestGap = Integer.MAX_VALUE;
+        for (Map.Entry<String, Integer> e : counts.entrySet()) {
+            if (e.getValue() == null) continue;
+            int gap = Math.abs(e.getValue() - target);
+            if (gap < bestGap) {
+                bestGap = gap;
+                best = e.getKey();
+            }
+        }
+        return best;
     }
 
     /**

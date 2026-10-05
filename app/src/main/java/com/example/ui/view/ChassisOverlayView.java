@@ -193,10 +193,34 @@ public class ChassisOverlayView extends View {
                               Bitmap background) {
         loadBitmapFromUri(uriString);
         backgroundOverlay = background;
+        setFeatures(extractedFeatures);
+    }
+
+    /**
+     * Replaces the boxes over the photograph already loaded, without decoding it again.
+     * Reference setup flips between edge methods with this and {@link #setPreviewBoxes}.
+     */
+    public void setFeatures(List<HardwareFeatureExtractor.ExtractedFeature> extractedFeatures) {
         features.clear();
+        selectedIndex = -1;
         if (extractedFeatures != null) {
             for (HardwareFeatureExtractor.ExtractedFeature ext : extractedFeatures) {
                 features.add(new DetectedFeature(ext.type, ext.rectFraction, ext.color, ext.label));
+            }
+        }
+        invalidate();
+    }
+
+    /**
+     * Bare boxes in one colour, numbered rather than labelled: an edge method's detections
+     * before anything classified them, over the photograph already loaded.
+     */
+    public void setPreviewBoxes(List<RectF> boxes, int color) {
+        features.clear();
+        selectedIndex = -1;
+        if (boxes != null) {
+            for (int i = 0; i < boxes.size(); i++) {
+                features.add(new DetectedFeature(null, boxes.get(i), color, String.valueOf(i + 1)));
             }
         }
         invalidate();
@@ -363,7 +387,10 @@ public class ChassisOverlayView extends View {
             Paint tabPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
             tabPaint.setColor(feature.color);
             tabPaint.setStyle(Paint.Style.FILL);
-            canvas.drawRect(left, top - 36f, left + 140f, top, tabPaint);
+            // As wide as its label: a fixed width ran long labels off the tab and turned a
+            // bare number into a bar across the photo.
+            float tabWidth = paintText.measureText(feature.label) + 16f;
+            canvas.drawRect(left, top - 36f, left + tabWidth, top, tabPaint);
 
             canvas.drawText(feature.label, left + 8f, top - 10f, paintText);
         }
