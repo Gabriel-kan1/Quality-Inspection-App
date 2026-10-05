@@ -288,13 +288,20 @@ public final class EdgeMethodLab {
         /** Stable id, persisted by {@link #select}; never renamed once shipped. */
         final String id;
         final String name;
+        /** What the method is good at, in a sentence or two, for the screens that offer it. */
+        final String goodAt;
+        /** The key steps it runs, as a short list. */
+        final String uses;
         final String summary;
         final boolean shipped;
         final Operator operator;
 
-        Method(String id, String name, String summary, boolean shipped, Operator operator) {
+        Method(String id, String name, String goodAt, String uses, String summary,
+               boolean shipped, Operator operator) {
             this.id = id;
             this.name = name;
+            this.goodAt = goodAt;
+            this.uses = uses;
             this.summary = summary;
             this.shipped = shipped;
             this.operator = operator;
@@ -304,10 +311,12 @@ public final class EdgeMethodLab {
     /**
      * The methods compared, in the order they are shown.
      *
-     * <p>Ordered as an argument rather than alphabetically: the two Canny baselines first, so
-     * the later entries read as answers to what they got wrong; then the shipped stack, where
-     * its extra cost can be weighed against what the cheap methods already managed; then the
-     * tuned variants proposed to replace it.
+     * <p>In version order, Hybrid v1 to v10, then the adaptive stage that chooses among them:
+     * v1 is the stack the detector shipped with; v2 to v6 the tuned replacements for it, each
+     * from a study run; v7 and v8 the light and strong versions of v6 the adaptive stage
+     * reaches for on soft or noisy photographs; v9 and v10 the two Canny baselines the rest
+     * are built up from. The ids are older than the names and are kept, because layouts and
+     * preferences store them.
      *
      * <p>The bare operators that used to open the list — Canny at fixed thresholds, Sobel and
      * Scharr gradient magnitude, Laplacian of Gaussian, morphological gradient and adaptive
@@ -317,55 +326,13 @@ public final class EdgeMethodLab {
     static List<Method> catalogue() {
         List<Method> methods = new ArrayList<>();
 
-        methods.add(new Method("canny-otsu", "Canny (Otsu-adaptive)",
-                "Canny with its two thresholds derived per image from Otsu's method rather "
-                        + "than hard-coded, after a 5x5 Gaussian, and no other preprocessing. "
-                        + "Deriving the thresholds is the single change that lets one setting "
-                        + "survive a change of lighting; everything below adds to it.",
-                false,
-                (gray, srcRgba, forceGlare, glareOut, noteOut) -> {
-                    Mat blurred = new Mat();
-                    Mat otsuMask = new Mat();
-                    Mat out = new Mat();
-                    try {
-                        Imgproc.GaussianBlur(gray, blurred, BLUR_5, 0);
-                        double high = Imgproc.threshold(blurred, otsuMask, 0, 255,
-                                Imgproc.THRESH_BINARY | Imgproc.THRESH_OTSU);
-                        Imgproc.Canny(blurred, out, high * 0.5, high);
-                        return out;
-                    } finally {
-                        blurred.release();
-                        otsuMask.release();
-                    }
-                }));
-
-        methods.add(new Method("clahe-bilateral-canny", "CLAHE + bilateral + Canny",
-                "The shipped stack with the glare branch, the two blurs and the morphology all "
-                        + "removed: local contrast equalisation, an edge-preserving denoise, "
-                        + "then Otsu-scaled Canny. Isolates what the contrast work contributes, "
-                        + "so the row below can be read as the cost of everything else.",
-                false,
-                (gray, srcRgba, forceGlare, glareOut, noteOut) -> {
-                    Mat equalised = new Mat();
-                    Mat filtered = new Mat();
-                    Mat otsuMask = new Mat();
-                    Mat out = new Mat();
-                    try {
-                        CLAHE clahe = Imgproc.createCLAHE(1.0, new Size(16, 16));
-                        clahe.apply(gray, equalised);
-                        Imgproc.bilateralFilter(equalised, filtered, 5, 60, 20);
-                        double high = Imgproc.threshold(filtered, otsuMask, 0, 255,
-                                Imgproc.THRESH_BINARY | Imgproc.THRESH_OTSU);
-                        Imgproc.Canny(filtered, out, high * 0.5, high);
-                        return out;
-                    } finally {
-                        equalised.release();
-                        filtered.release();
-                        otsuMask.release();
-                    }
-                }));
-
-        methods.add(new Method(SHIPPED_ID, "Shipped hybrid pipeline",
+        methods.add(new Method(SHIPPED_ID, "Hybrid v1",
+                "Not missing hardware: it never came in under the hand count on the test "
+                        + "photos, faint and out-of-focus fasteners included. The cost is extra "
+                        + "boxes on scratches and texture.",
+                "Glare correction when the frame is blown out · CLAHE · bilateral (size "
+                        + "set per photo) · median 5 + Gaussian 5 · Canny at Otsu, low 0.5x · "
+                        + "dilate 5, close 7",
                 "What the detector actually runs: black-hat glare correction when the frame is "
                         + "blown out, CLAHE, a noise-adaptive bilateral filter, median and "
                         + "Gaussian blurs, Otsu-scaled Canny, then dilate and close to bridge a "
@@ -392,7 +359,12 @@ public final class EdgeMethodLab {
         // the high one — every configuration that survived the wider search does, which makes
         // production's 0.5 the single clearest thing the study found wrong.
         // See python/hybrid_v2_study.py for the search and every number quoted below.
-        methods.add(new Method("hybrid-v2", "Hybrid v2 (denoise + low-ratio 0.4)",
+        methods.add(new Method("hybrid-v2", "Hybrid v2",
+                "Keeping the same count when the lighting changes: the steadiest under "
+                        + "dimming, brightening, noise and JPEG. Exact on 12 of 26 test photos, "
+                        + "with the most misses (5).",
+                "CLAHE · bilateral 9 · median 5 + Gaussian 5 · Canny at 1.1x Otsu, low "
+                        + "0.4x · dilate 5, close 7",
                 "Pins the bilateral diameter at 9 and drops Canny's low threshold to 0.4x "
                         + "its high one instead of 0.5x, with the high one at 1.1x Otsu. The "
                         + "reliable one: one of only two configurations found that hold all "
@@ -405,7 +377,11 @@ public final class EdgeMethodLab {
                 false,
                 (gray, srcRgba, forceGlare, glareOut, noteOut) -> hybridVariant(srcRgba, forceGlare, glareOut, 9, 5, 5, 1.1, 0.4, false, 5, 7)));
 
-        methods.add(new Method("hybrid-v3", "Hybrid v3 (wide Gaussian, best all-round)",
+        methods.add(new Method("hybrid-v3", "Hybrid v3",
+                "A steady all-rounder, and the cheapest hybrid. Exact on 12 of 26 test "
+                        + "photos, with 3 misses.",
+                "CLAHE · bilateral 5 · median 5 + Gaussian 7 · Canny at 1.2x Otsu, low "
+                        + "0.4x · dilate 5, close 7",
                 "Bilateral 5, a wider Gaussian at 7, Canny at 1.2x Otsu with the same 0.4 "
                         + "low ratio. Best all-rounder in the search — it took the top combined "
                         + "rank across all three robustness tests without winning any of them "
@@ -415,7 +391,11 @@ public final class EdgeMethodLab {
                 false,
                 (gray, srcRgba, forceGlare, glareOut, noteOut) -> hybridVariant(srcRgba, forceGlare, glareOut, 5, 5, 7, 1.2, 0.4, false, 5, 7)));
 
-        methods.add(new Method("hybrid-v4", "Hybrid v4 (L2 gradient, best stability)",
+        methods.add(new Method("hybrid-v4", "Hybrid v4",
+                "Giving the same answer on two photos of the same part: the best "
+                        + "stability, so the fewest false FAILs. Exact on 16 of 26 test photos.",
+                "CLAHE · bilateral 7 · median 5 + Gaussian 5 · Canny at Otsu with the "
+                        + "true (L2) gradient, low 0.4x · dilate 3, close 9",
                 "Bilateral 7, the 0.4 low ratio, a true Euclidean gradient magnitude rather "
                         + "than the |Gx|+|Gy| approximation, and lighter morphology — a 3px "
                         + "dilation closed with a 9px ellipse. Best group stability of any "
@@ -425,7 +405,11 @@ public final class EdgeMethodLab {
                 false,
                 (gray, srcRgba, forceGlare, glareOut, noteOut) -> hybridVariant(srcRgba, forceGlare, glareOut, 7, 5, 5, 1.0, 0.4, true, 3, 9)));
 
-        methods.add(new Method("hybrid-v5", "Hybrid v5 (adaptive-threshold mask)",
+        methods.add(new Method("hybrid-v5", "Hybrid v5",
+                "Ignoring plate texture, by keeping only edges beside a dark region. No "
+                        + "better than v3 overall (12 of 26), at twice the cost.",
+                "Hybrid v3's steps · plus an adaptive-threshold mask (61 px "
+                        + "neighbourhood, grown 5 px) over the edges",
                 "v3's pipeline with an adaptive-threshold mask over the Canny map: only edges "
                         + "lying on or beside a locally dark region are kept, which is what a "
                         + "fastener is against a machined plate. The answer to whether adaptive "
@@ -438,7 +422,11 @@ public final class EdgeMethodLab {
                         hybridVariant(srcRgba, forceGlare, glareOut, 5, 5, 7, 1.2, 0.4, false, 5, 7, 61, 2, 5,
                                 CLAHE_CLIP_LIMIT)));
 
-        methods.add(new Method(PreprocessingStrength.MEDIUM.id, "Hybrid v6 (best against ground truth)",
+        methods.add(new Method(PreprocessingStrength.MEDIUM.id, "Hybrid v6",
+                "Accuracy: the best overall, exact on 20 of 26 test photos and on every "
+                        + "stud and screw shot. The usual starting point when no count is given.",
+                "CLAHE · bilateral 5 · median 5 + Gaussian 5 · Canny at 1.1x Otsu with "
+                        + "the L2 gradient, low 0.4x · dilate 5, close 9",
                 "Bilateral 5, Canny at 1.1x Otsu with the L2 gradient, dilate 5 and close 9. "
                         + "Found by searching 4,032 configurations against a hand-made count "
                         + "for every bundled photograph rather than six of them, ranked on "
@@ -453,12 +441,16 @@ public final class EdgeMethodLab {
                 (gray, srcRgba, forceGlare, glareOut, noteOut) ->
                         outlineEdges(srcRgba, forceGlare, glareOut)));
 
-        // The adaptive stage's other two rungs, then the stage itself. v6 is its middle rung
-        // and is listed once, above, under its own id: a second card with identical output
+        // The adaptive stage's other two rungs, v7 and v8. v6 is its middle rung and is
+        // listed once, above, under its own id: a second card with identical output
         // would read as a second method. See PreprocessingStrength for why the rungs move
         // CLAHE's clip limit and not the filter apertures, and
         // python/adaptive_preprocessing_study.py for every number below.
-        methods.add(new Method(PreprocessingStrength.LIGHT.id, "Adaptive rung: light (soft photos, small hardware)",
+        methods.add(new Method(PreprocessingStrength.LIGHT.id, "Hybrid v7",
+                "Soft or blurred photos and small hardware, where edges are faint. On "
+                        + "sharp photos it boxes far too much.",
+                "Hybrid v6 with double the CLAHE contrast (2.0) and a lighter Gaussian "
+                        + "(3)",
                 "Hybrid v6 with twice the CLAHE contrast boost and a 3px Gaussian instead of "
                         + "5px, so a faint edge survives to Canny. The rung the adaptive stage "
                         + "runs when the photograph's edges are weak (99th-percentile Laplacian "
@@ -472,7 +464,10 @@ public final class EdgeMethodLab {
                 (gray, srcRgba, forceGlare, glareOut, noteOut) ->
                         strengthEdges(srcRgba, forceGlare, glareOut, PreprocessingStrength.LIGHT)));
 
-        methods.add(new Method(PreprocessingStrength.STRONG.id, "Adaptive rung: strong (noisy photos)",
+        methods.add(new Method(PreprocessingStrength.STRONG.id, "Hybrid v8",
+                "Noisy or grainy photos and textured plates, by not amplifying the grain. "
+                        + "Can lose low-contrast heads on clean photos.",
+                "Hybrid v6 with half the CLAHE contrast (0.5) and Canny at 1.0x Otsu",
                 "Hybrid v6 with half the CLAHE contrast boost and Canny's high bound back at "
                         + "1.0x Otsu. CLAHE amplifies grain in flat regions as readily as it "
                         + "lifts faint edges, and under noise the grain wins; this rung stops "
@@ -485,7 +480,67 @@ public final class EdgeMethodLab {
                 (gray, srcRgba, forceGlare, glareOut, noteOut) ->
                         strengthEdges(srcRgba, forceGlare, glareOut, PreprocessingStrength.STRONG)));
 
+        // The two Canny baselines, v9 and v10: each is the shipped stack with most of it
+        // taken away, so what the hybrids above add can be read against them.
+        methods.add(new Method("clahe-bilateral-canny", "Hybrid v9",
+                "A quick baseline: what evening out the contrast achieves on its own. "
+                        + "With no blur or joining step, outlines can break into pieces.",
+                "CLAHE · bilateral 5 · Canny at Otsu, low 0.5x · no glare correction, "
+                        + "blur or morphology",
+                "The shipped stack with the glare branch, the two blurs and the morphology all "
+                        + "removed: local contrast equalisation, an edge-preserving denoise, "
+                        + "then Otsu-scaled Canny. Isolates what the contrast work contributes, "
+                        + "so Hybrid v1 can be read as the cost of everything else.",
+                false,
+                (gray, srcRgba, forceGlare, glareOut, noteOut) -> {
+                    Mat equalised = new Mat();
+                    Mat filtered = new Mat();
+                    Mat otsuMask = new Mat();
+                    Mat out = new Mat();
+                    try {
+                        CLAHE clahe = Imgproc.createCLAHE(1.0, new Size(16, 16));
+                        clahe.apply(gray, equalised);
+                        Imgproc.bilateralFilter(equalised, filtered, 5, 60, 20);
+                        double high = Imgproc.threshold(filtered, otsuMask, 0, 255,
+                                Imgproc.THRESH_BINARY | Imgproc.THRESH_OTSU);
+                        Imgproc.Canny(filtered, out, high * 0.5, high);
+                        return out;
+                    } finally {
+                        equalised.release();
+                        filtered.release();
+                        otsuMask.release();
+                    }
+                }));
+
+        methods.add(new Method("canny-otsu", "Hybrid v10",
+                "Simplicity: fine on clean, evenly lit photos. Faint or low-contrast "
+                        + "hardware breaks up or disappears.",
+                "Gaussian 5 · Canny at Otsu, low 0.5x · nothing else",
+                "Canny with its two thresholds derived per image from Otsu's method rather "
+                        + "than hard-coded, after a 5x5 Gaussian, and no other preprocessing. "
+                        + "Deriving the thresholds is the single change that lets one setting "
+                        + "survive a change of lighting; every other method adds to it.",
+                false,
+                (gray, srcRgba, forceGlare, glareOut, noteOut) -> {
+                    Mat blurred = new Mat();
+                    Mat otsuMask = new Mat();
+                    Mat out = new Mat();
+                    try {
+                        Imgproc.GaussianBlur(gray, blurred, BLUR_5, 0);
+                        double high = Imgproc.threshold(blurred, otsuMask, 0, 255,
+                                Imgproc.THRESH_BINARY | Imgproc.THRESH_OTSU);
+                        Imgproc.Canny(blurred, out, high * 0.5, high);
+                        return out;
+                    } finally {
+                        blurred.release();
+                        otsuMask.release();
+                    }
+                }));
+
         methods.add(new Method(ADAPTIVE_ID, "Adaptive (chooses a method per photograph)",
+                "Choosing for you: on each inspection photo it keeps the method that best "
+                        + "reproduces the part's labelled reference.",
+                "Every method from Hybrid v1 to v10, scored against the reference layout",
                 "On every inspection photograph, runs every other method on this screen and "
                         + "scores each one's boxes against the part's labelled reference: a "
                         + "box the wrong size, a slot nothing matched and a box invented on "
@@ -721,6 +776,18 @@ public final class EdgeMethodLab {
     public static String nameOf(String id) {
         Method m = byId(id);
         return m == null ? String.valueOf(id) : m.name;
+    }
+
+    /** What a method is good at, in a sentence or two; empty when it is not catalogued. */
+    public static String goodAtOf(String id) {
+        Method m = byId(id);
+        return m == null ? "" : m.goodAt;
+    }
+
+    /** The key steps a method runs, as a short list; empty when it is not catalogued. */
+    public static String usesOf(String id) {
+        Method m = byId(id);
+        return m == null ? "" : m.uses;
     }
 
     /**
@@ -1001,7 +1068,8 @@ public final class EdgeMethodLab {
                     // What an inspection of this part would run: every method scored against
                     // its reference. Not the catalogue entry, which has no part to score
                     // against and so could only show the starting point.
-                    toRun = new Method(method.id, method.name, method.summary, false,
+                    toRun = new Method(method.id, method.name, method.goodAt, method.uses,
+                            method.summary, false,
                             (g, s, fg, go, no) -> {
                                 AdaptivePreprocessing.Choice[] choice =
                                         new AdaptivePreprocessing.Choice[1];

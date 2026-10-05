@@ -136,6 +136,21 @@
 
                 </LinearLayout>
 
+                <!-- What the method that ran is good at and the steps it uses; shown with the
+                     map when the card is opened. -->
+                <TextView
+                    android:id="@+id/tv_canny_edges_about"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:layout_marginHorizontal="4dp"
+                    android:lineSpacingExtra="2dp"
+                    android:textColor="@color/white"
+                    android:textSize="12sp"
+                    android:visibility="gone"
+                    tools:text="Good at: Accuracy: the best overall, exact on 20 of 26 test photos.\nUses: CLAHE · bilateral 5 · median 5 + Gaussian 5 · Canny at 1.1x Otsu"
+                    tools:visibility="visible" />
+
                 <ImageView
                     android:id="@+id/iv_canny_edges"
                     android:layout_width="match_parent"

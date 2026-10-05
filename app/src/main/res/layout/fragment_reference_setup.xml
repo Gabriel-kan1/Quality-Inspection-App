@@ -346,7 +346,7 @@
                         android:textColor="@color/white"
                         android:textSize="13sp"
                         android:textStyle="bold"
-                        tools:text="Shipped hybrid pipeline" />
+                        tools:text="Hybrid v1" />
 
                     <TextView
                         android:id="@+id/tv_method_detail"
@@ -385,6 +385,49 @@
                 android:textSize="12sp"
                 android:visibility="gone"
                 tools:visibility="visible" />
+
+            <!-- What the method on the photo is good at and the key steps it runs: a drop-down,
+                 so it can be read while flipping between methods or folded away. -->
+            <LinearLayout
+                android:id="@+id/layout_method_about"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:orientation="vertical"
+                android:visibility="gone"
+                tools:visibility="visible">
+
+                <TextView
+                    android:id="@+id/tv_method_about_header"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:background="?attr/selectableItemBackground"
+                    android:paddingVertical="6dp"
+                    android:textColor="@color/blue_primary"
+                    android:textSize="11sp"
+                    android:textStyle="bold"
+                    tools:text="▾  WHAT HYBRID V7 IS GOOD AT" />
+
+                <com.google.android.material.card.MaterialCardView
+                    android:id="@+id/card_method_about"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    app:cardBackgroundColor="@color/background_dark"
+                    app:cardCornerRadius="8dp"
+                    app:strokeColor="@color/color_border"
+                    app:strokeWidth="1dp">
+
+                    <TextView
+                        android:id="@+id/tv_method_about"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:lineSpacingExtra="2dp"
+                        android:padding="10dp"
+                        android:textColor="@color/white"
+                        android:textSize="12sp"
+                        tools:text="Good at: Soft or blurred photos and small hardware, where edges are faint. On sharp photos it boxes far too much.\nUses: Hybrid v6 with double the CLAHE contrast (2.0) and a lighter Gaussian (3)" />
+                </com.google.android.material.card.MaterialCardView>
+            </LinearLayout>
 
             <TextView
                 android:id="@+id/tv_reference_strength_note"

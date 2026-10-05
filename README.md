@@ -155,8 +155,11 @@ Legend: ✅ done · 🟡 partial · ❌ not started
   partial, the shipped hybrid itself, the tuned hybrids and the adaptive rungs. The bare
   operators it first compared — Canny at fixed thresholds, Sobel and Scharr gradient magnitude,
   Laplacian of Gaussian, morphological gradient and adaptive Gaussian threshold — were removed:
-  on `screws_none.jpg`, six fasteners, they found 13, 12, 121, 68, 12 and 69 boxes. The shipped
-  hybrid is called through `HardwareFeatureExtractor.computeEdges` rather than copied,
+  on `screws_none.jpg`, six fasteners, they found 13, 12, 121, 68, 12 and 69 boxes. The ten
+  that remain are named **Hybrid v1–v10**: v1 is the shipped stack, v2–v6 the tuned variants
+  below, v7 and v8 v6's light and strong rungs, v9 the CLAHE+bilateral+Canny partial and v10
+  Otsu-adaptive Canny. Each says on screen what it is good at and the key steps it uses. The
+  shipped hybrid is called through `HardwareFeatureExtractor.computeEdges` rather than copied,
   so the screen cannot drift from the code it is evidence about. The edge stage was previously
   invisible: an inspection showed only the boxes that came out the far end, where a missed
   fastener and one rejected on aspect ratio look identical.

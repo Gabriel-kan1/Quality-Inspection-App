@@ -29,6 +29,7 @@ import com.example.databinding.FragmentEdgeLabBinding;
 import com.example.databinding.ItemEdgeMethodBinding;
 import com.example.ml.EdgeMethodLab;
 import com.example.ml.HardwareFeatureExtractor;
+import com.example.ui.util.MethodBrief;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -329,6 +330,7 @@ public class EdgeLabFragment extends Fragment {
             // What a per-photograph method decided here — the adaptive card names its rung.
             card.tvMethodNote.setText(result.note);
             card.tvMethodNote.setVisibility(result.note == null ? View.GONE : View.VISIBLE);
+            card.tvMethodBrief.setText(MethodBrief.of(result.id));
             card.tvMethodSummary.setText(result.summary);
             card.tvMethodBadge.setVisibility(
                     result.isShippedPipeline ? View.VISIBLE : View.GONE);

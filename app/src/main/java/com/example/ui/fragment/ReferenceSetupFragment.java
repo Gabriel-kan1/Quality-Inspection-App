@@ -25,6 +25,7 @@ import com.example.data.AppDatabase;
 import com.example.data.entity.ClassificationEvent;
 import com.example.data.entity.ReferenceProfile;
 import com.example.ui.util.AssetBitmaps;
+import com.example.ui.util.MethodBrief;
 import com.example.databinding.FragmentReferenceSetupBinding;
 import com.example.ml.AdaptivePreprocessing;
 import com.example.ml.HardwareFeatureExtractor;
@@ -126,6 +127,11 @@ public class ReferenceSetupFragment extends Fragment {
      */
     private static final int CROP_KEEP_PX = 256;
 
+    /** Where this screen keeps its own display choices. */
+    private static final String UI_PREFS = "reference_setup_ui";
+    /** Whether the method drop-down is open; open until the operator folds it away. */
+    private static final String KEY_ABOUT_OPEN = "method_about_open";
+
     private final ActivityResultLauncher<String> selectImageLauncher =
             registerForActivityResult(new ActivityResultContracts.GetContent(), uri -> {
                 if (uri != null) {
@@ -187,6 +193,10 @@ public class ReferenceSetupFragment extends Fragment {
             return true;
         });
 
+        binding.tvMethodAboutHeader.setOnClickListener(v -> {
+            uiPrefs().edit().putBoolean(KEY_ABOUT_OPEN, !aboutOpen()).apply();
+            if (shownMethod != null) renderAbout();
+        });
         binding.btnMethodPrev.setOnClickListener(v -> stepMethod(-1));
         binding.btnMethodNext.setOnClickListener(v -> stepMethod(1));
         binding.layoutMethodLabel.setOnClickListener(v -> chooseMethodFromList());
@@ -274,7 +284,30 @@ public class ReferenceSetupFragment extends Fragment {
     private void hideMethodChoice() {
         binding.layoutMethodSwitcher.setVisibility(View.GONE);
         binding.btnUseMethod.setVisibility(View.GONE);
+        binding.layoutMethodAbout.setVisibility(View.GONE);
         binding.tvReferenceStrengthNote.setVisibility(View.GONE);
+    }
+
+    /**
+     * The drop-down under the switcher: what the method on the photo is good at and the key
+     * steps it runs, following the arrows so each method can be read as it is compared.
+     */
+    private void renderAbout() {
+        boolean open = aboutOpen();
+        binding.tvMethodAboutHeader.setText((open ? "▾  " : "▸  ") + "ABOUT "
+                + EdgeMethodLab.nameOf(shownMethod).toUpperCase(Locale.ROOT));
+        binding.tvMethodAbout.setText(MethodBrief.of(shownMethod));
+        binding.cardMethodAbout.setVisibility(open ? View.VISIBLE : View.GONE);
+        binding.layoutMethodAbout.setVisibility(View.VISIBLE);
+    }
+
+    private boolean aboutOpen() {
+        return uiPrefs().getBoolean(KEY_ABOUT_OPEN, true);
+    }
+
+    private android.content.SharedPreferences uiPrefs() {
+        return requireContext().getSharedPreferences(UI_PREFS,
+                android.content.Context.MODE_PRIVATE);
     }
 
     /** FIND BEST METHOD: analyses with the edge method whose count is nearest the operator's. */
@@ -549,6 +582,7 @@ public class ReferenceSetupFragment extends Fragment {
                 isInUse ? R.color.green_pass : R.color.orange_warn));
         binding.layoutMethodSwitcher.setVisibility(View.VISIBLE);
         binding.btnUseMethod.setVisibility(isInUse ? View.GONE : View.VISIBLE);
+        renderAbout();
 
         if (isInUse) {
             binding.tvReferenceStrengthNote.setText(inUseNote);

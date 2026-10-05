@@ -38,7 +38,7 @@
                 android:textColor="@color/white"
                 android:textSize="15sp"
                 android:textStyle="bold"
-                tools:text="Canny (Otsu-adaptive)" />
+                tools:text="Hybrid v6" />
 
             <!-- Only shown on the row that is the production pipeline, so the others are
                  read as alternatives to something rather than as nine equal options. -->
@@ -115,6 +115,19 @@
             android:visibility="gone"
             tools:visibility="visible"
             tools:text="MEDIUM preprocessing — noise 3.3, edge contrast 121 (no reference sizes to test against)" />
+
+        <!-- In brief, before the long account below: what the method is good at and the
+             key steps it runs. -->
+        <TextView
+            android:id="@+id/tv_method_brief"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:lineSpacingExtra="2dp"
+            android:textColor="@color/white"
+            android:textSize="12sp"
+            tools:text="Good at: Accuracy: the best overall, exact on 20 of 26 test photos.
+Uses: CLAHE · bilateral 5 · Canny at 1.1x Otsu" />
 
         <TextView
             android:id="@+id/tv_method_summary"

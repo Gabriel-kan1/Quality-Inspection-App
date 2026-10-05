@@ -29,6 +29,7 @@ import com.example.data.entity.SlotResult;
 import com.example.databinding.FragmentResultsBinding;
 import com.example.ml.HardwareFeatureExtractor;
 import com.example.ui.util.ComparisonCrops;
+import com.example.ui.util.MethodBrief;
 import com.example.ui.view.ChassisOverlayView;
 import com.example.ui.view.CropCompareView;
 import com.example.ml.ActiveLearningPolicy;
@@ -245,6 +246,9 @@ public class ResultsFragment extends Fragment {
 
     private void applyCannyEdgesExpanded(boolean expanded) {
         binding.ivCannyEdges.setVisibility(expanded ? View.VISIBLE : View.GONE);
+        // The method's summary opens with its map, when there is one to show.
+        binding.tvCannyEdgesAbout.setVisibility(
+                expanded && binding.tvCannyEdgesAbout.length() > 0 ? View.VISIBLE : View.GONE);
         // Filled triangle pointing down when open, right when closed.
         binding.tvCannyEdgesChevron.setText(expanded ? "▾" : "▸");
     }
@@ -439,8 +443,11 @@ public class ResultsFragment extends Fragment {
         if (activeResult.processedBitmap != null) {
             binding.ivCannyEdges.setImageBitmap(activeResult.processedBitmap);
         }
-        binding.tvCannyEdgesTitle.setText(edgeMapTitle(activeResult.preprocessing != null
-                ? activeResult.preprocessing.methodId : activeResult.edgeMethodId));
+        String ranMethod = activeResult.preprocessing != null
+                ? activeResult.preprocessing.methodId : activeResult.edgeMethodId;
+        binding.tvCannyEdgesTitle.setText(edgeMapTitle(ranMethod));
+        binding.tvCannyEdgesAbout.setText(ranMethod == null ? "" : MethodBrief.of(ranMethod));
+        applyCannyEdgesExpanded(binding.ivCannyEdges.getVisibility() == View.VISIBLE);
         binding.chassisOverlayView.setResultData(imageUri, activeResult.features,
                 activeResult.backgroundOverlay);
         // Slot markers are set inside recomputeAndRender, which is where localisation is

@@ -58,7 +58,7 @@
             android:textColor="@color/blue_primary"
             android:textSize="12sp"
             android:textStyle="bold"
-            tools:text="INSPECTIONS RUN: Shipped hybrid pipeline" />
+            tools:text="INSPECTIONS RUN: Hybrid v1" />
 
         <LinearLayout
             android:layout_width="match_parent"
@@ -197,7 +197,7 @@
                     android:textColor="@color/white"
                     android:textSize="15sp"
                     android:textStyle="bold"
-                    tools:text="Adaptive runs: Hybrid v6 (medium)" />
+                    tools:text="Adaptive runs: Hybrid v6" />
 
                 <TextView
                     android:id="@+id/tv_quality_body"

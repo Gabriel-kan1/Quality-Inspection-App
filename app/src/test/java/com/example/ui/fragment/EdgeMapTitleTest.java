@@ -16,7 +16,7 @@ public class EdgeMapTitleTest {
 
     @Test
     public void namesTheMethodThatRan() {
-        assertEquals("PREPROCESSING: HYBRID V6 (BEST AGAINST GROUND TRUTH)",
+        assertEquals("PREPROCESSING: HYBRID V6",
                 ResultsFragment.edgeMapTitle(PreprocessingStrength.MEDIUM.id));
         assertEquals("PREPROCESSING: " + EdgeMethodLab.nameOf(EdgeMethodLab.SHIPPED_ID)
                         .toUpperCase(java.util.Locale.ROOT),

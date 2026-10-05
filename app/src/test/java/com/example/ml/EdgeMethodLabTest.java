@@ -79,32 +79,38 @@ public class EdgeMethodLabTest {
         assertEquals("exactly one row is the production pipeline", 1, shipped);
     }
 
+    /**
+     * The methods read Hybrid v1 to v10 in that order, v1 being the stack the detector shipped
+     * with, and the adaptive stage that chooses among them closes the list. The ids are older
+     * than the names and must not follow them: layouts and preferences store the ids.
+     */
     @Test
-    public void tunedVariantsFollowThePipelineTheyAreProposedAgainst() {
+    public void theCatalogueRunsFromHybridV1ToV10ThenTheAdaptiveStage() {
         List<EdgeMethodLab.Method> methods = EdgeMethodLab.catalogue();
-        int shippedAt = -1;
-        for (int i = 0; i < methods.size(); i++) {
-            if (methods.get(i).shipped) shippedAt = i;
+        assertEquals(11, methods.size());
+        for (int i = 0; i < 10; i++) {
+            assertEquals("Hybrid v" + (i + 1), methods.get(i).name);
         }
-        assertTrue("the production pipeline must be in the catalogue", shippedAt >= 0);
+        assertTrue("v1 is the shipped stack", methods.get(0).shipped);
+        assertEquals(EdgeMethodLab.SHIPPED_ID, methods.get(0).id);
+        assertEquals("hybrid-v2", methods.get(1).id);
+        assertEquals(PreprocessingStrength.MEDIUM.id, methods.get(5).id);
+        assertEquals(PreprocessingStrength.LIGHT.id, methods.get(6).id);
+        assertEquals(PreprocessingStrength.STRONG.id, methods.get(7).id);
+        assertEquals("clahe-bilateral-canny", methods.get(8).id);
+        assertEquals("canny-otsu", methods.get(9).id);
+        assertEquals(EdgeMethodLab.ADAPTIVE_ID, methods.get(10).id);
+    }
 
-        // A v2 shown above the stack it improves on reads as just another operator. The
-        // ordering is the argument: Canny baselines, then what ships, then what could replace
-        // it — the tuned variants, and after them the adaptive stage built on the last of them.
-        List<String> after = new ArrayList<>();
-        for (int i = shippedAt + 1; i < methods.size(); i++) after.add(methods.get(i).name);
-        assertFalse("the tuned variants are shown after the shipped pipeline", after.isEmpty());
-        boolean adaptiveSeen = false;
-        for (String name : after) {
-            if (name.startsWith("Adaptive")) {
-                adaptiveSeen = true;
-                continue;
-            }
-            assertFalse("a tuned variant after the adaptive entries: " + name, adaptiveSeen);
-            assertTrue("only tuned variants may follow the shipped pipeline, found: " + name,
-                    name.startsWith("Hybrid v"));
+    /** Every screen that offers a method says what it is good at and what it runs. */
+    @Test
+    public void everyMethodSaysWhatItIsGoodAtAndWhatItUses() {
+        for (EdgeMethodLab.Method method : EdgeMethodLab.catalogue()) {
+            assertFalse(method.name, EdgeMethodLab.goodAtOf(method.id).isEmpty());
+            assertFalse(method.name, EdgeMethodLab.usesOf(method.id).isEmpty());
         }
-        assertTrue("the adaptive stage and its rungs close the list", adaptiveSeen);
+        assertEquals("", EdgeMethodLab.goodAtOf("no-such-method"));
+        assertEquals("", EdgeMethodLab.usesOf("no-such-method"));
     }
 
     // ── The adaptive stage ───────────────────────────────────────────────────
@@ -191,16 +197,16 @@ public class EdgeMethodLabTest {
     }
 
     @Test
-    public void everyTunedVariantIsNumberedAndDistinct() {
-        Set<String> variants = new HashSet<>();
+    public void everyMethodIsNumberedAndDistinct() {
+        Set<String> names = new HashSet<>();
         for (EdgeMethodLab.Method method : EdgeMethodLab.catalogue()) {
-            if (method.name.startsWith("Hybrid v")) variants.add(method.name);
+            if (method.name.startsWith("Hybrid v")) names.add(method.name);
         }
-        // Five are kept, each with a study run behind it: v2/v3/v4 from the threshold and
-        // preprocessing search, v5 from the adaptive-threshold experiment, v6 from the search
-        // against full ground truth. Adding a sixth without that evidence is the failure this
-        // guards against.
-        assertEquals("v2 through v6 are the tuned variants", 5, variants.size());
+        // Ten are kept, each with a reason to be here: the shipped stack, five tuned variants
+        // with a study run behind each, v6's light and strong rungs, and the two Canny
+        // baselines. Adding an eleventh without that evidence is the failure this guards
+        // against.
+        assertEquals("v1 through v10", 10, names.size());
     }
 
     @Test
