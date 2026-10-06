@@ -80,6 +80,20 @@ public final class ActiveLearningPolicy {
      */
     public static float NOISE_FLOOR = 0.50f;
 
+    /**
+     * Below this best-match score a detection resembles nothing in the library closely enough
+     * to be hardware worth naming, and the operator is not asked about it. The results
+     * screen's overlay filters hide detections under the same line.
+     */
+    public static final float REVIEW_FLOOR = 0.30f;
+    /**
+     * Above this best-match score the classifier's call is trusted without asking. This gives
+     * up the spot checks above it: the known silent misclassifications lived in the 0.74-0.88
+     * band ({@code python/margin_study.py}), so one scoring over 0.85 is now found only by an
+     * operator tapping its box.
+     */
+    public static final float REVIEW_CEILING = 0.85f;
+
     public enum Kind {
         UNKNOWN,
         SPOT_CHECK,
@@ -107,6 +121,35 @@ public final class ActiveLearningPolicy {
     }
 
     private ActiveLearningPolicy() {}
+
+    /**
+     * As {@link #select(List, ReferenceLibrary, Random)}, but only detections worth the
+     * operator's time are eligible at all: a best match from {@link #REVIEW_FLOOR} to
+     * {@link #REVIEW_CEILING}, nearest a type that drives pass/fail. A confident call, a crop
+     * that resembles nothing, and anything of an advisory or ignored type — including what the
+     * {@link NoiseGate} routed to an ignored type, so there are no noise audits — are left as
+     * the classifier called them. The operator can still tap any box to correct it.
+     *
+     * @param critical whether a type is critical; asked of each detection's nearest type
+     */
+    public static List<Candidate> select(List<ReferenceLibrary.Classification> classifications,
+                                         ReferenceLibrary library, Random seed,
+                                         java.util.function.Predicate<String> critical) {
+        // Ineligible entries become nulls rather than being dropped, so every candidate still
+        // carries its index into the caller's list.
+        List<ReferenceLibrary.Classification> eligible = new ArrayList<>(classifications.size());
+        for (ReferenceLibrary.Classification c : classifications) {
+            eligible.add(c != null && worthAsking(c, critical) ? c : null);
+        }
+        return select(eligible, library, seed);
+    }
+
+    /** Whether a detection is one the operator is asked about at all. */
+    static boolean worthAsking(ReferenceLibrary.Classification c,
+                               java.util.function.Predicate<String> critical) {
+        return c.score >= REVIEW_FLOOR && c.score <= REVIEW_CEILING
+                && c.closestMatch != null && critical.test(c.closestMatch);
+    }
 
     /**
      * Selects which detections to ask about, most informative first.

@@ -217,6 +217,11 @@ public class HardwareFeatureExtractor {
         public ReferenceLibrary.Classification classification;
         /** Physical size, or null when no calibration marker was found in the photo. */
         public FeatureMeasurement measurement;
+        /**
+         * True once the operator has labelled this detection on the results screen: its type
+         * is then a person's answer, and no score threshold has anything to add to it.
+         */
+        public boolean operatorConfirmed;
 
         public ExtractedFeature(String type, RectF rectFraction, int color, String label, float confidence,
                                 String cropPath, ReferenceLibrary.Classification classification) {

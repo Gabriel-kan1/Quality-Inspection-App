@@ -200,6 +200,29 @@
                     android:layout_marginStart="4dp"
                     android:layout_marginBottom="8dp"/>
 
+                <!-- Which detections the overlay draws; each tap shows one more severity:
+                     critical, then advisory too, then ignored too. Those views hide a best
+                     match under 0.30, which resembles nothing in the library; a last view shows
+                     only those, to check nothing real is among them. -->
+                <Button
+                    android:id="@+id/btn_overlay_filter"
+                    android:layout_width="match_parent"
+                    android:layout_height="44dp"
+                    android:backgroundTint="@color/blue_primary"
+                    android:textColor="@color/white"
+                    android:textSize="11sp"
+                    tools:text="SHOWING: CRITICAL ONLY  ↻" />
+
+                <TextView
+                    android:id="@+id/tv_overlay_filter_note"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="4dp"
+                    android:layout_marginBottom="8dp"
+                    android:textColor="@color/gray_text_secondary"
+                    android:textSize="11sp"
+                    tools:text="Showing 4 of 9: critical types with a best match of 0.30 or more. Tap for advisory too." />
+
                 <!-- Custom Drawing view showing bounding box outlines -->
                 <com.example.ui.view.ChassisOverlayView
                     android:id="@+id/chassis_overlay_view"

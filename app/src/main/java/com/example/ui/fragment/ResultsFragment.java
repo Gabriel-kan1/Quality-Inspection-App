@@ -85,6 +85,8 @@ public class ResultsFragment extends Fragment {
     /** Remembers whether the edge preview is expanded, so the choice survives the next inspection. */
     private static final String PREFS = "results_view_prefs";
     private static final String KEY_CANNY_EXPANDED = "canny_edges_expanded";
+    /** The spatial overlay's filter, kept between inspections. */
+    private static final String KEY_OVERLAY_FILTER = "overlay_filter";
     private static final String KEY_OPERATOR = "operator_id";
 
     private FragmentResultsBinding binding;
@@ -128,6 +130,8 @@ public class ResultsFragment extends Fragment {
     private final List<Long> loggedEventIds = new ArrayList<>();
     /** Event row id per feature index, so a review can update the right row in place. */
     private final Map<Integer, Long> eventIdByFeature = new LinkedHashMap<>();
+    /** Which detections the spatial overlay draws. */
+    private OverlayFilter overlayFilter = OverlayFilter.CRITICAL;
     // Written on the pipeline/review threads and read on the UI thread. The handler posts
     // give most of these a happens-before edge, but the fields are cheap to publish properly
     // and the counter below is incremented off a thread that never posts before it is read.
@@ -210,6 +214,7 @@ public class ResultsFragment extends Fragment {
         binding.btnSaveReport.setOnClickListener(v -> saveRecordAndProceed());
 
         setUpCannyEdgesToggle();
+        setUpOverlayFilter();
 
         setUpOperatorField();
         runFeatureVerificationPipeline();
@@ -242,6 +247,130 @@ public class ResultsFragment extends Fragment {
             applyCannyEdgesExpanded(expanded);
             prefs.edit().putBoolean(KEY_CANNY_EXPANDED, expanded).apply();
         });
+    }
+
+    /**
+     * What the spatial overlay draws, narrowest first; each tap of its button shows one more
+     * severity, and the last view shows what the others hide. Those three hide a best match
+     * under {@link ActiveLearningPolicy#REVIEW_FLOOR}, which resembles nothing in the library;
+     * the last shows only those, so the operator can check that nothing real is among them.
+     * The strings are format patterns over the floor.
+     */
+    enum OverlayFilter {
+        /** Critical types only: the hardware that decides pass or fail. */
+        CRITICAL("CRITICAL ONLY", "critical only",
+                "critical types with a best match of %.2f or more"),
+        /** Critical and advisory types. */
+        CRITICAL_ADVISORY("CRITICAL + ADVISORY", "critical + advisory",
+                "critical and advisory types with a best match of %.2f or more"),
+        /** Every type: critical, advisory and ignored. */
+        EVERY_TYPE("CRITICAL + ADVISORY + IGNORED", "critical + advisory + ignored",
+                "every type with a best match of %.2f or more"),
+        /** Only what the other views hide for its score, whatever its type. */
+        UNDER_FLOOR("UNDER %.2f ONLY", "under %.2f only",
+                "only best matches under %.2f, which the other views hide");
+
+        /** On the button. */
+        final String label;
+        /** In the line under it, naming the view the next tap shows. */
+        final String shortName;
+        /** In the line under it, saying what is drawn. */
+        final String shows;
+
+        OverlayFilter(String label, String shortName, String shows) {
+            this.label = label;
+            this.shortName = shortName;
+            this.shows = shows;
+        }
+
+        /** The view the next tap shows; after the last, back to the first. */
+        OverlayFilter next() {
+            return values()[(ordinal() + 1) % values().length];
+        }
+
+        static OverlayFilter fromName(String name) {
+            for (OverlayFilter f : values()) if (f.name().equals(name)) return f;
+            return CRITICAL;
+        }
+    }
+
+    /**
+     * Whether the overlay draws a detection under a filter, as a pure function so the rule can
+     * be tested without a fragment. A box the operator labelled is never treated as under the
+     * floor: a person has said what it is, so only its type decides.
+     *
+     * @param severity  of the detection's type; its nearest type while it is still unknown
+     * @param bestScore its best match against the library
+     * @param confirmed whether the operator labelled it
+     */
+    static boolean shownOnOverlay(OverlayFilter filter, FeatureTypeRegistry.Severity severity,
+                                  float bestScore, boolean confirmed) {
+        boolean underFloor = !confirmed && bestScore < ActiveLearningPolicy.REVIEW_FLOOR;
+        switch (filter) {
+            case CRITICAL:
+                return !underFloor && severity == FeatureTypeRegistry.Severity.CRITICAL;
+            case CRITICAL_ADVISORY:
+                return !underFloor && severity != FeatureTypeRegistry.Severity.IGNORED;
+            case EVERY_TYPE:
+                return !underFloor;
+            default:
+                return underFloor;
+        }
+    }
+
+    /** The type a detection's severity is judged by: its label, or while unknown its nearest type. */
+    static String severityTypeOf(HardwareFeatureExtractor.ExtractedFeature f) {
+        if (ReferenceLibrary.UNKNOWN.equals(f.type) && f.classification != null
+                && f.classification.closestMatch != null) {
+            return f.classification.closestMatch;
+        }
+        return f.type;
+    }
+
+    private void setUpOverlayFilter() {
+        SharedPreferences prefs = requireContext().getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        overlayFilter = OverlayFilter.fromName(
+                prefs.getString(KEY_OVERLAY_FILTER, OverlayFilter.CRITICAL.name()));
+        binding.btnOverlayFilter.setText(overlayFilterButtonText());
+        binding.btnOverlayFilter.setOnClickListener(v -> {
+            overlayFilter = overlayFilter.next();
+            prefs.edit().putString(KEY_OVERLAY_FILTER, overlayFilter.name()).apply();
+            binding.btnOverlayFilter.setText(overlayFilterButtonText());
+            applyOverlayFilter();
+        });
+    }
+
+    private String overlayFilterButtonText() {
+        return "SHOWING: " + String.format(Locale.US, overlayFilter.label,
+                ActiveLearningPolicy.REVIEW_FLOOR) + "  \u21BB";
+    }
+
+    /**
+     * Draws only what the chosen filter keeps, and says how much it left out. Run again after
+     * every correction, since a relabelled box can change which side of the filter it is on.
+     */
+    private void applyOverlayFilter() {
+        if (binding == null || analysisResult == null) return;
+        final Context context = requireContext();
+        List<HardwareFeatureExtractor.ExtractedFeature> features = analysisResult.features;
+        Set<Integer> hidden = new java.util.HashSet<>();
+        for (int i = 0; i < features.size(); i++) {
+            HardwareFeatureExtractor.ExtractedFeature f = features.get(i);
+            float best = f.classification != null ? f.classification.score : 0f;
+            if (!shownOnOverlay(overlayFilter,
+                    FeatureTypeRegistry.severityOf(context, severityTypeOf(f)), best,
+                    f.operatorConfirmed)) {
+                hidden.add(i);
+            }
+        }
+        binding.chassisOverlayView.setHiddenFeatures(hidden);
+
+        int total = features.size();
+        float floor = ActiveLearningPolicy.REVIEW_FLOOR;
+        binding.tvOverlayFilterNote.setText(String.format(Locale.US, "Showing %d of %d: %s. Tap for %s.",
+                total - hidden.size(), total,
+                String.format(Locale.US, overlayFilter.shows, floor),
+                String.format(Locale.US, overlayFilter.next().shortName, floor)));
     }
 
     private void applyCannyEdgesExpanded(boolean expanded) {
@@ -347,13 +476,18 @@ public class ResultsFragment extends Fragment {
 
             // Active learning: rather than prompting on every unknown, ask only about the
             // detections where a human answer would actually move the classifier, plus a
-            // small sample of confident ones to keep the tuning set unbiased.
+            // small sample of accepted ones to keep the tuning set unbiased. Only critical
+            // types with a best match from REVIEW_FLOOR to REVIEW_CEILING are eligible: a
+            // confident call, a crop that resembles nothing, and advisory or ignored hardware
+            // are left as classified. Any box can still be tapped to correct it.
             List<ReferenceLibrary.Classification> classifications = new ArrayList<>();
             for (HardwareFeatureExtractor.ExtractedFeature f : activeResult.features) {
                 classifications.add(f.classification);
             }
             List<ActiveLearningPolicy.Candidate> candidates =
-                    ActiveLearningPolicy.select(classifications, activeLibrary, new Random());
+                    ActiveLearningPolicy.select(classifications, activeLibrary, new Random(),
+                            type -> FeatureTypeRegistry.severityOf(context, type)
+                                    == FeatureTypeRegistry.Severity.CRITICAL);
 
             // Housekeeping last: this run's crops and events are already written, so pruning
             // here bounds the dataset without racing anything the UI is about to read.
@@ -536,6 +670,7 @@ public class ResultsFragment extends Fragment {
         renderVerdict();
 
         binding.chassisOverlayView.setExpectedSlots(missingSlotMarkers());
+        applyOverlayFilter();
         buildFeatureRows();
         buildResultWarnings();
         buildLegend();
@@ -1645,6 +1780,7 @@ public class ResultsFragment extends Fragment {
         final android.content.Context context = requireContext().getApplicationContext();
         new Thread(() -> {
             feature.type = typeKey;
+            feature.operatorConfirmed = true;
             feature.color = ReferenceLibrary.colorFor(typeKey);
             String prefix = feature.label != null && feature.label.contains(":")
                     ? feature.label.substring(0, feature.label.indexOf(':')) : "?";

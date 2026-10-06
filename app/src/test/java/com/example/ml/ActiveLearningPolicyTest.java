@@ -267,4 +267,74 @@ public class ActiveLearningPolicyTest {
                 ActiveLearningPolicy.userInitiated(3).kind);
         assertEquals(3, ActiveLearningPolicy.userInitiated(3).featureIndex);
     }
+
+    // ── What the operator is asked about at all ─────────────────────────────
+
+    private static java.util.Set<Integer> askedAbout(List<ActiveLearningPolicy.Candidate> selected) {
+        java.util.Set<Integer> out = new java.util.HashSet<>();
+        for (ActiveLearningPolicy.Candidate c : selected) out.add(c.featureIndex);
+        return out;
+    }
+
+    /**
+     * Only a critical type with a best match from the floor to the ceiling is put to the
+     * operator: a confident call is trusted, and a crop that resembles nothing is not worth
+     * naming.
+     */
+    @Test
+    public void onlyBestMatchesBetweenTheFloorAndTheCeilingAreAsked() {
+        ReferenceLibrary lib = libraryWithTwoPrototypes();
+        List<ReferenceLibrary.Classification> all = new ArrayList<>();
+        all.add(accepted(lib));                 // 0: scores 1.00, trusted
+        all.add(unknownAt(lib, 0.20f));         // 1: below the floor
+        all.add(unknownAt(lib, 0.70f));         // 2: borderline unknown
+        all.add(scoringAt(lib, 0.80f));         // 3: accepted, under the ceiling
+
+        java.util.Set<Integer> asked = askedAbout(
+                ActiveLearningPolicy.select(all, lib, new Random(SEED), type -> true));
+
+        assertFalse("above the ceiling is trusted", asked.contains(0));
+        assertFalse("below the floor is not worth naming", asked.contains(1));
+        assertTrue("a borderline unknown is still asked about", asked.contains(2));
+        assertTrue("an accepted call under the ceiling can still be spot-checked",
+                asked.contains(3));
+    }
+
+    @Test
+    public void advisoryAndIgnoredTypesAreNeverAsked() {
+        ReferenceLibrary lib = libraryWithTwoPrototypes();
+        List<ReferenceLibrary.Classification> all = new ArrayList<>(unknowns(lib, 3));
+        all.add(scoringAt(lib, 0.80f));
+        // Every fixture's nearest type is stud; make stud a non-critical type.
+        assertTrue(ActiveLearningPolicy.select(all, lib, new Random(SEED),
+                type -> !"stud".equals(type)).isEmpty());
+    }
+
+    /** What the noise gate routed to an ignored type stays there: no audit prompt either. */
+    @Test
+    public void aDetectionRoutedToAnIgnoredTypeIsNotAudited() {
+        ReferenceLibrary lib = libraryWithTwoPrototypes();
+        List<ReferenceLibrary.Classification> all = new ArrayList<>();
+        for (int i = 0; i < 3; i++) all.add(suppressed(lib));
+
+        List<ActiveLearningPolicy.Candidate> selected = ActiveLearningPolicy.select(all, lib,
+                new Random(SEED), type -> !"stud".equals(type));
+
+        assertEquals(0, countOf(selected, ActiveLearningPolicy.Kind.NOISE_AUDIT));
+        assertTrue(selected.isEmpty());
+    }
+
+    private static ReferenceLibrary.Classification bestMatch(float score) {
+        return new ReferenceLibrary.Classification("stud", "stud", score, "medium", null, -1f,
+                ReferenceLibrary.Reason.ACCEPTED, new java.util.HashMap<>());
+    }
+
+    /** "Below 0.30" and "above 0.85" are what is left out; the two lines themselves are asked. */
+    @Test
+    public void theFloorAndTheCeilingThemselvesAreAsked() {
+        assertTrue(ActiveLearningPolicy.worthAsking(bestMatch(0.30f), type -> true));
+        assertFalse(ActiveLearningPolicy.worthAsking(bestMatch(0.299f), type -> true));
+        assertTrue(ActiveLearningPolicy.worthAsking(bestMatch(0.85f), type -> true));
+        assertFalse(ActiveLearningPolicy.worthAsking(bestMatch(0.851f), type -> true));
+    }
 }

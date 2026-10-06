@@ -83,6 +83,11 @@ public class ChassisOverlayView extends View {
     private int cachedW = 0, cachedH = 0;
 
     private final List<DetectedFeature> features = new ArrayList<>();
+    /**
+     * Indices into {@link #features} that are not drawn and cannot be tapped. Hidden rather than
+     * removed, so the indices the click listener reports stay the caller's indices.
+     */
+    private final java.util.Set<Integer> hidden = new java.util.HashSet<>();
     private final List<ExpectedSlot> expectedSlots = new ArrayList<>();
     private final Paint paintRect = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint paintText = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -165,6 +170,17 @@ public class ChassisOverlayView extends View {
         invalidate();
     }
 
+    /**
+     * Hides the detections at these indices — drawn nowhere, tappable nowhere — and shows the
+     * rest. Pass an empty set to show everything.
+     */
+    public void setHiddenFeatures(java.util.Set<Integer> indices) {
+        hidden.clear();
+        if (indices != null) hidden.addAll(indices);
+        if (hidden.contains(selectedIndex)) selectedIndex = -1;
+        invalidate();
+    }
+
     public void clearSelection() {
         selectedIndex = -1;
         invalidate();
@@ -202,6 +218,7 @@ public class ChassisOverlayView extends View {
      */
     public void setFeatures(List<HardwareFeatureExtractor.ExtractedFeature> extractedFeatures) {
         features.clear();
+        hidden.clear();
         selectedIndex = -1;
         if (extractedFeatures != null) {
             for (HardwareFeatureExtractor.ExtractedFeature ext : extractedFeatures) {
@@ -217,6 +234,7 @@ public class ChassisOverlayView extends View {
      */
     public void setPreviewBoxes(List<RectF> boxes, int color) {
         features.clear();
+        hidden.clear();
         selectedIndex = -1;
         if (boxes != null) {
             for (int i = 0; i < boxes.size(); i++) {
@@ -306,6 +324,7 @@ public class ChassisOverlayView extends View {
         int best = -1;
         float bestArea = Float.MAX_VALUE;
         for (int i = 0; i < features.size(); i++) {
+            if (hidden.contains(i)) continue;
             RectF fr = features.get(i).rectFraction;
             float left = fr.left * viewWidth - touchPadding;
             float top = fr.top * viewHeight - touchPadding;
@@ -370,6 +389,7 @@ public class ChassisOverlayView extends View {
         }
 
         for (int i = 0; i < features.size(); i++) {
+            if (hidden.contains(i)) continue;
             DetectedFeature feature = features.get(i);
             float left = feature.rectFraction.left * viewWidth;
             float top = feature.rectFraction.top * viewHeight;
