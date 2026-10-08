@@ -132,6 +132,31 @@ public class ReferenceSetupFragment extends Fragment {
     /** Whether the method drop-down is open; open until the operator folds it away. */
     private static final String KEY_ABOUT_OPEN = "method_about_open";
 
+    /** Saved-state key for {@link #pendingCapture}: the camera app can outlive this process. */
+    private static final String STATE_PENDING_CAPTURE = "pending_capture";
+
+    /**
+     * The file the camera app was asked to write the reference photo into, until it answers.
+     * Kept across a process restart: a phone short of memory may kill this app while the
+     * camera is open, and the photo must still be found when it returns.
+     */
+    private File pendingCapture;
+
+    private final ActivityResultLauncher<Uri> takePictureLauncher =
+            registerForActivityResult(new ActivityResultContracts.TakePicture(),
+                    saved -> onPhotoTaken(Boolean.TRUE.equals(saved)));
+
+    private final ActivityResultLauncher<String> cameraPermissionLauncher =
+            registerForActivityResult(new ActivityResultContracts.RequestPermission(), granted -> {
+                if (granted) {
+                    launchCamera();
+                } else {
+                    Toast.makeText(getContext(), "The camera permission is needed to take a"
+                            + " reference photo. A photo can still be chosen from the gallery.",
+                            Toast.LENGTH_LONG).show();
+                }
+            });
+
     private final ActivityResultLauncher<String> selectImageLauncher =
             registerForActivityResult(new ActivityResultContracts.GetContent(), uri -> {
                 if (uri != null) {
@@ -144,6 +169,18 @@ public class ReferenceSetupFragment extends Fragment {
         super.onCreate(savedInstanceState);
         if (getArguments() != null) {
             partId = getArguments().getString("partId", "UNKNOWN_PART");
+        }
+        if (savedInstanceState != null) {
+            String path = savedInstanceState.getString(STATE_PENDING_CAPTURE);
+            if (path != null) pendingCapture = new File(path);
+        }
+    }
+
+    @Override
+    public void onSaveInstanceState(@NonNull Bundle outState) {
+        super.onSaveInstanceState(outState);
+        if (pendingCapture != null) {
+            outState.putString(STATE_PENDING_CAPTURE, pendingCapture.getAbsolutePath());
         }
     }
 
@@ -196,6 +233,12 @@ public class ReferenceSetupFragment extends Fragment {
         binding.tvMethodAboutHeader.setOnClickListener(v -> {
             uiPrefs().edit().putBoolean(KEY_ABOUT_OPEN, !aboutOpen()).apply();
             if (shownMethod != null) renderAbout();
+        });
+        binding.btnSaveReferenceToGallery.setOnClickListener(v -> {
+            if (selectedImageExternalUri == null) return;
+            com.example.ui.util.GallerySaver.savePhoto(requireContext(),
+                    selectedImageExternalUri.toString(),
+                    com.example.ui.util.GallerySaver.name("REFERENCE", partId));
         });
         binding.btnMethodPrev.setOnClickListener(v -> stepMethod(-1));
         binding.btnMethodNext.setOnClickListener(v -> stepMethod(1));
@@ -981,6 +1024,7 @@ public class ReferenceSetupFragment extends Fragment {
         });
 
         dialog.setOnDismissListener(x -> pendingRebuildOptions = null);
+        com.example.ui.util.SystemBars.keepClear(root);
         dialog.setContentView(root);
         dialog.setCancelable(true);
         dialog.show();
@@ -1419,6 +1463,7 @@ public class ReferenceSetupFragment extends Fragment {
             binding.ivReferencePreview.setVisibility(View.VISIBLE);
             binding.overlayReferencePreview.setVisibility(View.GONE);
             binding.layoutUploadPlaceholder.setVisibility(View.GONE);
+            binding.btnSaveReferenceToGallery.setVisibility(View.VISIBLE);
             binding.btnCaptureReference.setText("SAVE REFERENCE");
             binding.btnCaptureReference.setBackgroundColor(ContextCompat.getColor(requireContext(), R.color.green_pass_header));
             awaitExpectedCount();
@@ -1600,7 +1645,25 @@ public class ReferenceSetupFragment extends Fragment {
             closeBtn.setOnClickListener(v -> dialog.dismiss());
             controlLayout.addView(closeBtn);
 
+            android.widget.Button cameraBtn = new android.widget.Button(getContext());
+            android.widget.LinearLayout.LayoutParams cameraParams =
+                    new android.widget.LinearLayout.LayoutParams(
+                            android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+                            android.widget.LinearLayout.LayoutParams.WRAP_CONTENT);
+            cameraParams.topMargin = 16;
+            cameraBtn.setLayoutParams(cameraParams);
+            cameraBtn.setText("TAKE A PHOTO");
+            cameraBtn.setTextColor(Color.WHITE);
+            cameraBtn.setBackgroundColor(ContextCompat.getColor(requireContext(),
+                    R.color.green_pass_header));
+            cameraBtn.setOnClickListener(v -> {
+                dialog.dismiss();
+                takeReferencePhoto();
+            });
+            rootLayout.addView(cameraBtn);
+
             rootLayout.addView(controlLayout);
+            com.example.ui.util.SystemBars.keepClear(rootLayout);
             dialog.setContentView(rootLayout);
             dialog.show();
 
@@ -1608,6 +1671,160 @@ public class ReferenceSetupFragment extends Fragment {
             Log.e(TAG, "Failed layout popup", e);
             selectImageLauncher.launch("image/*");
         }
+    }
+
+    /**
+     * Makes a photo in this app's own storage the reference being set up: shown on the
+     * screen, then the count is asked for. Decoded sampled and upright for the preview — a
+     * camera still is twelve megapixels and usually stored on its side with an EXIF rotation.
+     */
+    private void useAsReference(Uri photo) {
+        selectedImageExternalUri = photo;
+        Bitmap preview = HardwareFeatureExtractor.loadBitmap(requireContext(), photo.toString(),
+                1080);
+        if (preview != null) binding.ivReferencePreview.setImageBitmap(preview);
+        binding.ivReferencePreview.setVisibility(View.VISIBLE);
+        binding.overlayReferencePreview.setVisibility(View.GONE);
+        binding.layoutUploadPlaceholder.setVisibility(View.GONE);
+        binding.btnSaveReferenceToGallery.setVisibility(View.VISIBLE);
+        binding.btnCaptureReference.setText("SAVE REFERENCE");
+        binding.btnCaptureReference.setBackgroundColor(ContextCompat.getColor(requireContext(),
+                R.color.green_pass_header));
+        awaitExpectedCount();
+    }
+
+    // ── Taking the reference photo with the camera ──────────────────────────
+
+    /** TAKE A PHOTO: asks for the camera permission the first time, then opens the camera. */
+    private void takeReferencePhoto() {
+        if (ContextCompat.checkSelfPermission(requireContext(), android.Manifest.permission.CAMERA)
+                == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            launchCamera();
+        } else {
+            cameraPermissionLauncher.launch(android.Manifest.permission.CAMERA);
+        }
+    }
+
+    /**
+     * Hands the phone's camera app a file in this app's references folder to write into. The
+     * app declares the camera permission, so Android only lets it ask for a photo once that
+     * permission is granted.
+     */
+    private void launchCamera() {
+        File dir = requireContext().getExternalFilesDir("references");
+        if (dir == null) {
+            Toast.makeText(getContext(), "Storage is not available for a new photo.",
+                    Toast.LENGTH_LONG).show();
+            return;
+        }
+        if (!dir.exists()) dir.mkdirs();
+        String stamp = new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault())
+                .format(new java.util.Date());
+        pendingCapture = new File(dir, "REF_" + PartFiles.safeName(partId) + "_" + stamp + ".jpg");
+        Uri target = androidx.core.content.FileProvider.getUriForFile(requireContext(),
+                requireContext().getPackageName() + ".fileprovider", pendingCapture);
+        try {
+            takePictureLauncher.launch(target);
+        } catch (android.content.ActivityNotFoundException e) {
+            pendingCapture = null;
+            Toast.makeText(getContext(), "No camera app on this device. Choose a photo from the"
+                    + " gallery instead.", Toast.LENGTH_LONG).show();
+        }
+    }
+
+    /** The camera app is back: review what it took, or tidy up when nothing was taken. */
+    private void onPhotoTaken(boolean saved) {
+        File photo = pendingCapture;
+        pendingCapture = null;
+        if (photo == null) return;
+        if (!saved || !photo.exists() || photo.length() == 0) {
+            photo.delete();
+            return;
+        }
+        showTakenPhoto(photo);
+    }
+
+    /**
+     * The photo just taken, full screen, with CONFIRM REFERENCE and TAKE ANOTHER PHOTO. A
+     * reference defines what correct means for the part, so it is looked at before it is used.
+     */
+    private void showTakenPhoto(File photo) {
+        android.app.Dialog dialog = new android.app.Dialog(requireContext(),
+                android.R.style.Theme_DeviceDefault_NoActionBar_Fullscreen);
+        dialog.setCancelable(true);
+        // Backing out discards the photo, as TAKE ANOTHER PHOTO would.
+        dialog.setOnCancelListener(d -> photo.delete());
+
+        android.widget.LinearLayout root = new android.widget.LinearLayout(requireContext());
+        root.setOrientation(android.widget.LinearLayout.VERTICAL);
+        root.setBackgroundColor(Color.rgb(20, 20, 25));
+        root.setPadding(32, 48, 32, 32);
+
+        android.widget.TextView title = new android.widget.TextView(requireContext());
+        title.setText("REVIEW THE REFERENCE PHOTO");
+        title.setTextColor(Color.rgb(74, 222, 128));
+        title.setTextSize(16f);
+        title.setTypeface(null, android.graphics.Typeface.BOLD);
+        root.addView(title);
+
+        android.widget.TextView hint = new android.widget.TextView(requireContext());
+        hint.setText("Part " + partId + ". The whole part should be in frame, sharp and evenly"
+                + " lit: every inspection of this part is compared against this photo.");
+        hint.setTextColor(Color.LTGRAY);
+        hint.setTextSize(12f);
+        hint.setPadding(0, 8, 0, 16);
+        root.addView(hint);
+
+        android.widget.ImageView image = new android.widget.ImageView(requireContext());
+        image.setLayoutParams(new android.widget.LinearLayout.LayoutParams(
+                android.widget.LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f));
+        image.setScaleType(android.widget.ImageView.ScaleType.FIT_CENTER);
+        image.setBackgroundColor(Color.BLACK);
+        Bitmap shown = HardwareFeatureExtractor.loadBitmap(requireContext(),
+                Uri.fromFile(photo).toString(), 1600);
+        if (shown != null) image.setImageBitmap(shown);
+        root.addView(image);
+
+        android.widget.LinearLayout buttons = new android.widget.LinearLayout(requireContext());
+        buttons.setOrientation(android.widget.LinearLayout.HORIZONTAL);
+        buttons.setPadding(0, 24, 0, 0);
+
+        android.widget.Button retake = new android.widget.Button(requireContext());
+        android.widget.LinearLayout.LayoutParams retakeParams =
+                new android.widget.LinearLayout.LayoutParams(0,
+                        android.widget.LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
+        retakeParams.rightMargin = 12;
+        retake.setLayoutParams(retakeParams);
+        retake.setText("TAKE ANOTHER PHOTO");
+        retake.setTextColor(Color.WHITE);
+        retake.setBackgroundColor(Color.rgb(40, 50, 70));
+        retake.setOnClickListener(v -> {
+            photo.delete();
+            dialog.dismiss();
+            takeReferencePhoto();
+        });
+        buttons.addView(retake);
+
+        android.widget.Button confirm = new android.widget.Button(requireContext());
+        android.widget.LinearLayout.LayoutParams confirmParams =
+                new android.widget.LinearLayout.LayoutParams(0,
+                        android.widget.LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
+        confirmParams.leftMargin = 12;
+        confirm.setLayoutParams(confirmParams);
+        confirm.setText("CONFIRM REFERENCE");
+        confirm.setTextColor(Color.WHITE);
+        confirm.setBackgroundColor(ContextCompat.getColor(requireContext(),
+                R.color.green_pass_header));
+        confirm.setOnClickListener(v -> {
+            dialog.dismiss();
+            useAsReference(Uri.fromFile(photo));
+        });
+        buttons.addView(confirm);
+        root.addView(buttons);
+
+        com.example.ui.util.SystemBars.keepClear(root);
+        dialog.setContentView(root);
+        dialog.show();
     }
 
     private void persistSelectedImage(Uri inputUri) {
@@ -1635,15 +1852,7 @@ public class ReferenceSetupFragment extends Fragment {
             outputStream.close();
             inputStream.close();
 
-            selectedImageExternalUri = Uri.fromFile(photoFile);
-
-            binding.ivReferencePreview.setImageURI(selectedImageExternalUri);
-            binding.ivReferencePreview.setVisibility(View.VISIBLE);
-            binding.overlayReferencePreview.setVisibility(View.GONE);
-            binding.layoutUploadPlaceholder.setVisibility(View.GONE);
-            binding.btnCaptureReference.setText("SAVE REFERENCE");
-            binding.btnCaptureReference.setBackgroundColor(ContextCompat.getColor(requireContext(), R.color.green_pass_header));
-            awaitExpectedCount();
+            useAsReference(Uri.fromFile(photoFile));
             Toast.makeText(getContext(), "Image uploaded successfully!", Toast.LENGTH_SHORT).show();
         } catch (Exception e) {
             Log.e(TAG, "Failed to copy reference image", e);

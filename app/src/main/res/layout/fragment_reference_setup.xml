@@ -192,6 +192,22 @@
                 android:textSize="11sp"
                 app:cornerRadius="8dp" />
         </LinearLayout>
+
+        <!-- Keeps a copy of the chosen reference photo in the phone's gallery. -->
+        <Button
+            android:id="@+id/btn_save_reference_to_gallery"
+            android:layout_width="wrap_content"
+            android:layout_height="40dp"
+            android:layout_gravity="top|end"
+            android:layout_margin="8dp"
+            android:backgroundTint="#CC1C1B1F"
+            android:minWidth="0dp"
+            android:paddingHorizontal="12dp"
+            android:text="SAVE TO GALLERY"
+            android:textColor="@color/white"
+            android:textSize="11sp"
+            android:visibility="gone"
+            tools:visibility="visible" />
     </FrameLayout>
 
     <!-- The highest the analysis card may reach. The photo above it is what the operator counts

@@ -215,6 +215,7 @@ public class ResultsFragment extends Fragment {
 
         setUpCannyEdgesToggle();
         setUpOverlayFilter();
+        binding.btnSavePhotoToGallery.setOnClickListener(v -> savePhotoToGallery());
 
         setUpOperatorField();
         runFeatureVerificationPipeline();
@@ -325,6 +326,39 @@ public class ResultsFragment extends Fragment {
             return f.classification.closestMatch;
         }
         return f.type;
+    }
+
+    /**
+     * Keeps the inspection photo in the phone's gallery, as taken or with the boxes the overlay
+     * is showing drawn on it — at the photo's working resolution, not the screen's.
+     */
+    private void savePhotoToGallery() {
+        if (imageUri == null || imageUri.isEmpty()) {
+            Toast.makeText(getContext(), "There is no photo to save.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        new androidx.appcompat.app.AlertDialog.Builder(requireContext())
+                .setTitle("Save to the gallery")
+                .setItems(new String[]{"Photo as taken", "Photo with the boxes shown"},
+                        (d, which) -> {
+                            if (which == 0) {
+                                com.example.ui.util.GallerySaver.savePhoto(requireContext(),
+                                        imageUri, com.example.ui.util.GallerySaver.name(
+                                                "INSPECTION", partId));
+                                return;
+                            }
+                            Bitmap annotated = binding.chassisOverlayView.renderAnnotated();
+                            if (annotated == null) {
+                                Toast.makeText(getContext(), "The photo is still loading.",
+                                        Toast.LENGTH_SHORT).show();
+                                return;
+                            }
+                            com.example.ui.util.GallerySaver.saveBitmap(requireContext(),
+                                    annotated, com.example.ui.util.GallerySaver.name(
+                                            "INSPECTION_BOXES", partId));
+                        })
+                .setNegativeButton("Cancel", null)
+                .show();
     }
 
     private void setUpOverlayFilter() {
@@ -1136,6 +1170,7 @@ public class ResultsFragment extends Fragment {
             compare.clear();
             for (ComparisonCrops.Crop c : crops) if (c != null) c.recycle();
         });
+        com.example.ui.util.SystemBars.keepClear(root);
         dialog.setContentView(root);
         dialog.setCancelable(true);
         dialog.show();
@@ -1649,6 +1684,7 @@ public class ResultsFragment extends Fragment {
         });
         root.addView(save);
 
+        com.example.ui.util.SystemBars.keepClear(root);
         dialog.setContentView(root);
         dialog.setCancelable(false);
         dialog.show();

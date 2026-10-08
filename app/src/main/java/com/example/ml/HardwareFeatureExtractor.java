@@ -1408,8 +1408,11 @@ public class HardwareFeatureExtractor {
         }
     }
 
-    /** Package-visible alias so {@link SourceCropper} opens sources exactly the same way. */
-    static InputStream open(Context context, String uriString) throws Exception {
+    /**
+     * Opens a photo by the same URIs the pipeline takes — content, file and bundled-asset —
+     * so {@link SourceCropper} and the save-to-gallery action read exactly what was analysed.
+     */
+    public static InputStream open(Context context, String uriString) throws Exception {
         return openStream(context, uriString);
     }
 

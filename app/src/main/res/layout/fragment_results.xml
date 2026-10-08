@@ -244,6 +244,18 @@
                         android:gravity="center" />
                 </HorizontalScrollView>
 
+                <!-- Keeps the inspection photo in the phone's gallery: as taken, or with the
+                     boxes the overlay is showing drawn on it. -->
+                <Button
+                    android:id="@+id/btn_save_photo_to_gallery"
+                    style="@style/Widget.Material3.Button.OutlinedButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="48dp"
+                    android:layout_marginTop="8dp"
+                    android:text="SAVE PHOTO TO GALLERY"
+                    android:textColor="@color/blue_primary"
+                    android:textSize="12sp" />
+
             </LinearLayout>
 
         </com.google.android.material.card.MaterialCardView>

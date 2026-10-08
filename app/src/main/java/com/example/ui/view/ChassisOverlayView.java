@@ -368,7 +368,33 @@ public class ChassisOverlayView extends View {
                 cachedW = viewWidth;
                 cachedH = viewHeight;
             }
-            canvas.drawBitmap(scaledCache, 0f, 0f, null);
+        }
+        drawScene(canvas, viewWidth, viewHeight, sourceBitmap != null ? scaledCache : null, true);
+    }
+
+    /**
+     * The photo as this view currently shows it — background mask, the detections not hidden
+     * and the expected-slot markers — drawn at the photo's own working resolution rather than
+     * the view's, so it can be saved. Null when no photo is loaded. Owned by the caller.
+     */
+    public Bitmap renderAnnotated() {
+        if (sourceBitmap == null || sourceBitmap.isRecycled()) return null;
+        int w = sourceBitmap.getWidth(), h = sourceBitmap.getHeight();
+        Bitmap out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+        drawScene(new Canvas(out), w, h, sourceBitmap, false);
+        return out;
+    }
+
+    /**
+     * Everything this view draws, at a given size: the photo (already that size), then the
+     * excluded background, the boxes and the slot markers.
+     *
+     * @param showSelection whether to outline the tapped box — on screen yes, in a saved image no
+     */
+    private void drawScene(Canvas canvas, int viewWidth, int viewHeight, Bitmap photo,
+                           boolean showSelection) {
+        if (photo != null) {
+            canvas.drawBitmap(photo, 0f, 0f, null);
             // What the detector was not allowed to look at. Drawn after the photo and before
             // the boxes, so a box can never be hidden by it.
             if (backgroundOverlay != null && !backgroundOverlay.isRecycled()) {
@@ -398,7 +424,7 @@ public class ChassisOverlayView extends View {
 
             RectF targetRect = new RectF(left, top, right, bottom);
 
-            if (i == selectedIndex) {
+            if (showSelection && i == selectedIndex) {
                 canvas.drawRoundRect(targetRect, 8f, 8f, paintSelected);
             }
             paintRect.setColor(feature.color);

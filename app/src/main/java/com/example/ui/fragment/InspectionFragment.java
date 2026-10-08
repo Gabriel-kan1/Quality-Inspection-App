@@ -1157,6 +1157,7 @@ public class InspectionFragment extends Fragment {
             controlLayout.addView(closeBtn);
 
             rootLayout.addView(controlLayout);
+            com.example.ui.util.SystemBars.keepClear(rootLayout);
             dialog.setContentView(rootLayout);
             dialog.show();
 
