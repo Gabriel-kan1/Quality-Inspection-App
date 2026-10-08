@@ -2268,6 +2268,9 @@ public class ResultsFragment extends Fragment {
 
             long inspectionId = db.inspectionDao().insertInspection(record);
             record.setId(inspectionId);
+            // The part's reference can be replaced later; the report shows the one used now.
+            com.example.report.InspectionReferences.record(context, record.getUuid(),
+                    hasRealReference ? referenceImageUri : null);
 
             List<FeatureResult> results = new ArrayList<>();
             for (String type : orderedTypes) {

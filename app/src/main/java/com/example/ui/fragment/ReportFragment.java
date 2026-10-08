@@ -23,6 +23,7 @@ import com.example.R;
 import com.example.data.AppDatabase;
 import com.example.data.entity.FeatureResult;
 import com.example.data.entity.InspectionRecord;
+import com.example.ml.HardwareFeatureExtractor;
 import com.example.data.entity.SlotResult;
 import com.example.databinding.FragmentReportBinding;
 import com.example.ml.FeatureTypeRegistry;
@@ -157,6 +158,8 @@ public class ReportFragment extends Fragment {
                         binding.tvReportVerdict.setBackgroundColor(ContextCompat.getColor(requireContext(), R.color.red_fail));
                     }
 
+                    showPhotos(record);
+
                     // Dynamically build features table
                     buildFeatureRows();
                     buildLocalisationRows();
@@ -164,6 +167,96 @@ public class ReportFragment extends Fragment {
                 }
             });
         }).start();
+    }
+
+    /**
+     * The reference and inspection photos, each under its own label, decoded off the main
+     * thread. Which reference is shown, and how sure that is, depends on what was kept:
+     * inspections filed now record their reference; older ones fall back to the part's current
+     * reference, and say so when it was set after the inspection.
+     */
+    private void showPhotos(InspectionRecord rec) {
+        final android.content.Context context = requireContext().getApplicationContext();
+        final String inspectionUri = rec.getImageUri();
+        final long filedAt = rec.getTimestamp();
+        final SimpleDateFormat when = new SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault());
+        new Thread(() -> {
+            String referenceUri;
+            String referenceCaption;
+            String recorded = com.example.report.InspectionReferences.recorded(context, rec.getUuid());
+            if (recorded != null) {
+                referenceUri = recorded.isEmpty() ? null : recorded;
+                referenceCaption = referenceUri == null
+                        ? "This part had no reference photo, so nothing was compared."
+                        : "The reference this inspection was compared against.";
+            } else {
+                com.example.data.entity.ReferenceProfile current = AppDatabase.getInstance(context)
+                        .referenceProfileDao().getProfileByPartType(rec.getPartId());
+                if (current == null || !current.hasRealImage()) {
+                    referenceUri = null;
+                    referenceCaption = "No reference photo is kept for this part.";
+                } else {
+                    referenceUri = current.getImageUri();
+                    String set = when.format(new Date(current.getCreatedAt()));
+                    referenceCaption = current.getCreatedAt() > filedAt
+                            ? "The part's current reference, set " + set + ", after this"
+                                    + " inspection: the one it was compared against was replaced."
+                            : "The part's reference, set " + set + ".";
+                }
+            }
+            final android.graphics.Bitmap reference = referenceUri == null ? null
+                    : HardwareFeatureExtractor.loadBitmap(context, referenceUri, 900);
+            final android.graphics.Bitmap inspection =
+                    inspectionUri == null || inspectionUri.isEmpty() ? null
+                            : HardwareFeatureExtractor.loadBitmap(context, inspectionUri, 900);
+            final String inspectionCaption = inspection != null
+                    ? "Taken " + when.format(new Date(filedAt)) + "."
+                    : "The inspection photo is no longer on this device.";
+            final String finalReferenceCaption = referenceUri != null && reference == null
+                    ? "The reference photo is no longer on this device." : referenceCaption;
+            if (!isAdded()) return;
+            requireActivity().runOnUiThread(() -> {
+                if (binding == null) return;
+                bindPhoto(binding.ivReportReference, reference, "REFERENCE PHOTO");
+                bindPhoto(binding.ivReportInspection, inspection, "INSPECTION PHOTO");
+                binding.tvReportReferenceCaption.setText(finalReferenceCaption);
+                binding.tvReportInspectionCaption.setText(inspectionCaption);
+            });
+        }).start();
+    }
+
+    /** Shows a photo, opened full screen on a tap with its label above it. */
+    private void bindPhoto(android.widget.ImageView view, android.graphics.Bitmap photo,
+                           String label) {
+        view.setImageBitmap(photo);
+        if (photo == null) {
+            view.setOnClickListener(null);
+            return;
+        }
+        view.setOnClickListener(v -> {
+            android.app.Dialog dialog = new android.app.Dialog(requireContext(),
+                    android.R.style.Theme_DeviceDefault_NoActionBar_Fullscreen);
+            android.widget.LinearLayout root = new android.widget.LinearLayout(requireContext());
+            root.setOrientation(android.widget.LinearLayout.VERTICAL);
+            root.setBackgroundColor(android.graphics.Color.BLACK);
+            root.setPadding(24, 24, 24, 24);
+            android.widget.TextView title = new android.widget.TextView(requireContext());
+            title.setText(label + "  ·  tap to close");
+            title.setTextColor(android.graphics.Color.WHITE);
+            title.setTextSize(15f);
+            title.setTypeface(null, android.graphics.Typeface.BOLD);
+            root.addView(title);
+            android.widget.ImageView big = new android.widget.ImageView(requireContext());
+            big.setLayoutParams(new android.widget.LinearLayout.LayoutParams(
+                    android.widget.LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f));
+            big.setScaleType(android.widget.ImageView.ScaleType.FIT_CENTER);
+            big.setImageBitmap(photo);
+            root.addView(big);
+            root.setOnClickListener(x -> dialog.dismiss());
+            com.example.ui.util.SystemBars.keepClear(root);
+            dialog.setContentView(root);
+            dialog.show();
+        });
     }
 
     private void buildFeatureRows() {
