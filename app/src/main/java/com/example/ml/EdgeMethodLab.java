@@ -7,10 +7,17 @@ import android.util.Log;
 
 import org.opencv.android.Utils;
 import org.opencv.core.Core;
+import org.opencv.core.CvType;
 import org.opencv.core.Mat;
+import org.opencv.core.MatOfInt;
 import org.opencv.core.MatOfPoint;
+import org.opencv.core.MatOfPoint2f;
+import org.opencv.core.MatOfRect;
+import org.opencv.core.Point;
 import org.opencv.core.Rect;
+import org.opencv.core.Scalar;
 import org.opencv.core.Size;
+import org.opencv.features2d.MSER;
 import org.opencv.imgproc.CLAHE;
 import org.opencv.imgproc.Imgproc;
 
@@ -295,9 +302,19 @@ public final class EdgeMethodLab {
         final String summary;
         final boolean shipped;
         final Operator operator;
+        /**
+         * True when the method runs on the photo as taken rather than after the chassis mask:
+         * Hybrid v11 to v18. See {@link ChassisMask#holdUnmasked}.
+         */
+        final boolean unmasked;
 
         Method(String id, String name, String goodAt, String uses, String summary,
                boolean shipped, Operator operator) {
+            this(id, name, goodAt, uses, summary, shipped, operator, false);
+        }
+
+        Method(String id, String name, String goodAt, String uses, String summary,
+               boolean shipped, Operator operator, boolean unmasked) {
             this.id = id;
             this.name = name;
             this.goodAt = goodAt;
@@ -305,17 +322,19 @@ public final class EdgeMethodLab {
             this.summary = summary;
             this.shipped = shipped;
             this.operator = operator;
+            this.unmasked = unmasked;
         }
     }
 
     /**
      * The methods compared, in the order they are shown.
      *
-     * <p>In version order, Hybrid v1 to v10, then the adaptive stage that chooses among them:
+     * <p>In version order, Hybrid v1 to v18, then the adaptive stage that chooses among them:
      * v1 is the stack the detector shipped with; v2 to v6 the tuned replacements for it, each
      * from a study run; v7 and v8 the light and strong versions of v6 the adaptive stage
      * reaches for on soft or noisy photographs; v9 and v10 the two Canny baselines the rest
-     * are built up from. The ids are older than the names and are kept, because layouts and
+     * are built up from; v11 to v18 the methods found on the lighting test photos, which run
+     * without the chassis mask and each hold a different part through a change of light. The ids are older than the names and are kept, because layouts and
      * preferences store them.
      *
      * <p>The bare operators that used to open the list — Canny at fixed thresholds, Sobel and
@@ -537,10 +556,205 @@ public final class EdgeMethodLab {
                     }
                 }));
 
+        // v11 to v18: found on the lighting test photos - three plates, each photographed
+        // under white, warm and yellow light from the top, front and bottom or the sides,
+        // plus a defected copy. All eight run on the photo as taken: the chassis mask took the
+        // shadow under side and bottom light for background and painted out the hardware in
+        // it. The counts quoted are lighting variants passed of 9, with a library built from
+        // the reference alone; every one failed its plate's defected photo unless it says
+        // otherwise. No one method holds all three plates, so pick per reference.
+        // See python/variation_test_study.py --no-mask.
+        methods.add(new Method("unmasked-strict-canny", "Hybrid v11",
+                "The all-rounder for changing light: 5, 9 and 6 of 9 lighting variants on "
+                        + "the three test plates, every defect caught.",
+                "No chassis mask · CLAHE · bilateral 5 · Canny at 1.3x Otsu, low 0.5x · "
+                        + "pieces over 15% of the frame dropped",
+                "Hybrid v9 with Canny's thresholds raised to 1.3x Otsu, so a soft shadow edge "
+                        + "does not register, and every connected piece wider or taller than "
+                        + "15% of the frame dropped: lit-area boundaries and plate edges, "
+                        + "which otherwise join onto a fastener and swallow it into one box. "
+                        + "The best total over the three test plates (20 of 27), and it caught "
+                        + "all three defects.",
+                false,
+                (gray, srcRgba, forceGlare, glareOut, noteOut) -> {
+                    Mat g = unmaskedGray(srcRgba);
+                    try {
+                        Mat out = claheBilateralCanny(g, 1.3, 0, 0, 0);
+                        dropOversize(out, OVERSIZE_FRACTION);
+                        return out;
+                    } finally {
+                        g.release();
+                    }
+                }, true));
+
+        methods.add(new Method("unmasked-v4-capped", "Hybrid v12",
+                "Holes and bolt heads under any light: all 9 lighting variants of the 3-hole "
+                        + "plate. Weak on raised studs and screws.",
+                "No chassis mask · Hybrid v4's steps · pieces over 15% of the frame dropped",
+                "Hybrid v4, the most stable of the tuned variants, on the unmasked photo, "
+                        + "with every piece wider or taller than 15% of the frame dropped. Under "
+                        + "light from below, the shadow's edge runs into the top threaded hole "
+                        + "and the two become one box the size of the plate; dropping it lets "
+                        + "the hole's own outline stand. 9, 8 and 0 of 9 on the three plates.",
+                false,
+                (gray, srcRgba, forceGlare, glareOut, noteOut) -> {
+                    Mat out = hybridVariant(ChassisMask.unmaskedOr(srcRgba), forceGlare,
+                            glareOut, 7, 5, 5, 1.0, 0.4, true, 3, 9);
+                    dropOversize(out, OVERSIZE_FRACTION);
+                    return out;
+                }, true));
+
+        methods.add(new Method("unmasked-grayworld-v4", "Hybrid v13",
+                "Warm and yellow light: colour cast removed first. 8 and 9 of 9 on the two "
+                        + "hole plates; its reference missed a screw on the stud plate.",
+                "No chassis mask · gray-world colour balance · Hybrid v12's steps",
+                "Scales each colour channel so the photo averages to grey before Hybrid v12 "
+                        + "runs, so a warm or yellow lamp gives the same grey image as a white "
+                        + "one. 8 of 9 on the 3-hole plate and 9 of 9 on the threaded holes; on "
+                        + "the stud plate it missed a screw on the reference itself.",
+                false,
+                (gray, srcRgba, forceGlare, glareOut, noteOut) -> {
+                    Mat balanced = grayWorld(ChassisMask.unmaskedOr(srcRgba));
+                    try {
+                        Mat out = hybridVariant(balanced, forceGlare, glareOut,
+                                7, 5, 5, 1.0, 0.4, true, 3, 9);
+                        dropOversize(out, OVERSIZE_FRACTION);
+                        return out;
+                    } finally {
+                        balanced.release();
+                    }
+                }, true));
+
+        methods.add(new Method("unmasked-stud-canny", "Hybrid v14",
+                "Raised studs and screws lit from the side: 7 of 9 on the stud plate, the "
+                        + "best there. Missed the threaded-hole plate's defect.",
+                "No chassis mask · CLAHE · bilateral 5 · Gaussian 5 · Canny at Otsu, low "
+                        + "0.5x · dilate 3, close 5",
+                "Hybrid v9 with a light Gaussian before Canny and a light join after it "
+                        + "(dilate 3, close 5): enough to make a threaded shank one outline "
+                        + "rather than a dozen thread crests, not enough to weld a stud to its "
+                        + "neighbour or its shadow. 7 of 9 on the stud plate; 4 and 8 on the "
+                        + "hole plates, and it counted the threaded-hole plate's defected photo "
+                        + "as complete, so use it for stud and screw parts only.",
+                false,
+                (gray, srcRgba, forceGlare, glareOut, noteOut) -> {
+                    Mat g = unmaskedGray(srcRgba);
+                    try {
+                        return claheBilateralCanny(g, 1.0, 5, 3, 5);
+                    } finally {
+                        g.release();
+                    }
+                }, true));
+
+        methods.add(new Method("unmasked-median-flat-v3", "Hybrid v15",
+                "Hard shadows: divides them out of the photo before looking for edges. 9 of "
+                        + "9 on the threaded-hole plate.",
+                "No chassis mask · photo divided by its median background (window 6% of "
+                        + "the frame) · Hybrid v3's steps",
+                "Estimates the background with a median filter wider than any fastener and "
+                        + "divides the photo by it. A median keeps a shadow's sharp step, so the "
+                        + "step cancels in the division, but erases anything fastener-sized, so "
+                        + "the hardware survives it. Hybrid v3 then runs on the result. 5, 9 "
+                        + "and 2 of 9 on the three plates.",
+                false,
+                (gray, srcRgba, forceGlare, glareOut, noteOut) -> {
+                    Mat g = unmaskedGray(srcRgba);
+                    Mat flat = null;
+                    Mat rgba = new Mat();
+                    try {
+                        flat = medianFlat(g, 0.06);
+                        Imgproc.cvtColor(flat, rgba, Imgproc.COLOR_GRAY2RGBA);
+                        return hybridVariant(rgba, forceGlare, glareOut,
+                                5, 5, 7, 1.2, 0.4, false, 5, 7);
+                    } finally {
+                        g.release();
+                        if (flat != null) flat.release();
+                        rgba.release();
+                    }
+                }, true));
+
+        methods.add(new Method("unmasked-flat-v4", "Hybrid v16",
+                "Uneven light - lamp pools and gradients across the plate: 6, 9 and 2 of 9 "
+                        + "on the three test plates.",
+                "No chassis mask · gray-world balance · photo divided by a wide Gaussian "
+                        + "blur of itself · Hybrid v12's steps",
+                "Colour-balances, then divides the photo by a Gaussian blur of itself (sigma 3% "
+                        + "of the frame), which flattens slow changes in brightness: the bright "
+                        + "pool under a lamp, the fall-off away from it. Hybrid v4 and the "
+                        + "oversize drop then run on the flattened image.",
+                false,
+                (gray, srcRgba, forceGlare, glareOut, noteOut) -> {
+                    Mat balanced = grayWorld(ChassisMask.unmaskedOr(srcRgba));
+                    Mat g = new Mat();
+                    Mat flat = null;
+                    Mat rgba = new Mat();
+                    try {
+                        Imgproc.cvtColor(balanced, g, Imgproc.COLOR_RGBA2GRAY);
+                        flat = gaussianFlat(g, 0.03);
+                        Imgproc.cvtColor(flat, rgba, Imgproc.COLOR_GRAY2RGBA);
+                        Mat out = hybridVariant(rgba, forceGlare, glareOut,
+                                7, 5, 5, 1.0, 0.4, true, 3, 9);
+                        dropOversize(out, OVERSIZE_FRACTION);
+                        return out;
+                    } finally {
+                        balanced.release();
+                        g.release();
+                        if (flat != null) flat.release();
+                        rgba.release();
+                    }
+                }, true));
+
+        methods.add(new Method("unmasked-mser", "Hybrid v17",
+                "Round holes and heads, found as regions rather than edges: 7 and 9 of 9 on "
+                        + "the hole plates. Misses studs seen side-on.",
+                "No chassis mask · Gaussian flattening · MSER stable regions · roundish "
+                        + "ones kept, filled",
+                "Maximally stable extremal regions: blobs that keep the same outline across "
+                        + "a wide range of thresholds, as a hole or a head does and a shadow's "
+                        + "soft edge does not. Only roundish ones (circularity 0.5 or more) of "
+                        + "fastener size are kept, each filled as its convex hull, so every box "
+                        + "is the whole feature. Not an edge detector at all, which is why it "
+                        + "is here. Its reference on the stud plate found one screw of four.",
+                false,
+                (gray, srcRgba, forceGlare, glareOut, noteOut) -> {
+                    Mat g = unmaskedGray(srcRgba);
+                    try {
+                        return roundRegions(g);
+                    } finally {
+                        g.release();
+                    }
+                }, true));
+
+        methods.add(new Method("unmasked-hough-v4", "Hybrid v18",
+                "Circular features that edges break up: circles found by voting, joined with "
+                        + "Hybrid v12. 6 and 9 of 9 on the hole plates.",
+                "No chassis mask · Gaussian flattening · median 5 · Hough circles, filled · "
+                        + "OR Hybrid v12",
+                "Hough circle voting on the flattened photo finds a round hole even when only "
+                        + "part of its rim shows as edge, and each circle is drawn filled so "
+                        + "its box is centred on it. Hybrid v12's map is added for what is not "
+                        + "round. Missed a stud on the stud plate's reference.",
+                false,
+                (gray, srcRgba, forceGlare, glareOut, noteOut) -> {
+                    Mat g = unmaskedGray(srcRgba);
+                    Mat circles = null;
+                    try {
+                        circles = houghDiscs(g);
+                        Mat out = hybridVariant(ChassisMask.unmaskedOr(srcRgba), forceGlare,
+                                glareOut, 7, 5, 5, 1.0, 0.4, true, 3, 9);
+                        dropOversize(out, OVERSIZE_FRACTION);
+                        Core.bitwise_or(out, circles, out);
+                        return out;
+                    } finally {
+                        g.release();
+                        if (circles != null) circles.release();
+                    }
+                }, true));
+
         methods.add(new Method(ADAPTIVE_ID, "Adaptive (chooses a method per photograph)",
                 "Choosing for you: on each inspection photo it keeps the method that best "
                         + "reproduces the part's labelled reference.",
-                "Every method from Hybrid v1 to v10, scored against the reference layout",
+                "Every method from Hybrid v1 to v18, scored against the reference layout",
                 "On every inspection photograph, runs every other method on this screen and "
                         + "scores each one's boxes against the part's labelled reference: a "
                         + "box the wrong size, a slot nothing matched and a box invented on "
@@ -751,6 +965,243 @@ public final class EdgeMethodLab {
             if (closeKernel != null) closeKernel.release();
             // Only freed when unwinding on an exception; otherwise the caller owns it.
             if (!ok) closed.release();
+        }
+    }
+
+    // ── Hybrid v11 to v18's building blocks ────────────────────────────────
+
+    /** Largest piece v11 to v18 keep, as a fraction of the frame's longest side. */
+    static final double OVERSIZE_FRACTION = 0.15;
+
+    /** True for a method that runs on the photo as taken; see {@link Method#unmasked}. */
+    public static boolean skipsMask(String id) {
+        Method m = byId(id);
+        return m != null && m.unmasked;
+    }
+
+    /** Grayscale of the unmasked photo; the caller releases it. */
+    private static Mat unmaskedGray(Mat srcRgba) {
+        Mat g = new Mat();
+        Imgproc.cvtColor(ChassisMask.unmaskedOr(srcRgba), g, Imgproc.COLOR_RGBA2GRAY);
+        return g;
+    }
+
+    /**
+     * Hybrid v9's chain with its knobs: CLAHE 1.0, bilateral 5, an optional Gaussian, Canny
+     * at {@code otsuScale}x Otsu with the low bound at half, then optional dilate and close.
+     *
+     * @return a fresh CV_8UC1 map, which the caller releases
+     */
+    static Mat claheBilateralCanny(Mat gray, double otsuScale, int gaussK, int dilateK,
+                                   int closeK) {
+        Mat equalised = new Mat();
+        Mat filtered = new Mat();
+        Mat otsuMask = new Mat();
+        Mat out = new Mat();
+        try {
+            Imgproc.createCLAHE(1.0, new Size(16, 16)).apply(gray, equalised);
+            Imgproc.bilateralFilter(equalised, filtered, 5, 60, 20);
+            if (gaussK > 0) Imgproc.GaussianBlur(filtered, filtered, new Size(gaussK, gaussK), 0);
+            double high = Imgproc.threshold(filtered, otsuMask, 0, 255,
+                    Imgproc.THRESH_BINARY | Imgproc.THRESH_OTSU) * otsuScale;
+            Imgproc.Canny(filtered, out, high * 0.5, high);
+            if (dilateK > 0) {
+                Mat k = Imgproc.getStructuringElement(Imgproc.MORPH_RECT,
+                        new Size(dilateK, dilateK));
+                Imgproc.dilate(out, out, k);
+                k.release();
+            }
+            if (closeK > 0) {
+                Mat k = Imgproc.getStructuringElement(Imgproc.MORPH_ELLIPSE,
+                        new Size(closeK, closeK));
+                Imgproc.morphologyEx(out, out, Imgproc.MORPH_CLOSE, k);
+                k.release();
+            }
+            return out;
+        } finally {
+            equalised.release();
+            filtered.release();
+            otsuMask.release();
+        }
+    }
+
+    /**
+     * Zeroes, in place, every 8-connected piece of {@code map} wider or taller than
+     * {@code fraction} of its longest side. No fastener is that big at inspection distance;
+     * lit-area boundaries, shadow edges and the plate's own outline are, and a fastener they
+     * touch would otherwise come out inside their box.
+     */
+    static void dropOversize(Mat map, double fraction) {
+        Mat labels = new Mat();
+        Mat stats = new Mat();
+        Mat centroids = new Mat();
+        try {
+            int n = Imgproc.connectedComponentsWithStats(map, labels, stats, centroids, 8,
+                    CvType.CV_32S);
+            double limit = fraction * Math.max(map.rows(), map.cols());
+            boolean[] drop = new boolean[n];
+            boolean any = false;
+            for (int i = 1; i < n; i++) {
+                drop[i] = stats.get(i, Imgproc.CC_STAT_WIDTH)[0] > limit
+                        || stats.get(i, Imgproc.CC_STAT_HEIGHT)[0] > limit;
+                any |= drop[i];
+            }
+            if (!any) return;
+            int[] label = new int[(int) labels.total()];
+            labels.get(0, 0, label);
+            byte[] px = new byte[(int) map.total()];
+            map.get(0, 0, px);
+            for (int k = 0; k < px.length; k++) if (drop[label[k]]) px[k] = 0;
+            map.put(0, 0, px);
+        } finally {
+            labels.release();
+            stats.release();
+            centroids.release();
+        }
+    }
+
+    /**
+     * Gray-world colour balance: each colour channel scaled so the three average the same, so
+     * a warm or yellow lamp gives the image a white one would.
+     *
+     * @return a fresh RGBA Mat, which the caller releases
+     */
+    static Mat grayWorld(Mat rgba) {
+        Scalar mean = Core.mean(rgba);
+        double grey = (mean.val[0] + mean.val[1] + mean.val[2]) / 3.0;
+        List<Mat> channels = new ArrayList<>();
+        Core.split(rgba, channels);
+        Mat out = new Mat();
+        try {
+            for (int c = 0; c < 3; c++) {
+                channels.get(c).convertTo(channels.get(c), -1,
+                        grey / Math.max(mean.val[c], 1.0), 0);
+            }
+            Core.merge(channels, out);
+            return out;
+        } finally {
+            for (Mat m : channels) m.release();
+        }
+    }
+
+    /** {@code 128 * gray / background}, saturated to 8 bits; the caller releases it. */
+    private static Mat divideBy(Mat gray, Mat background) {
+        Mat num = new Mat();
+        Mat den = new Mat();
+        Mat out = new Mat();
+        try {
+            gray.convertTo(num, CvType.CV_32F);
+            background.convertTo(den, CvType.CV_32F);
+            Core.max(den, new Scalar(1.0), den);
+            Core.divide(num, den, num, 128.0);
+            num.convertTo(out, CvType.CV_8U);
+            return out;
+        } finally {
+            num.release();
+            den.release();
+        }
+    }
+
+    /**
+     * Divides out slow changes in brightness: the photo over a Gaussian blur of itself with
+     * sigma {@code sigmaFraction} of the longest side.
+     */
+    static Mat gaussianFlat(Mat gray, double sigmaFraction) {
+        Mat bg = new Mat();
+        try {
+            gray.convertTo(bg, CvType.CV_32F);
+            Imgproc.GaussianBlur(bg, bg, new Size(0, 0),
+                    Math.max(gray.rows(), gray.cols()) * sigmaFraction);
+            return divideBy(gray, bg);
+        } finally {
+            bg.release();
+        }
+    }
+
+    /**
+     * Divides out shadows: the photo over its median background, the median taken over a
+     * window {@code windowFraction} of the longest side, at quarter resolution for speed.
+     */
+    static Mat medianFlat(Mat gray, double windowFraction) {
+        final int s = 4;
+        Mat small = new Mat();
+        Mat bg = new Mat();
+        try {
+            Imgproc.resize(gray, small, new Size(gray.cols() / s, gray.rows() / s), 0, 0,
+                    Imgproc.INTER_AREA);
+            int k = ((int) (Math.max(gray.rows(), gray.cols()) * windowFraction / s)) | 1;
+            Imgproc.medianBlur(small, small, Math.max(3, k));
+            Imgproc.resize(small, bg, gray.size(), 0, 0, Imgproc.INTER_LINEAR);
+            Imgproc.GaussianBlur(bg, bg, new Size(0, 0), 3);
+            return divideBy(gray, bg);
+        } finally {
+            small.release();
+            bg.release();
+        }
+    }
+
+    /** Hybrid v17's map: roundish, fastener-sized MSER regions, each filled as its hull. */
+    static Mat roundRegions(Mat gray) {
+        Mat flat = gaussianFlat(gray, 0.03);
+        Mat out = Mat.zeros(gray.size(), CvType.CV_8UC1);
+        List<MatOfPoint> regions = new ArrayList<>();
+        MatOfRect bounds = new MatOfRect();
+        List<MatOfPoint> keep = new ArrayList<>();
+        try {
+            Imgproc.GaussianBlur(flat, flat, BLUR_5, 0);
+            double area = (double) gray.rows() * gray.cols();
+            MSER mser = MSER.create(5, (int) (area * 0.00015), (int) (area * 0.012));
+            mser.detectRegions(flat, regions, bounds);
+            for (MatOfPoint region : regions) {
+                MatOfInt hullIdx = new MatOfInt();
+                Imgproc.convexHull(region, hullIdx);
+                Point[] pts = region.toArray();
+                int[] idx = hullIdx.toArray();
+                hullIdx.release();
+                Point[] hullPts = new Point[idx.length];
+                for (int i = 0; i < idx.length; i++) hullPts[i] = pts[idx[i]];
+                MatOfPoint hull = new MatOfPoint(hullPts);
+                MatOfPoint2f hull2f = new MatOfPoint2f(hullPts);
+                double a = Imgproc.contourArea(hull);
+                double per = Imgproc.arcLength(hull2f, true);
+                hull2f.release();
+                // Roundish only: a hole or a head, not a scratch or a shadow's sliver.
+                if (per > 0 && 4 * Math.PI * a / (per * per) >= 0.5) {
+                    keep.add(hull);
+                } else {
+                    hull.release();
+                }
+            }
+            if (!keep.isEmpty()) Imgproc.drawContours(out, keep, -1, new Scalar(255), -1);
+            return out;
+        } finally {
+            flat.release();
+            for (MatOfPoint r : regions) r.release();
+            for (MatOfPoint h : keep) h.release();
+            bounds.release();
+        }
+    }
+
+    /** Hybrid v18's circles: Hough votes on the flattened photo, each drawn filled. */
+    static Mat houghDiscs(Mat gray) {
+        Mat flat = gaussianFlat(gray, 0.03);
+        Mat circles = new Mat();
+        Mat out = Mat.zeros(gray.size(), CvType.CV_8UC1);
+        try {
+            Imgproc.medianBlur(flat, flat, 5);
+            int md = Math.min(gray.rows(), gray.cols());
+            Imgproc.HoughCircles(flat, circles, Imgproc.HOUGH_GRADIENT, 1.5, md * 0.06, 120, 40,
+                    (int) (md * 0.012), (int) (md * 0.08));
+            for (int i = 0; i < circles.cols(); i++) {
+                double[] c = circles.get(0, i);
+                if (c == null) continue;
+                Imgproc.circle(out, new Point(Math.round(c[0]), Math.round(c[1])),
+                        (int) Math.round(c[2]), new Scalar(255), -1);
+            }
+            return out;
+        } finally {
+            flat.release();
+            circles.release();
         }
     }
 
@@ -1042,6 +1493,7 @@ public final class EdgeMethodLab {
             // not the chassis is painted out before any edge operator sees it.
             calibration = ScaleCalibration.detect(src);
             if (HardwareFeatureExtractor.MASK_BACKGROUND) {
+                ChassisMask.holdUnmasked(src);
                 ChassisMask.Result bg = ChassisMask.of(src);
                 try {
                     ChassisMask.fillWithPlate(src, bg);
@@ -1061,7 +1513,8 @@ public final class EdgeMethodLab {
             }
 
             crops = new CropSource(SourceCropper.open(
-                    context, uriString, bitmap.getWidth(), bitmap.getHeight()), src);
+                    context, uriString, bitmap.getWidth(), bitmap.getHeight()),
+                    ChassisMask.unmaskedOr(src));
             for (Method method : catalogue()) {
                 Method toRun = method;
                 if (ADAPTIVE_ID.equals(method.id) && prior != null) {
@@ -1100,6 +1553,7 @@ public final class EdgeMethodLab {
             Log.e(TAG, "Edge comparison failed outright", t);
         } finally {
             if (crops != null) crops.close();
+            ChassisMask.releaseUnmasked();
             src.release();
             gray.release();
             bitmap.recycle();

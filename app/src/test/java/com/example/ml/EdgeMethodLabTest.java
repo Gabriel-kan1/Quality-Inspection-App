@@ -80,15 +80,16 @@ public class EdgeMethodLabTest {
     }
 
     /**
-     * The methods read Hybrid v1 to v10 in that order, v1 being the stack the detector shipped
+     * The methods read Hybrid v1 to v18 in that order, v1 being the stack the detector shipped
      * with, and the adaptive stage that chooses among them closes the list. The ids are older
      * than the names and must not follow them: layouts and preferences store the ids.
      */
     @Test
-    public void theCatalogueRunsFromHybridV1ToV10ThenTheAdaptiveStage() {
+    public void theCatalogueRunsFromHybridV1ToV18ThenTheAdaptiveStage() {
         List<EdgeMethodLab.Method> methods = EdgeMethodLab.catalogue();
-        assertEquals(11, methods.size());
-        for (int i = 0; i < 10; i++) {
+        assertEquals(19, methods.size());
+        assertEquals(EdgeMethodLab.ADAPTIVE_ID, methods.get(18).id);
+        for (int i = 0; i < 18; i++) {
             assertEquals("Hybrid v" + (i + 1), methods.get(i).name);
         }
         assertTrue("v1 is the shipped stack", methods.get(0).shipped);
@@ -99,7 +100,7 @@ public class EdgeMethodLabTest {
         assertEquals(PreprocessingStrength.STRONG.id, methods.get(7).id);
         assertEquals("clahe-bilateral-canny", methods.get(8).id);
         assertEquals("canny-otsu", methods.get(9).id);
-        assertEquals(EdgeMethodLab.ADAPTIVE_ID, methods.get(10).id);
+        assertEquals("unmasked-strict-canny", methods.get(10).id);
     }
 
     /** Every screen that offers a method says what it is good at and what it runs. */
@@ -202,11 +203,27 @@ public class EdgeMethodLabTest {
         for (EdgeMethodLab.Method method : EdgeMethodLab.catalogue()) {
             if (method.name.startsWith("Hybrid v")) names.add(method.name);
         }
-        // Ten are kept, each with a reason to be here: the shipped stack, five tuned variants
-        // with a study run behind each, v6's light and strong rungs, and the two Canny
-        // baselines. Adding an eleventh without that evidence is the failure this guards
-        // against.
-        assertEquals("v1 through v10", 10, names.size());
+        // Eighteen are kept, each with a reason to be here: the shipped stack, five tuned
+        // variants with a study run behind each, v6's light and strong rungs, the two Canny
+        // baselines, and the eight that each held a plate through the lighting test photos.
+        // Adding a nineteenth without that evidence is the failure this guards against.
+        assertEquals("v1 through v18", 18, names.size());
+    }
+
+    /**
+     * v11 to v18 run on the photo as taken, because the chassis mask painted out hardware in
+     * shadow on the lighting test photos; v1 to v10 and the adaptive stage keep it, so a
+     * reference labelled with one of them still sees what it was labelled on.
+     */
+    @Test
+    public void onlyHybridV11ToV18SkipTheChassisMask() {
+        List<EdgeMethodLab.Method> methods = EdgeMethodLab.catalogue();
+        for (int i = 0; i < methods.size(); i++) {
+            EdgeMethodLab.Method m = methods.get(i);
+            assertEquals(m.name, i >= 10 && i < 18, m.unmasked);
+            assertEquals(m.name, m.unmasked, EdgeMethodLab.skipsMask(m.id));
+        }
+        assertFalse(EdgeMethodLab.skipsMask("no-such-method"));
     }
 
     @Test

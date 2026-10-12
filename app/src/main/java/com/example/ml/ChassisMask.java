@@ -332,6 +332,50 @@ public final class ChassisMask {
     }
 
     /**
+     * The photo as it was before {@link #fillWithPlate} painted it, for the edge methods that
+     * run without the mask (Hybrid v11 to v18), held for the duration of one analysis.
+     *
+     * <p>Per thread, because one analysis is one thread and the mask is applied in place: the
+     * methods that keep the mask and the ones that skip it are run on the same Mat, often in
+     * the same adaptive pass, and only this copy still has the masked pixels. Shadow under
+     * side or bottom light is exactly what the dark rule above takes for background, and on
+     * the lighting test photos it painted out the hardware sitting in it — the 3-hole plate
+     * lit from below lost its threaded hole on every method. See
+     * {@code python/variation_test_study.py --no-mask}.
+     */
+    private static final ThreadLocal<Mat> UNMASKED = new ThreadLocal<>();
+
+    /**
+     * Keeps a copy of {@code srcRgba} as it is now, before it is masked. Pair with
+     * {@link #releaseUnmasked} in a finally block.
+     */
+    public static void holdUnmasked(Mat srcRgba) {
+        releaseUnmasked();
+        if (srcRgba != null) UNMASKED.set(srcRgba.clone());
+    }
+
+    /** Frees the copy {@link #holdUnmasked} kept, if any. */
+    public static void releaseUnmasked() {
+        Mat held = UNMASKED.get();
+        if (held != null) held.release();
+        UNMASKED.remove();
+    }
+
+    /**
+     * The unmasked copy of {@code srcRgba} when one is held and matches it in size, otherwise
+     * {@code srcRgba} itself — which is then either unmasked already or was masked by a caller
+     * that kept no copy. Not owned by the caller: never release it.
+     */
+    public static Mat unmaskedOr(Mat srcRgba) {
+        Mat held = UNMASKED.get();
+        if (held == null || srcRgba == null || held.empty()
+                || held.rows() != srcRgba.rows() || held.cols() != srcRgba.cols()) {
+            return srcRgba;
+        }
+        return held;
+    }
+
+    /**
      * Median of a single-channel Mat, which the caller hands over and this releases.
      *
      * <p>The input is a ROI view of a larger Mat, so it is <em>not continuous</em> and

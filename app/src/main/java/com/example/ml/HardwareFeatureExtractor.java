@@ -456,6 +456,7 @@ public class HardwareFeatureExtractor {
             src = new Mat();
             Utils.bitmapToMat(bitmap, src);
             if (MASK_BACKGROUND) {
+                ChassisMask.holdUnmasked(src);
                 ChassisMask.Result bg = ChassisMask.of(src);
                 try {
                     ChassisMask.fillWithPlate(src, bg);
@@ -468,8 +469,11 @@ public class HardwareFeatureExtractor {
 
             float w = src.width();
             float h = src.height();
+            // Cut from the photo's real pixels: a method that skips the mask can box hardware
+            // the mask painted grey.
+            Mat pixels = ChassisMask.unmaskedOr(src);
             for (Rect r : findFeatureBoxes(e.edgesClosed, w, h)) {
-                Bitmap crop = cropToBitmap(src, r);
+                Bitmap crop = cropToBitmap(pixels, r);
                 if (crop == null) continue;
                 RectF frac = new RectF(
                         r.x / w, r.y / h, (r.x + r.width) / w, (r.y + r.height) / h);
@@ -483,6 +487,7 @@ public class HardwareFeatureExtractor {
             // OutOfMemoryError to show for it, so release on the failure path too.
             releaseQuietly(src);
             if (e != null) e.release();
+            ChassisMask.releaseUnmasked();
             bitmap.recycle();
         }
         return crops;
@@ -609,6 +614,7 @@ public class HardwareFeatureExtractor {
             // calibration marker lying near the part's edge is still found on real pixels,
             // and before the edge stage, which is what the exclusion exists to protect.
             if (MASK_BACKGROUND) {
+                ChassisMask.holdUnmasked(src);
                 background = ChassisMask.of(src);
                 ChassisMask.fillWithPlate(src, background);
                 backgroundFraction = background.fraction;
@@ -636,15 +642,16 @@ public class HardwareFeatureExtractor {
             rgbaVisual.setTo(new Scalar(0, 255, 0, 255), e.edgesDilated);
             // What was excluded, shown white. The detector saw the plate's own grey there —
             // white is what it means to the operator, not what it meant to Canny.
-            if (background != null && !background.isEmpty()) {
+            if (background != null && !background.isEmpty()
+                    && !EdgeMethodLab.skipsMask(usedMethodId(context, preprocessing[0]))) {
                 rgbaVisual.setTo(new Scalar(255, 255, 255, 255), background.mask);
             }
             diagnosticBitmap = Bitmap.createBitmap(rgbaVisual.cols(), rgbaVisual.rows(), Bitmap.Config.ARGB_8888);
             Utils.matToBitmap(rgbaVisual, diagnosticBitmap);
 
             // STEP 3-6 — OpenCV crop extraction + embedding classification + measurement
-            performDynamicDetection(src, e.edgesClosed, e.edgesRaw, embedder, library, sink,
-                    features, calibration, sourceCropper);
+            performDynamicDetection(ChassisMask.unmaskedOr(src), e.edgesClosed, e.edgesRaw,
+                    embedder, library, sink, features, calibration, sourceCropper);
 
         } catch (Throwable t) {
             // Throwable, not Exception: an OpenCV ABI problem arrives as UnsatisfiedLinkError.
@@ -656,6 +663,7 @@ public class HardwareFeatureExtractor {
             releaseQuietly(src, rgbaVisual);
             if (e != null) e.release();
             if (background != null) background.release();
+            ChassisMask.releaseUnmasked();
             if (sourceCropper != null) sourceCropper.close();
             bitmap.recycle();
         }
@@ -988,6 +996,11 @@ public class HardwareFeatureExtractor {
     static Edges computeEdges(Context context, Mat src, Boolean forceGlareCorrection,
                               SizePrior sizePrior, AdaptivePreprocessing.Choice[] choiceOut) {
         return computeEdges(context, src, forceGlareCorrection, sizePrior, choiceOut, null);
+    }
+
+    /** The method whose map an analysis used: the adaptive stage's pick, or the chosen one. */
+    static String usedMethodId(Context context, AdaptivePreprocessing.Choice choice) {
+        return choice != null ? choice.methodId : EdgeMethodLab.selectedId(context);
     }
 
     /** As above, with the adaptive stage pinned to one catalogue method. */
@@ -1391,6 +1404,7 @@ public class HardwareFeatureExtractor {
             // would not be the boxes they get: on a wide shot the survey would report the
             // background's contours as features the strength "would find".
             if (MASK_BACKGROUND) {
+                ChassisMask.holdUnmasked(src);
                 ChassisMask.Result bg = ChassisMask.of(src);
                 try {
                     ChassisMask.fillWithPlate(src, bg);
@@ -1403,6 +1417,7 @@ public class HardwareFeatureExtractor {
             Log.e(TAG, "Strength survey failed", t);
             return empty;
         } finally {
+            ChassisMask.releaseUnmasked();
             src.release();
             bitmap.recycle();
         }
