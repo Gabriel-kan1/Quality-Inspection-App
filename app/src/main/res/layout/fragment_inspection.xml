@@ -196,7 +196,7 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="4dp"
-                    android:text="Imports and aligns your acquired photo"
+                    android:text="From the gallery, the camera or a bundled test photo"
                     android:textColor="@color/gray_text_secondary"
                     android:textSize="10sp" />
 
@@ -206,7 +206,7 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="16dp"
-                    android:text="USE BUILT-IN ACTIVE CHASSIS PRESET"
+                    android:text="CHOOSE IMAGE"
                     android:textColor="@color/blue_primary"
                     android:textSize="11sp"
                     app:cornerRadius="8dp" />

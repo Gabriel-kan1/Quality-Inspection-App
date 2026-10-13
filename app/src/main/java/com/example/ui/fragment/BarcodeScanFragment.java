@@ -11,7 +11,6 @@ import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
-import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -32,6 +31,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import com.example.ui.util.Notice;
 
 public class BarcodeScanFragment extends Fragment {
 
@@ -120,8 +120,7 @@ public class BarcodeScanFragment extends Fragment {
 
         binding.btnConfirmPart.setOnClickListener(v -> {
             if (selectedPartId == null) {
-                Toast.makeText(getContext(), "Select a part from the list first",
-                        Toast.LENGTH_SHORT).show();
+                Notice.show(getContext(), "Select a part from the list first");
                 return;
             }
             checkReferenceAndProceed(selectedPartId);
@@ -130,8 +129,7 @@ public class BarcodeScanFragment extends Fragment {
         // Go straight to setup so an already-configured part can be given a new reference photo.
         binding.btnChangeReference.setOnClickListener(v -> {
             if (selectedPartId == null) {
-                Toast.makeText(getContext(), "Select a part from the list first",
-                        Toast.LENGTH_SHORT).show();
+                Notice.show(getContext(), "Select a part from the list first");
                 return;
             }
             Bundle args = new Bundle();
@@ -571,7 +569,7 @@ public class BarcodeScanFragment extends Fragment {
                 .setPositiveButton("Save", (d, w) -> {
                     String value = input.getText().toString().trim();
                     if (value.isEmpty()) {
-                        Toast.makeText(getContext(), "Name cannot be empty", Toast.LENGTH_SHORT).show();
+                        Notice.show(getContext(), "Name cannot be empty");
                         return;
                     }
                     onAccept.accept(value);
@@ -791,7 +789,7 @@ public class BarcodeScanFragment extends Fragment {
             requireActivity().runOnUiThread(() -> {
                 if (!isAdded() || binding == null) return;
                 if (finalError != null) {
-                    Toast.makeText(getContext(), finalError, Toast.LENGTH_LONG).show();
+                    Notice.show(getContext(), finalError);
                 }
                 loadProfiles();
             });

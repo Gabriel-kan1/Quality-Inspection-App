@@ -20,7 +20,6 @@ import android.view.Surface;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.ImageView;
-import android.widget.Toast;
 
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
@@ -58,6 +57,7 @@ import java.util.Locale;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
+import com.example.ui.util.Notice;
 
 /**
  * Capture screen for an inspection.
@@ -155,8 +155,7 @@ public class InspectionFragment extends Fragment {
                 } else {
                     // Without a camera there is no live gate, so fall back to the still path
                     // rather than leaving the operator on a dead screen.
-                    Toast.makeText(getContext(),
-                            "Camera denied — inspect a saved image instead.", Toast.LENGTH_LONG).show();
+                    Notice.show(getContext(), "Camera denied — inspect a saved image instead.");
                     switchToStillMode();
                 }
             });
@@ -196,9 +195,6 @@ public class InspectionFragment extends Fragment {
         binding.btnCaptureInspect.setOnClickListener(v -> {
             if (mode == Mode.LIVE) {
                 // Live capture is driven by the gate, not by this button.
-                Toast.makeText(getContext(),
-                        "Hold the part inside the frame until the light turns green.",
-                        Toast.LENGTH_SHORT).show();
             } else if (selectedImageExternalUri == null) {
                 launchImageChooser();
             } else {
@@ -233,8 +229,8 @@ public class InspectionFragment extends Fragment {
             }
         });
 
-        binding.btnUsePresetInspection.setOnClickListener(v ->
-                loadSelectedAsset("reference.jpg"));
+        // The same choice reference setup offers: the gallery, the camera, or a bundled photo.
+        binding.btnUsePresetInspection.setOnClickListener(v -> launchImageChooser());
 
         // Everything else waits on the reference: without one there is nothing to gate against.
         loadReferenceProfile();
@@ -469,8 +465,7 @@ public class InspectionFragment extends Fragment {
                 bindCameraUseCases();
             } catch (Exception e) {
                 Log.e(TAG, "Camera provider unavailable", e);
-                Toast.makeText(getContext(),
-                        "Camera unavailable — inspect a saved image instead.", Toast.LENGTH_LONG).show();
+                Notice.show(getContext(), "Camera unavailable — inspect a saved image instead.");
                 switchToStillMode();
             }
         }, ContextCompat.getMainExecutor(requireContext()));
@@ -519,7 +514,7 @@ public class InspectionFragment extends Fragment {
                     "Frame the area like the ghost and hold steady for 3 seconds. Capture is automatic.");
         } catch (Exception e) {
             Log.e(TAG, "Failed to bind camera use cases", e);
-            Toast.makeText(getContext(), "Camera bind failed: " + e.getMessage(), Toast.LENGTH_LONG).show();
+            Notice.show(getContext(), "Camera bind failed: " + e.getMessage());
             switchToStillMode();
         }
     }
@@ -667,7 +662,6 @@ public class InspectionFragment extends Fragment {
                         if (!isAdded() || binding == null) return;
                         selectedImageExternalUri = Uri.fromFile(photoFile);
                         binding.tvOperatorTip.setText("Alignment held. Running geometric verification...");
-                        Toast.makeText(getContext(), "Aligned and captured.", Toast.LENGTH_SHORT).show();
                         navigateToResults(selectedImageExternalUri.toString());
                     }
 
@@ -675,8 +669,7 @@ public class InspectionFragment extends Fragment {
                     public void onError(@NonNull ImageCaptureException e) {
                         Log.e(TAG, "Auto-capture failed", e);
                         if (!isAdded() || binding == null) return;
-                        Toast.makeText(getContext(),
-                                "Capture failed: " + e.getMessage(), Toast.LENGTH_LONG).show();
+                        Notice.show(getContext(), "Capture failed: " + e.getMessage());
                         // Let the operator re-earn the green rather than stranding the gate.
                         holdTimer.reset();
                         captureInFlight.set(false);
@@ -977,9 +970,8 @@ public class InspectionFragment extends Fragment {
 
             applyModeChrome();
             scoreStillImage(selectedImageExternalUri.toString());
-            Toast.makeText(getContext(), "Local inspection asset loaded: " + filename, Toast.LENGTH_SHORT).show();
         } catch (Exception e) {
-            Toast.makeText(getContext(), "Failed to load asset: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+            Notice.show(getContext(), "Failed to load asset: " + e.getMessage());
         }
     }
 
@@ -998,12 +990,6 @@ public class InspectionFragment extends Fragment {
                         imageFiles.add(file);
                     }
                 }
-            }
-
-            if (imageFiles.isEmpty()) {
-                Toast.makeText(getContext(), "No uploaded assets found. Opening system gallery.", Toast.LENGTH_SHORT).show();
-                selectImageLauncher.launch("image/*");
-                return;
             }
 
             android.app.Dialog dialog = new android.app.Dialog(requireContext(), android.R.style.Theme_DeviceDefault_NoActionBar_Fullscreen);
@@ -1026,7 +1012,10 @@ public class InspectionFragment extends Fragment {
             rootLayout.addView(titleTv);
 
             android.widget.TextView subTv = new android.widget.TextView(getContext());
-            subTv.setText("Select one of your uploaded files in assets/chassis_images/ directory to perform geometric inspection on it:");
+            subTv.setText(imageFiles.isEmpty()
+                    ? "Choose a photo from the gallery, or take one with the camera."
+                    : "Choose a photo from the gallery, take one with the camera, or use one of"
+                            + " the bundled test photos below:");
             subTv.setTextSize(11f);
             subTv.setTextColor(Color.LTGRAY);
             subTv.setGravity(android.view.Gravity.CENTER);
@@ -1156,6 +1145,25 @@ public class InspectionFragment extends Fragment {
             closeBtn.setOnClickListener(v -> dialog.dismiss());
             controlLayout.addView(closeBtn);
 
+            // The live camera rather than the phone's camera app: its photo is taken by the
+            // alignment gate, so it is framed like the reference before it is inspected.
+            android.widget.Button cameraBtn = new android.widget.Button(getContext());
+            android.widget.LinearLayout.LayoutParams cameraParams =
+                    new android.widget.LinearLayout.LayoutParams(
+                            android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+                            android.widget.LinearLayout.LayoutParams.WRAP_CONTENT);
+            cameraParams.topMargin = 16;
+            cameraBtn.setLayoutParams(cameraParams);
+            cameraBtn.setText("TAKE A PHOTO");
+            cameraBtn.setTextColor(Color.WHITE);
+            cameraBtn.setBackgroundColor(ContextCompat.getColor(requireContext(),
+                    R.color.green_pass_header));
+            cameraBtn.setOnClickListener(v -> {
+                dialog.dismiss();
+                switchToLiveMode();
+            });
+            rootLayout.addView(cameraBtn);
+
             rootLayout.addView(controlLayout);
             com.example.ui.util.SystemBars.keepClear(rootLayout);
             dialog.setContentView(rootLayout);
@@ -1171,7 +1179,7 @@ public class InspectionFragment extends Fragment {
         try {
             InputStream inputStream = requireContext().getContentResolver().openInputStream(inputUri);
             if (inputStream == null) {
-                Toast.makeText(getContext(), "Cannot read selected image", Toast.LENGTH_SHORT).show();
+                Notice.show(getContext(), "Cannot read selected image");
                 return;
             }
 
@@ -1208,7 +1216,7 @@ public class InspectionFragment extends Fragment {
 
         } catch (Exception e) {
             Log.e(TAG, "Failed to copy chassis inspection photo", e);
-            Toast.makeText(getContext(), "Error choosing file: " + e.getMessage(), Toast.LENGTH_LONG).show();
+            Notice.show(getContext(), "Error choosing file: " + e.getMessage());
         }
     }
 
@@ -1221,7 +1229,6 @@ public class InspectionFragment extends Fragment {
         if (selectedImageExternalUri == null) return;
 
         binding.btnCaptureInspect.setEnabled(false);
-        Toast.makeText(getContext(), "Running local geometric verification...", Toast.LENGTH_SHORT).show();
         navigateToResults(selectedImageExternalUri.toString());
     }
 

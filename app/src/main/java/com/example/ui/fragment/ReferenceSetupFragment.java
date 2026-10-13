@@ -10,7 +10,6 @@ import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
-import android.widget.Toast;
 
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
@@ -47,6 +46,7 @@ import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import com.example.ui.util.Notice;
 
 public class ReferenceSetupFragment extends Fragment {
 
@@ -151,9 +151,9 @@ public class ReferenceSetupFragment extends Fragment {
                 if (granted) {
                     launchCamera();
                 } else {
-                    Toast.makeText(getContext(), "The camera permission is needed to take a"
-                            + " reference photo. A photo can still be chosen from the gallery.",
-                            Toast.LENGTH_LONG).show();
+                    Notice.show(getContext(),
+                            "The camera permission is needed to take a"
+                            + " reference photo. A photo can still be chosen from the gallery.");
                 }
             });
 
@@ -263,7 +263,7 @@ public class ReferenceSetupFragment extends Fragment {
         // never been labelled at all.
         binding.btnBuildLibrary.setOnClickListener(v -> {
             if (selectedImageExternalUri == null) {
-                Toast.makeText(getContext(), "Choose or load a reference image first.", Toast.LENGTH_SHORT).show();
+                Notice.show(getContext(), "Choose or load a reference image first.");
                 launchImageChooser();
             } else if (analysisReady()) {
                 showClassifyAllDialog(this::proceedToInspection);
@@ -289,7 +289,7 @@ public class ReferenceSetupFragment extends Fragment {
                     + EdgeMethodLab.nameOf(inUseMethod()) + ".";
         }
         if (message == null) return true;
-        Toast.makeText(getContext(), message, Toast.LENGTH_LONG).show();
+        Notice.show(getContext(), message);
         return false;
     }
 
@@ -356,7 +356,7 @@ public class ReferenceSetupFragment extends Fragment {
     /** FIND BEST METHOD: analyses with the edge method whose count is nearest the operator's. */
     private void findMethodForCount() {
         if (selectedImageExternalUri == null) {
-            Toast.makeText(getContext(), "Choose a reference image first.", Toast.LENGTH_SHORT).show();
+            Notice.show(getContext(), "Choose a reference image first.");
             return;
         }
         int n;
@@ -377,7 +377,7 @@ public class ReferenceSetupFragment extends Fragment {
     /** SKIP: analyses from the image-quality starting point, with no count to match. */
     private void skipCount() {
         if (selectedImageExternalUri == null) {
-            Toast.makeText(getContext(), "Choose a reference image first.", Toast.LENGTH_SHORT).show();
+            Notice.show(getContext(), "Choose a reference image first.");
             return;
         }
         expectedCount = 0;
@@ -824,8 +824,7 @@ public class ReferenceSetupFragment extends Fragment {
      */
     private void showClassifyAllDialog(Runnable onSaved) {
         if (pendingResult == null || pendingResult.features.isEmpty()) {
-            Toast.makeText(getContext(), "No features detected — nothing to classify.",
-                    Toast.LENGTH_LONG).show();
+            Notice.show(getContext(), "No features detected — nothing to classify.");
             return;
         }
 
@@ -1186,13 +1185,11 @@ public class ReferenceSetupFragment extends Fragment {
         final float simThreshold = pendingSimilarityThreshold;
         final float marginThreshold = pendingMarginThreshold;
 
-        Toast.makeText(getContext(), "Encoding labelled crops...", Toast.LENGTH_SHORT).show();
         new Thread(() -> {
             FeatureEmbedder embedder = FeatureEmbedder.get(context);
             if (embedder == null) {
-                requireActivity().runOnUiThread(() -> Toast.makeText(getContext(),
-                        "Feature encoder unavailable (missing assets/models/feature_encoder.onnx).",
-                        Toast.LENGTH_LONG).show());
+                requireActivity().runOnUiThread(() -> Notice.show(getContext(),
+                        "Feature encoder unavailable (missing assets/models/feature_encoder.onnx)."));
                 return;
             }
 
@@ -1263,12 +1260,8 @@ public class ReferenceSetupFragment extends Fragment {
             // library *before* these examples were added, so a replay asks the right question.
             logReferenceLabels(context, db, chosen, crops, features, simThreshold, marginThreshold);
 
-            final int count = labelled;
-            final int typeCount = lib.types().size();
             requireActivity().runOnUiThread(() -> {
                 if (dialog.isShowing()) dialog.dismiss();
-                Toast.makeText(getContext(), "Reference saved — " + count
-                        + " examples across " + typeCount + " types.", Toast.LENGTH_LONG).show();
                 if (onSaved != null) onSaved.run();
             });
         }).start();
@@ -1449,7 +1442,7 @@ public class ReferenceSetupFragment extends Fragment {
         if (!assetExists("chassis_images/" + filename)) {
             // Without this the load runs on a non-existent file, the preview stays blank and
             // analyseReference() reports zero detections as though the part were empty.
-            Toast.makeText(getContext(), "Missing bundled image: " + filename, Toast.LENGTH_LONG).show();
+            Notice.show(getContext(), "Missing bundled image: " + filename);
             return;
         }
         try {
@@ -1468,7 +1461,7 @@ public class ReferenceSetupFragment extends Fragment {
             binding.btnCaptureReference.setBackgroundColor(ContextCompat.getColor(requireContext(), R.color.green_pass_header));
             awaitExpectedCount();
         } catch (Exception e) {
-            Toast.makeText(getContext(), "Failed to load asset: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+            Notice.show(getContext(), "Failed to load asset: " + e.getMessage());
         }
     }
 
@@ -1490,7 +1483,6 @@ public class ReferenceSetupFragment extends Fragment {
             }
 
             if (imageFiles.isEmpty()) {
-                Toast.makeText(getContext(), "No uploaded assets found. Opening system gallery.", Toast.LENGTH_SHORT).show();
                 selectImageLauncher.launch("image/*");
                 return;
             }
@@ -1713,8 +1705,7 @@ public class ReferenceSetupFragment extends Fragment {
     private void launchCamera() {
         File dir = requireContext().getExternalFilesDir("references");
         if (dir == null) {
-            Toast.makeText(getContext(), "Storage is not available for a new photo.",
-                    Toast.LENGTH_LONG).show();
+            Notice.show(getContext(), "Storage is not available for a new photo.");
             return;
         }
         if (!dir.exists()) dir.mkdirs();
@@ -1727,8 +1718,8 @@ public class ReferenceSetupFragment extends Fragment {
             takePictureLauncher.launch(target);
         } catch (android.content.ActivityNotFoundException e) {
             pendingCapture = null;
-            Toast.makeText(getContext(), "No camera app on this device. Choose a photo from the"
-                    + " gallery instead.", Toast.LENGTH_LONG).show();
+            Notice.show(getContext(),
+                    "No camera app on this device. Choose a photo from the" + " gallery instead.");
         }
     }
 
@@ -1831,7 +1822,7 @@ public class ReferenceSetupFragment extends Fragment {
         try {
             InputStream inputStream = requireContext().getContentResolver().openInputStream(inputUri);
             if (inputStream == null) {
-                Toast.makeText(getContext(), "Cannot read selected image", Toast.LENGTH_SHORT).show();
+                Notice.show(getContext(), "Cannot read selected image");
                 return;
             }
 
@@ -1853,10 +1844,9 @@ public class ReferenceSetupFragment extends Fragment {
             inputStream.close();
 
             useAsReference(Uri.fromFile(photoFile));
-            Toast.makeText(getContext(), "Image uploaded successfully!", Toast.LENGTH_SHORT).show();
         } catch (Exception e) {
             Log.e(TAG, "Failed to copy reference image", e);
-            Toast.makeText(getContext(), "Error saving image: " + e.getMessage(), Toast.LENGTH_LONG).show();
+            Notice.show(getContext(), "Error saving image: " + e.getMessage());
         }
     }
 
@@ -1868,7 +1858,6 @@ public class ReferenceSetupFragment extends Fragment {
             db.referenceProfileDao().insertProfile(profile);
 
             requireActivity().runOnUiThread(() -> {
-                Toast.makeText(getContext(), "Reference profile established!", Toast.LENGTH_SHORT).show();
                 proceedToInspection();
             });
         }).start();

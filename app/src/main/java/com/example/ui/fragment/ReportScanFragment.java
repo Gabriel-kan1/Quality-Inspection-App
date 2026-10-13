@@ -7,7 +7,6 @@ import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
-import android.widget.Toast;
 
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
@@ -42,6 +41,7 @@ import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
+import com.example.ui.util.Notice;
 
 /**
  * Reads the QR printed on an inspection report and opens that inspection.
@@ -283,9 +283,7 @@ public class ReportScanFragment extends Fragment {
         // The integrity check, finally doing something. A mismatch means the printout and the
         // stored record disagree, which is worth saying out loud before the report is opened.
         if (pointer.digestPrefix != null && !pointer.matches(record)) {
-            Toast.makeText(getContext(),
-                    "Warning: this printout does not match the filed record.",
-                    Toast.LENGTH_LONG).show();
+            Notice.show(getContext(), "Warning: this printout does not match the filed record.");
         }
 
         Bundle args = new Bundle();

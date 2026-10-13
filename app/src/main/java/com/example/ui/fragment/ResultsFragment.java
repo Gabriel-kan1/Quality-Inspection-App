@@ -11,7 +11,6 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.widget.LinearLayout;
 import android.widget.TextView;
-import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -58,6 +57,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Random;
 import java.util.Set;
+import com.example.ui.util.Notice;
 
 public class ResultsFragment extends Fragment {
 
@@ -334,7 +334,7 @@ public class ResultsFragment extends Fragment {
      */
     private void savePhotoToGallery() {
         if (imageUri == null || imageUri.isEmpty()) {
-            Toast.makeText(getContext(), "There is no photo to save.", Toast.LENGTH_SHORT).show();
+            Notice.show(getContext(), "There is no photo to save.");
             return;
         }
         new androidx.appcompat.app.AlertDialog.Builder(requireContext())
@@ -349,8 +349,6 @@ public class ResultsFragment extends Fragment {
                             }
                             Bitmap annotated = binding.chassisOverlayView.renderAnnotated();
                             if (annotated == null) {
-                                Toast.makeText(getContext(), "The photo is still loading.",
-                                        Toast.LENGTH_SHORT).show();
                                 return;
                             }
                             com.example.ui.util.GallerySaver.saveBitmap(requireContext(),
@@ -1085,8 +1083,7 @@ public class ResultsFragment extends Fragment {
         FeatureLayout.Slot slot = referenceLayout.slotById(f.slotId);
         HardwareFeatureExtractor.ExtractedFeature feature = featureFor(f);
         if (slot == null || !slot.hasSize() || feature == null || feature.rectFraction == null) {
-            Toast.makeText(getContext(), "No crops to compare for this position.",
-                    Toast.LENGTH_SHORT).show();
+            Notice.show(getContext(), "No crops to compare for this position.");
             return;
         }
 
@@ -2331,7 +2328,6 @@ public class ResultsFragment extends Fragment {
             db.inspectionDao().sealInspection(inspectionId, digest, InspectionExport.SCHEMA_VERSION);
 
             postToUi(() -> {
-                Toast.makeText(getContext(), "Inspection report filed offline.", Toast.LENGTH_SHORT).show();
                 Bundle args = new Bundle();
                 args.putLong("inspectionId", inspectionId);
                 if (isAdded() && getView() != null) {

@@ -10,7 +10,6 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.widget.LinearLayout;
 import android.widget.TextView;
-import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -44,6 +43,7 @@ import java.util.Collections;
 import java.util.Date;
 import java.util.List;
 import java.util.Locale;
+import com.example.ui.util.Notice;
 
 public class ReportFragment extends Fragment {
 
@@ -548,7 +548,6 @@ public class ReportFragment extends Fragment {
 
     private void generatePdfReport(boolean showToast) {
         if (record == null) {
-            Toast.makeText(getContext(), "Report details still loading. Please hold...", Toast.LENGTH_SHORT).show();
             return;
         }
 
@@ -565,13 +564,13 @@ public class ReportFragment extends Fragment {
                 Log.w(TAG, "Could not remove partial report at " + target);
             }
             generatedPdfFile = null;
-            Toast.makeText(getContext(), "Error saving PDF: " + e.getMessage(), Toast.LENGTH_LONG).show();
+            Notice.show(getContext(), "Error saving PDF: " + e.getMessage());
             return;
         }
 
         if (showToast) {
-            Toast.makeText(getContext(), "Report exported to: Internal Storage/reports/"
-                    + target.getName(), Toast.LENGTH_LONG).show();
+            Notice.show(getContext(),
+                    "Report exported to: Internal Storage/reports/" + target.getName());
         }
     }
 
@@ -591,7 +590,6 @@ public class ReportFragment extends Fragment {
      */
     private void exportDataFiles() {
         if (record == null) {
-            Toast.makeText(getContext(), "Report details still loading. Please hold...", Toast.LENGTH_SHORT).show();
             return;
         }
 
@@ -610,13 +608,12 @@ public class ReportFragment extends Fragment {
             Log.e(TAG, "Data export failed", e);
             deleteQuietly(jsonFile);
             deleteQuietly(csvFile);
-            Toast.makeText(getContext(), "Error exporting data: " + e.getMessage(),
-                    Toast.LENGTH_LONG).show();
+            Notice.show(getContext(), "Error exporting data: " + e.getMessage());
             return;
         }
 
-        Toast.makeText(getContext(), "Data exported to: Internal Storage/reports/"
-                + jsonFile.getName() + " (+ .csv)", Toast.LENGTH_LONG).show();
+        Notice.show(getContext(),
+                "Data exported to: Internal Storage/reports/" + jsonFile.getName() + " (+ .csv)");
 
         shareFiles(Arrays.asList(jsonFile, csvFile), "*/*",
                 "QC Inspection Data: " + record.getPartId(),
@@ -651,7 +648,7 @@ public class ReportFragment extends Fragment {
                             + record.getPartId() + " (Verdict: " + record.getPassOrFail() + ").",
                     "Share Inspection PDF via:");
         } else {
-            Toast.makeText(getContext(), "Failed to prepare PDF file for sharing.", Toast.LENGTH_SHORT).show();
+            Notice.show(getContext(), "Failed to prepare PDF file for sharing.");
         }
     }
 

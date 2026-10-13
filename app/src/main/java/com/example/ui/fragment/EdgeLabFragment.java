@@ -14,7 +14,6 @@ import android.view.ViewGroup;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
-import android.widget.Toast;
 
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
@@ -34,6 +33,7 @@ import com.example.ui.util.MethodBrief;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import com.example.ui.util.Notice;
 
 /**
  * Debug screen: one photograph, every edge operator, side by side — and for each, the boxes
@@ -157,9 +157,10 @@ public class EdgeLabFragment extends Fragment {
         }
         showActiveMethod();
         showQuality();
-        Toast.makeText(getContext(), "Inspections and reference setup now use: " + result.name
+        Notice.show(getContext(),
+                "Inspections and reference setup now use: " + result.name
                 + ". Re-run reference setup for parts whose reference was made with another"
-                + " method.", Toast.LENGTH_LONG).show();
+                + " method.");
     }
 
     private static void markInUse(ItemEdgeMethodBinding card, EdgeMethodLab.MethodResult result,
@@ -186,8 +187,9 @@ public class EdgeLabFragment extends Fragment {
     private void showPartChooser() {
         List<String> parts = EdgeMethodLab.partsWithReference(requireContext());
         if (parts.isEmpty()) {
-            Toast.makeText(getContext(), "No part has a labelled reference yet. Set one up from "
-                    + "a new inspection first.", Toast.LENGTH_LONG).show();
+            Notice.show(getContext(),
+                    "No part has a labelled reference yet. Set one up from "
+                    + "a new inspection first.");
             return;
         }
         List<String> items = new ArrayList<>();
@@ -223,9 +225,7 @@ public class EdgeLabFragment extends Fragment {
         }
 
         if (images.isEmpty()) {
-            Toast.makeText(getContext(),
-                    "No bundled test photographs — use CHOOSE IMAGE instead.",
-                    Toast.LENGTH_SHORT).show();
+            Notice.show(getContext(), "No bundled test photographs — use CHOOSE IMAGE instead.");
             return;
         }
 

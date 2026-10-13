@@ -11,7 +11,6 @@ import android.os.Handler;
 import android.os.Looper;
 import android.provider.MediaStore;
 import android.util.Log;
-import android.widget.Toast;
 
 import com.example.ml.HardwareFeatureExtractor;
 
@@ -58,8 +57,10 @@ public final class GallerySaver {
      */
     public static void savePhoto(Context context, String sourceUri, String displayName) {
         final Context app = context.getApplicationContext();
+        // Weak: the save outlives nothing, but the operator may leave the screen first.
+        final java.lang.ref.WeakReference<Context> screen = new java.lang.ref.WeakReference<>(context);
         if (!supported()) {
-            tellUnsupported(app);
+            tellUnsupported(context);
             return;
         }
         final boolean png = sourceUri != null && sourceUri.toLowerCase(Locale.US).endsWith(".png");
@@ -75,15 +76,17 @@ public final class GallerySaver {
             } catch (Exception e) {
                 Log.e(TAG, "Saving " + sourceUri + " to the gallery failed", e);
             }
-            report(app, saved != null);
+            report(screen, saved != null);
         }).start();
     }
 
     /** Saves an image made in the app — an annotated overlay, say — as a JPEG. Recycles it. */
     public static void saveBitmap(Context context, Bitmap bitmap, String displayName) {
         final Context app = context.getApplicationContext();
+        // Weak: the save outlives nothing, but the operator may leave the screen first.
+        final java.lang.ref.WeakReference<Context> screen = new java.lang.ref.WeakReference<>(context);
         if (!supported()) {
-            tellUnsupported(app);
+            tellUnsupported(context);
             bitmap.recycle();
             return;
         }
@@ -97,7 +100,7 @@ public final class GallerySaver {
             } finally {
                 bitmap.recycle();
             }
-            report(app, saved != null);
+            report(screen, saved != null);
         }).start();
     }
 
@@ -134,14 +137,13 @@ public final class GallerySaver {
         return uri;
     }
 
-    private static void report(Context app, boolean ok) {
-        new Handler(Looper.getMainLooper()).post(() -> Toast.makeText(app, ok
+    private static void report(java.lang.ref.WeakReference<Context> screen, boolean ok) {
+        new Handler(Looper.getMainLooper()).post(() -> Notice.show(screen.get(), ok
                 ? "Saved to the gallery, in Pictures/" + ALBUM + "."
-                : "Could not save to the gallery.", Toast.LENGTH_SHORT).show());
+                : "Could not save to the gallery."));
     }
 
-    private static void tellUnsupported(Context app) {
-        Toast.makeText(app, "Saving to the gallery needs Android 10 or later.",
-                Toast.LENGTH_LONG).show();
+    private static void tellUnsupported(Context context) {
+        Notice.show(context, "Saving to the gallery needs Android 10 or later.");
     }
 }
