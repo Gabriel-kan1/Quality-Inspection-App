@@ -251,7 +251,9 @@ def merge_nearby(boxes, threshold=PROXIMITY_THRESHOLD, anchors=None):
     return (working, anchor) if anchors is not None else working
 
 
-def find_feature_boxes(edges, cap_early=False, aspect_guard=True, rescue=None):
+def find_feature_boxes(edges, cap_early=False, aspect_guard=True, rescue=None, min_area=None):
+    """min_area, when given, replaces the dynamic area floor -- segmentation_mask_study uses
+    it to carry the floor of the UNMASKED photograph into the masked one."""
     contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
     valid_boxes, valid_areas = [], []
@@ -279,6 +281,9 @@ def find_feature_boxes(edges, cap_early=False, aspect_guard=True, rescue=None):
     pool.sort(reverse=True)
     reference_area = sum(pool[:3]) / min(3, len(pool))
     dynamic_min_area = max(25.0, reference_area * DYNAMIC_AREA_MULTIPLIER)
+    if min_area is not None:
+        dynamic_min_area = min_area
+    stats["dynamic_min_area"] = dynamic_min_area
 
     sized = [b for b, a in zip(valid_boxes, valid_areas) if a >= dynamic_min_area]
     stats["passed_area"] = len(sized)
