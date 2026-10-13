@@ -75,6 +75,10 @@ public interface ClassificationEventDao {
     List<ClassificationEvent> getAllReviewed();
 
     /** Attaches unassigned events to the inspection once the operator saves the report. */
+    /** Drops the given rows: an inspection re-run with another method replaces its events. */
+    @Query("DELETE FROM ClassificationEvent WHERE id IN (:ids)")
+    int deleteByIds(java.util.List<Long> ids);
+
     @Query("UPDATE ClassificationEvent SET inspectionId = :inspectionId WHERE id IN (:ids)")
     void assignInspection(Long inspectionId, List<Long> ids);
 }

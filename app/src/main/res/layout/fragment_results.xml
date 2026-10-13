@@ -200,6 +200,97 @@
                     android:layout_marginStart="4dp"
                     android:layout_marginBottom="8dp"/>
 
+                <!-- Re-runs this inspection with another preprocessing method, to see whether a
+                     different one finds the part better. Steps through the methods best fit
+                     first; the middle names the one shown and opens the full list. -->
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="4dp"
+                    android:text="PREPROCESSING METHOD"
+                    android:textColor="@color/gray_text_secondary"
+                    android:textSize="11sp"
+                    android:textStyle="bold" />
+
+                <LinearLayout
+                    android:id="@+id/layout_results_method_switcher"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <Button
+                        android:id="@+id/btn_results_method_prev"
+                        android:layout_width="52dp"
+                        android:layout_height="52dp"
+                        android:minWidth="0dp"
+                        android:paddingStart="0dp"
+                        android:paddingEnd="0dp"
+                        android:backgroundTint="@color/background_dark"
+                        android:contentDescription="Previous preprocessing method"
+                        android:text="&#9664;"
+                        android:textColor="@color/blue_primary"
+                        android:textSize="16sp" />
+
+                    <LinearLayout
+                        android:id="@+id/layout_results_method_label"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:background="?attr/selectableItemBackground"
+                        android:gravity="center"
+                        android:orientation="vertical"
+                        android:paddingHorizontal="4dp"
+                        android:paddingVertical="4dp">
+
+                        <TextView
+                            android:id="@+id/tv_results_method_name"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:gravity="center"
+                            android:textColor="@color/white"
+                            android:textSize="13sp"
+                            android:textStyle="bold"
+                            tools:text="Hybrid v12" />
+
+                        <TextView
+                            android:id="@+id/tv_results_method_detail"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="2dp"
+                            android:gravity="center"
+                            android:textColor="@color/green_pass"
+                            android:textSize="11sp"
+                            tools:text="RAN · fit 0.05 · labels 3/3 · 1 of 18 ▾" />
+                    </LinearLayout>
+
+                    <Button
+                        android:id="@+id/btn_results_method_next"
+                        android:layout_width="52dp"
+                        android:layout_height="52dp"
+                        android:minWidth="0dp"
+                        android:paddingStart="0dp"
+                        android:paddingEnd="0dp"
+                        android:backgroundTint="@color/background_dark"
+                        android:contentDescription="Next preprocessing method"
+                        android:text="&#9654;"
+                        android:textColor="@color/blue_primary"
+                        android:textSize="16sp" />
+                </LinearLayout>
+
+                <!-- Shown while a method other than the one that ran is selected above. -->
+                <Button
+                    android:id="@+id/btn_results_rerun"
+                    android:layout_width="match_parent"
+                    android:layout_height="44dp"
+                    android:layout_marginBottom="8dp"
+                    android:backgroundTint="@color/blue_primary"
+                    android:text="RE-RUN INSPECTION WITH THIS METHOD"
+                    android:textColor="@color/white"
+                    android:textSize="12sp"
+                    android:visibility="gone"
+                    tools:visibility="visible" />
+
                 <!-- Which detections the overlay draws; each tap shows one more severity:
                      critical, then advisory too, then ignored too. Those views hide a best
                      match under 0.30, which resembles nothing in the library; a last view shows

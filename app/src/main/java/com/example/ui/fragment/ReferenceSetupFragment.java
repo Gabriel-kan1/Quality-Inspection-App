@@ -202,6 +202,7 @@ public class ReferenceSetupFragment extends Fragment {
 
         // Click on the upload zone to pick an image
         binding.layoutUploadZone.setOnClickListener(v -> launchImageChooser());
+        binding.btnEnlargeReference.setOnClickListener(v -> showLargePhoto());
 
         // Saving a reference goes through labelling: an unclassified detection contributes
         // nothing to the counts, the landmarks or the positional report, so a reference saved
@@ -1457,6 +1458,7 @@ public class ReferenceSetupFragment extends Fragment {
             binding.overlayReferencePreview.setVisibility(View.GONE);
             binding.layoutUploadPlaceholder.setVisibility(View.GONE);
             binding.btnSaveReferenceToGallery.setVisibility(View.VISIBLE);
+            givePhotoTheRoom();
             binding.btnCaptureReference.setText("SAVE REFERENCE");
             binding.btnCaptureReference.setBackgroundColor(ContextCompat.getColor(requireContext(), R.color.green_pass_header));
             awaitExpectedCount();
@@ -1467,6 +1469,74 @@ public class ReferenceSetupFragment extends Fragment {
 
     private void launchImageChooser() {
         showCustomImagePickerDialog();
+    }
+
+    /**
+     * Once a photo is chosen the instructions and the bundled-photo strip have done their job,
+     * and the photo — where the operator counts the hardware and reads the labels — takes their
+     * space. Tapping the photo still opens the chooser for a different one.
+     */
+    private void givePhotoTheRoom() {
+        binding.layoutInstructions.setVisibility(View.GONE);
+        binding.cardAssetsFolder.setVisibility(View.GONE);
+        binding.btnEnlargeReference.setVisibility(View.VISIBLE);
+    }
+
+    /**
+     * The reference full screen: with its boxes and labels once it has been analysed, the plain
+     * photo before that. Pinch to zoom, drag, double-tap to zoom in or out.
+     */
+    private void showLargePhoto() {
+        Bitmap shown;
+        boolean ours;
+        if (binding.overlayReferencePreview.getVisibility() == View.VISIBLE) {
+            shown = binding.overlayReferencePreview.renderAnnotated();
+            ours = true;
+        } else {
+            android.graphics.drawable.Drawable d = binding.ivReferencePreview.getDrawable();
+            shown = d instanceof android.graphics.drawable.BitmapDrawable
+                    ? ((android.graphics.drawable.BitmapDrawable) d).getBitmap() : null;
+            ours = false;
+        }
+        if (shown == null) return;
+        final Bitmap image = shown;
+        final boolean recycle = ours;
+
+        android.app.Dialog dialog = new android.app.Dialog(requireContext(),
+                android.R.style.Theme_DeviceDefault_NoActionBar_Fullscreen);
+        android.widget.LinearLayout root = new android.widget.LinearLayout(requireContext());
+        root.setOrientation(android.widget.LinearLayout.VERTICAL);
+        root.setBackgroundColor(Color.BLACK);
+
+        android.widget.LinearLayout bar = new android.widget.LinearLayout(requireContext());
+        bar.setOrientation(android.widget.LinearLayout.HORIZONTAL);
+        bar.setGravity(android.view.Gravity.CENTER_VERTICAL);
+        bar.setPadding(24, 16, 16, 16);
+        android.widget.TextView title = new android.widget.TextView(requireContext());
+        title.setText("REFERENCE PHOTO  ·  pinch to zoom, double-tap to zoom in");
+        title.setTextColor(Color.WHITE);
+        title.setTextSize(13f);
+        bar.addView(title, new android.widget.LinearLayout.LayoutParams(0,
+                android.widget.LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        android.widget.Button close = new android.widget.Button(requireContext());
+        close.setText("CLOSE");
+        close.setOnClickListener(v -> dialog.dismiss());
+        bar.addView(close);
+        root.addView(bar);
+
+        com.example.ui.view.ZoomImageView zoom =
+                new com.example.ui.view.ZoomImageView(requireContext());
+        zoom.setImageBitmap(image);
+        root.addView(zoom, new android.widget.LinearLayout.LayoutParams(
+                android.widget.LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f));
+
+        com.example.ui.util.SystemBars.keepClear(root);
+        dialog.setContentView(root);
+        dialog.setOnDismissListener(d -> {
+            zoom.setImageDrawable(null);
+            if (recycle && !image.isRecycled()) image.recycle();
+        });
+        dialog.show();
     }
 
     private void showCustomImagePickerDialog() {
@@ -1679,6 +1749,7 @@ public class ReferenceSetupFragment extends Fragment {
         binding.overlayReferencePreview.setVisibility(View.GONE);
         binding.layoutUploadPlaceholder.setVisibility(View.GONE);
         binding.btnSaveReferenceToGallery.setVisibility(View.VISIBLE);
+        givePhotoTheRoom();
         binding.btnCaptureReference.setText("SAVE REFERENCE");
         binding.btnCaptureReference.setBackgroundColor(ContextCompat.getColor(requireContext(),
                 R.color.green_pass_header));

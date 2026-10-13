@@ -90,10 +90,24 @@ public class OverlayFilterTest {
 
     @Test
     public void theButtonCyclesNarrowestToWidestThenUnderTheFloorAndBack() {
+        assertEquals(OverlayFilter.CRITICAL, OverlayFilter.CRITICAL_TRUSTED.next());
         assertEquals(OverlayFilter.CRITICAL_ADVISORY, OverlayFilter.CRITICAL.next());
         assertEquals(OverlayFilter.EVERY_TYPE, OverlayFilter.CRITICAL_ADVISORY.next());
         assertEquals(OverlayFilter.UNDER_FLOOR, OverlayFilter.EVERY_TYPE.next());
-        assertEquals(OverlayFilter.CRITICAL, OverlayFilter.UNDER_FLOOR.next());
+        assertEquals(OverlayFilter.CRITICAL_TRUSTED, OverlayFilter.UNDER_FLOOR.next());
+    }
+
+    /** The first view: critical hardware at 0.74 or more, the calls the app does not ask about. */
+    @Test
+    public void theTrustedViewShowsCriticalAtTheCeilingOrAbove() {
+        assertTrue(ResultsFragment.shownOnOverlay(OverlayFilter.CRITICAL_TRUSTED, CRITICAL, 0.74f, false));
+        assertTrue(ResultsFragment.shownOnOverlay(OverlayFilter.CRITICAL_TRUSTED, CRITICAL, 0.95f, false));
+        assertFalse(ResultsFragment.shownOnOverlay(OverlayFilter.CRITICAL_TRUSTED, CRITICAL, 0.739f, false));
+        assertFalse(ResultsFragment.shownOnOverlay(OverlayFilter.CRITICAL_TRUSTED, ADVISORY, 0.95f, false));
+        assertFalse(ResultsFragment.shownOnOverlay(OverlayFilter.CRITICAL_TRUSTED, IGNORED, 0.95f, false));
+        // An operator's label settles it, whatever the score.
+        assertTrue(ResultsFragment.shownOnOverlay(OverlayFilter.CRITICAL_TRUSTED, CRITICAL, 0.40f, true));
+        assertEquals("CRITICAL AT 0.74+", OverlayFilter.CRITICAL_TRUSTED.label);
     }
 
     @Test

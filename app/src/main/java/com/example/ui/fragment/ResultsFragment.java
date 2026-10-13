@@ -45,7 +45,7 @@ import com.example.ml.ReferenceLibrary;
 import com.example.report.AdvisoryNotes;
 import com.example.ml.ReferenceLibraryProvider;
 import com.example.ml.ScaleCalibration;
-import com.example.ml.SizePrior;
+import com.example.ml.ReferenceFit;
 import com.example.ml.ThresholdTuner;
 
 import java.util.ArrayList;
@@ -132,6 +132,22 @@ public class ResultsFragment extends Fragment {
     private final Map<Integer, Long> eventIdByFeature = new LinkedHashMap<>();
     /** Which detections the spatial overlay draws. */
     private OverlayFilter overlayFilter = OverlayFilter.CRITICAL;
+
+    // ── Preprocessing method switcher ──
+    /** The method a re-run was asked for, or null for the automatic choice. */
+    private String pinnedMethodId;
+    /** The method whose boxes the results show. */
+    private String ranMethodId;
+    /** Every method's position fit from the automatic run, kept across re-runs; may be empty. */
+    private final Map<String, Double> methodFits = new LinkedHashMap<>();
+    /** Labels each closely fitting method got right in the automatic run; may be empty. */
+    private final Map<String, Integer> methodLabels = new LinkedHashMap<>();
+    /** Features the fit was scored against, for "labels 2/3". */
+    private int fitFeatureCount;
+    /** The methods in the order the switcher steps through them: best fit first. */
+    private final List<String> methodOrder = new ArrayList<>();
+    private int methodCursor;
+    private boolean rerunning;
     // Written on the pipeline/review threads and read on the UI thread. The handler posts
     // give most of these a happens-before edge, but the fields are cheap to publish properly
     // and the counter below is incremented off a thread that never posts before it is read.
@@ -215,6 +231,7 @@ public class ResultsFragment extends Fragment {
 
         setUpCannyEdgesToggle();
         setUpOverlayFilter();
+        setUpMethodSwitcher();
         binding.btnSavePhotoToGallery.setOnClickListener(v -> savePhotoToGallery());
 
         setUpOperatorField();
@@ -258,6 +275,12 @@ public class ResultsFragment extends Fragment {
      * The strings are format patterns over the floor.
      */
     enum OverlayFilter {
+        /**
+         * Critical types the app trusted without asking: a best match at or above
+         * {@link ActiveLearningPolicy#REVIEW_CEILING}, or labelled by the operator.
+         */
+        CRITICAL_TRUSTED("CRITICAL AT " + ceiling() + "+", "critical at " + ceiling() + "+",
+                "critical types with a best match of " + ceiling() + " or more"),
         /** Critical types only: the hardware that decides pass or fail. */
         CRITICAL("CRITICAL ONLY", "critical only",
                 "critical types with a best match of %.2f or more"),
@@ -293,6 +316,10 @@ public class ResultsFragment extends Fragment {
             for (OverlayFilter f : values()) if (f.name().equals(name)) return f;
             return CRITICAL;
         }
+
+        private static String ceiling() {
+            return String.format(Locale.US, "%.2f", ActiveLearningPolicy.REVIEW_CEILING);
+        }
     }
 
     /**
@@ -308,6 +335,9 @@ public class ResultsFragment extends Fragment {
                                   float bestScore, boolean confirmed) {
         boolean underFloor = !confirmed && bestScore < ActiveLearningPolicy.REVIEW_FLOOR;
         switch (filter) {
+            case CRITICAL_TRUSTED:
+                return severity == FeatureTypeRegistry.Severity.CRITICAL
+                        && (confirmed || bestScore >= ActiveLearningPolicy.REVIEW_CEILING);
             case CRITICAL:
                 return !underFloor && severity == FeatureTypeRegistry.Severity.CRITICAL;
             case CRITICAL_ADVISORY:
@@ -434,11 +464,11 @@ public class ResultsFragment extends Fragment {
             appliedThresholds = ThresholdTuner.applyTo(context, partId, activeLibrary);
 
             // The labelled reference layout is read before detection runs, because the
-            // adaptive edge stage wants it: with the expected size of every critical feature
-            // in hand it can run each preprocessing strength and keep the one whose boxes
-            // reproduce those sizes, which is the one that neither merged a shadow in nor
-            // cropped a fastener. Null on any path without a labelled layout, and detection
-            // then decides on the image alone.
+            // adaptive edge stage wants it: with every critical feature's position and label
+            // in hand it runs each edge method and keeps the one whose boxes sit where the
+            // reference's features are, and whose boxes classify as their labels when the
+            // fit is close. Null on any path without a labelled layout, and detection then
+            // decides on the image alone.
             //
             // Guarded by the reference URI, so a layout labelled against a photo that has
             // since been replaced is refused rather than compared against.
@@ -447,14 +477,14 @@ public class ResultsFragment extends Fragment {
             referenceImageUri = hasRealReference ? ref.getImageUri() : null;
             FeatureLayout labelled = hasRealReference ? keepCriticalSlots(context,
                     FeatureLayout.loadFor(context, partId, ref.getImageUri())) : null;
-            SizePrior sizePrior = SizePrior.from(labelled);
+            ReferenceFit referenceFit = ReferenceFit.from(labelled);
 
             // Detected: classify the active chassis image. Crops are written straight to the
             // learning store and freed inside the extractor, so nothing scales with box count.
             HardwareFeatureExtractor.AnalysisResult activeResult =
                     HardwareFeatureExtractor.extractFeatures(context, imageUri, activeLibrary,
                             (crop, index) -> LearningCropStore.save(context, partId, crop, index),
-                            null, sizePrior);
+                            null, referenceFit, pinnedMethodId);
 
             // Noise filter: detections that resemble an ignored type, on a part whose
             // history has shown such crops are reliably not hardware, are carried as that
@@ -559,6 +589,11 @@ public class ResultsFragment extends Fragment {
     /** Persists one {@link ClassificationEvent} (and its crop) per detection. */
     private void logClassificationEvents(AppDatabase db,
                                           List<HardwareFeatureExtractor.ExtractedFeature> features) {
+        // A re-run with another method replaces the run before it: its rows would otherwise
+        // count the same photo twice in the threshold fit.
+        if (!loggedEventIds.isEmpty()) {
+            db.classificationEventDao().deleteByIds(new ArrayList<>(loggedEventIds));
+        }
         loggedEventIds.clear();
         eventIdByFeature.clear();
         long now = System.currentTimeMillis();
@@ -611,6 +646,7 @@ public class ResultsFragment extends Fragment {
         String ranMethod = activeResult.preprocessing != null
                 ? activeResult.preprocessing.methodId : activeResult.edgeMethodId;
         binding.tvCannyEdgesTitle.setText(edgeMapTitle(ranMethod));
+        rememberMethodChoice(activeResult, ranMethod);
         binding.tvCannyEdgesAbout.setText(ranMethod == null ? "" : MethodBrief.of(ranMethod));
         applyCannyEdgesExpanded(binding.ivCannyEdges.getVisibility() == View.VISIBLE);
         binding.chassisOverlayView.setResultData(imageUri, activeResult.features,
@@ -622,6 +658,121 @@ public class ResultsFragment extends Fragment {
         binding.chassisOverlayView.setOnFeatureClickListener((index, f) -> correctFeatureAt(index));
 
         recomputeAndRender();
+    }
+
+    private void setUpMethodSwitcher() {
+        binding.btnResultsMethodPrev.setOnClickListener(v -> stepMethod(-1));
+        binding.btnResultsMethodNext.setOnClickListener(v -> stepMethod(1));
+        binding.layoutResultsMethodLabel.setOnClickListener(v -> showMethodList());
+        binding.btnResultsRerun.setOnClickListener(v -> rerunWithShownMethod());
+        binding.layoutResultsMethodSwitcher.setEnabled(false);
+        binding.tvResultsMethodName.setText("Analysing…");
+        binding.tvResultsMethodDetail.setText("");
+    }
+
+    /**
+     * Keeps the automatic run's scores for the switcher and puts the method that ran under it.
+     * Only the automatic run has scores to keep: a re-run with a chosen method compares
+     * nothing, and the scores it would replace are the ones worth seeing next to it.
+     */
+    private void rememberMethodChoice(HardwareFeatureExtractor.AnalysisResult result,
+                                      String ran) {
+        ranMethodId = ran;
+        com.example.ml.AdaptivePreprocessing.Choice choice = result.preprocessing;
+        if (choice != null && !choice.pinned && !choice.agreement.isEmpty()) {
+            methodFits.clear();
+            methodFits.putAll(choice.agreement);
+            methodLabels.clear();
+            methodLabels.putAll(choice.labels);
+            fitFeatureCount = choice.fit == null ? 0 : choice.fit.featureCount();
+        }
+        methodOrder.clear();
+        methodOrder.addAll(com.example.ml.AdaptivePreprocessing.ballot());
+        if (!methodFits.isEmpty()) {
+            methodOrder.sort((a, b) -> Double.compare(fitOrInf(a), fitOrInf(b)));
+        }
+        methodCursor = Math.max(0, methodOrder.indexOf(ran));
+        rerunning = false;
+        binding.btnSaveReport.setEnabled(true);
+        renderMethodSwitcher();
+    }
+
+    private double fitOrInf(String id) {
+        Double v = methodFits.get(id);
+        return v == null || Double.isNaN(v) ? Double.POSITIVE_INFINITY : v;
+    }
+
+    private void stepMethod(int delta) {
+        if (methodOrder.isEmpty() || rerunning) return;
+        methodCursor = Math.floorMod(methodCursor + delta, methodOrder.size());
+        renderMethodSwitcher();
+    }
+
+    /** One line per method — what an operator compares before re-running with one. */
+    String methodLine(String id) {
+        StringBuilder sb = new StringBuilder();
+        if (id.equals(ranMethodId)) sb.append("RAN · ");
+        Double fit = methodFits.get(id);
+        if (fit != null && !Double.isNaN(fit)) {
+            sb.append(String.format(Locale.US, "fit %.2f", fit));
+        } else if (!methodFits.isEmpty()) {
+            sb.append("no fit");
+        }
+        Integer labels = methodLabels.get(id);
+        if (labels != null && labels >= 0 && fitFeatureCount > 0) {
+            sb.append(String.format(Locale.US, " · labels %d/%d", labels, fitFeatureCount));
+        }
+        return sb.toString();
+    }
+
+    private void renderMethodSwitcher() {
+        if (binding == null || methodOrder.isEmpty()) return;
+        String shown = methodOrder.get(methodCursor);
+        binding.tvResultsMethodName.setText(EdgeMethodLab.nameOf(shown));
+        String line = methodLine(shown);
+        binding.tvResultsMethodDetail.setText((line.isEmpty() ? "" : line + " · ")
+                + (methodCursor + 1) + " of " + methodOrder.size() + " ▾");
+        binding.tvResultsMethodDetail.setTextColor(ContextCompat.getColor(requireContext(),
+                shown.equals(ranMethodId) ? R.color.green_pass : R.color.gray_text_secondary));
+        boolean other = !shown.equals(ranMethodId);
+        binding.btnResultsRerun.setVisibility(other || rerunning ? View.VISIBLE : View.GONE);
+        binding.btnResultsRerun.setEnabled(!rerunning);
+        binding.btnResultsRerun.setText(rerunning ? "RE-RUNNING…"
+                : "RE-RUN INSPECTION WITH " + EdgeMethodLab.nameOf(shown).toUpperCase(Locale.ROOT));
+        binding.btnResultsMethodPrev.setEnabled(!rerunning);
+        binding.btnResultsMethodNext.setEnabled(!rerunning);
+    }
+
+    private void showMethodList() {
+        if (methodOrder.isEmpty() || rerunning) return;
+        String[] items = new String[methodOrder.size()];
+        for (int i = 0; i < items.length; i++) {
+            String id = methodOrder.get(i);
+            String line = methodLine(id);
+            items[i] = EdgeMethodLab.nameOf(id) + (line.isEmpty() ? "" : "   " + line);
+        }
+        new androidx.appcompat.app.AlertDialog.Builder(requireContext())
+                .setTitle(methodFits.isEmpty() ? "Preprocessing methods"
+                        : "Preprocessing methods, best fit to the reference first")
+                .setItems(items, (d, which) -> {
+                    methodCursor = which;
+                    renderMethodSwitcher();
+                })
+                .setNegativeButton("CLOSE", null)
+                .show();
+    }
+
+    /**
+     * Runs the whole inspection again with the method on the switcher: its boxes, its crops
+     * and classifications, its verdict. The report filed afterwards is this run's.
+     */
+    private void rerunWithShownMethod() {
+        if (methodOrder.isEmpty() || rerunning) return;
+        pinnedMethodId = methodOrder.get(methodCursor);
+        rerunning = true;
+        binding.btnSaveReport.setEnabled(false);
+        renderMethodSwitcher();
+        runFeatureVerificationPipeline();
     }
 
     /**

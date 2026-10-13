@@ -148,7 +148,7 @@ public final class ImageQuality {
      * between them. The rule also withheld light on photographs where it was the only rung to
      * find a feature at all: on {@code screws_none.jpg} (contrast 62) medium and strong both
      * miss an out-of-focus bolt that light finds, and the layout then carries five slots
-     * instead of six. {@link SizePrior} now charges unmatched detections that lie on the part,
+     * instead of six. {@link ReferenceFit} now charges unmatched detections that lie on the part,
      * so over-detection is scored directly and the blunt rule is no longer needed.
      */
     public List<PreprocessingStrength> candidates() {

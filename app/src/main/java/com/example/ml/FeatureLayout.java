@@ -47,10 +47,9 @@ import java.util.Locale;
  * the size ratios observed at it across filed inspections ({@link Slot#sizeRatios}), and
  * {@link Slot#expectedSizeFactor()} — the median of those ratios with the reference counted
  * once at 1.0 — is the running estimate of how big the hardware there really is relative to
- * the box the reference drew. {@link SizePrior} uses it to arbitrate between preprocessing
- * strengths: the one whose boxes come closest to the learned sizes is the one that neither
- * merged a shadow in nor cropped a fastener. The size <em>check</em> itself still compares
- * against the reference box, which is what the filed reports say it does.
+ * the box the reference drew. The size <em>check</em> itself compares against the reference
+ * box, which is what the filed reports say it does. (The edge method used to be chosen on
+ * these learned sizes; it is now chosen on position and labels — see {@link ReferenceFit}.)
  *
  * <h3>Dimension statistics</h3>
  * Each slot accumulates the sizes measured for it. Median and MAD are kept rather than mean

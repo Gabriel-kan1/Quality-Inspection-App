@@ -152,8 +152,17 @@ public class HardwareFeatureExtractor {
      * frame border, so an interior region is never removed. Measured against the ground-truth
      * counts: false positives fall from 13 to 3 over 26 photographs and the weighted score
      * from 19 to 11, at the cost of one miss. See {@code python/background_mask_study.py}.
+     *
+     * <p>Off. On the lighting test photos — plates that fill the frame, lit from the side and
+     * below — the mask took the shadow for background and painted out the hardware in it: a
+     * 3-hole plate lit from below lost its threaded hole on every method, and the best of
+     * Hybrid v1 to v10 passed 15 of 27 lighting variants with it against 25 of 27 for the
+     * best method without. Every method now sees the photo as taken; a wide shot's bench and
+     * floor come back as candidate boxes, which the oversize drop in v11 to v18 and the
+     * reference's labelling are left to deal with. See
+     * {@code python/variation_test_study.py --no-mask}.
      */
-    static final boolean MASK_BACKGROUND = true;
+    static final boolean MASK_BACKGROUND = false;
     /**
      * Logs every box before and after merging. Verbose — for tuning detection, not normal use.
      *
@@ -530,21 +539,22 @@ public class HardwareFeatureExtractor {
     }
 
     /**
-     * As above, with the expected sizes of the part's features, when known.
+     * As above, with the part's labelled reference, when known.
      *
-     * @param sizePrior what size each critical feature should be, from the part's labelled
-     *        reference layout refined by past inspections — or null when there is no such
-     *        layout (reference setup, a part without one, the legacy re-classifying path).
-     *        Only the adaptive edge stage reads it: with a prior it runs every eligible
-     *        preprocessing strength and keeps the one whose boxes best reproduce those sizes;
-     *        without one it decides on the image alone. See {@link AdaptivePreprocessing}.
+     * @param referenceFit where each critical feature is and what it was labelled, from the
+     *        part's reference layout — or null when there is no such layout (reference setup,
+     *        a part without one, the legacy re-classifying path). Only the adaptive edge stage
+     *        reads it: with one it runs every method and keeps the one whose boxes sit where
+     *        the reference's features are, deciding close calls by whether the boxes classify
+     *        as the labels the operator gave; without one it decides on the image alone. See
+     *        {@link AdaptivePreprocessing}.
      */
     public static AnalysisResult extractFeatures(Context context, String uriString,
                                                  ReferenceLibrary library, CropSink sink,
                                                  Boolean forceGlareCorrection,
-                                                 SizePrior sizePrior) {
+                                                 ReferenceFit referenceFit) {
         return extractFeatures(context, uriString, library, sink, forceGlareCorrection,
-                sizePrior, null);
+                referenceFit, null);
     }
 
     /**
@@ -555,7 +565,7 @@ public class HardwareFeatureExtractor {
     public static AnalysisResult extractFeatures(Context context, String uriString,
                                                  ReferenceLibrary library, CropSink sink,
                                                  Boolean forceGlareCorrection,
-                                                 SizePrior sizePrior,
+                                                 ReferenceFit referenceFit,
                                                  String pinnedMethodId) {
         List<ExtractedFeature> features = new ArrayList<>();
         Bitmap diagnosticBitmap = null;
@@ -623,14 +633,37 @@ public class HardwareFeatureExtractor {
 
             // STEP 2 — preprocessing + edge detection (shared with extractCrops()), by
             // whichever method the operator chose in the Edge Lab.
-            e = computeEdges(context, src, forceGlareCorrection, sizePrior, preprocessing,
+            // With a library to classify against, the adaptive stage can check which method's
+            // boxes carry the reference's labels, not only where they sit.
+            ReferenceFit fit = referenceFit;
+            if (fit != null && embedder != null) {
+                final Mat pixels = src;
+                final float w = src.width();
+                final float h = src.height();
+                fit = fit.withLabeller(ReferenceFit.caching(box -> {
+                    Rect r = new Rect(Math.round(box.left * w), Math.round(box.top * h),
+                            Math.max(1, Math.round(box.width() * w)),
+                            Math.max(1, Math.round(box.height() * h)));
+                    Bitmap crop = cropFeature(sourceCropper, pixels, r);
+                    if (crop == null) return null;
+                    try {
+                        return library.classify(embedder.embed(crop)).type;
+                    } catch (Throwable t) {
+                        return null;
+                    } finally {
+                        crop.recycle();
+                    }
+                }));
+            }
+            e = computeEdges(context, src, forceGlareCorrection, fit, preprocessing,
                     pinnedMethodId);
             if (e == null) {
                 Log.e(TAG, "Edge stage produced nothing for " + filename + " — no detections.");
                 AnalysisResult empty = new AnalysisResult(features, null, null, false);
                 empty.workingWidth = workingWidth;
                 empty.workingHeight = workingHeight;
-                empty.edgeMethodId = EdgeMethodLab.selectedId(context);
+                empty.edgeMethodId = pinnedMethodId != null ? pinnedMethodId
+                        : EdgeMethodLab.selectedId(context);
                 return empty;
             }
             glareApplied = e.glareCorrectionApplied;
@@ -672,7 +705,8 @@ public class HardwareFeatureExtractor {
                 glareApplied);
         result.workingWidth = workingWidth;
         result.workingHeight = workingHeight;
-        result.edgeMethodId = EdgeMethodLab.selectedId(context);
+        result.edgeMethodId = pinnedMethodId != null ? pinnedMethodId
+                : EdgeMethodLab.selectedId(context);
         result.preprocessing = preprocessing[0];
         result.backgroundFraction = backgroundFraction;
         result.backgroundOverlay = backgroundOverlay;
@@ -994,8 +1028,8 @@ public class HardwareFeatureExtractor {
      * other method ignores both.
      */
     static Edges computeEdges(Context context, Mat src, Boolean forceGlareCorrection,
-                              SizePrior sizePrior, AdaptivePreprocessing.Choice[] choiceOut) {
-        return computeEdges(context, src, forceGlareCorrection, sizePrior, choiceOut, null);
+                              ReferenceFit referenceFit, AdaptivePreprocessing.Choice[] choiceOut) {
+        return computeEdges(context, src, forceGlareCorrection, referenceFit, choiceOut, null);
     }
 
     /** The method whose map an analysis used: the adaptive stage's pick, or the chosen one. */
@@ -1005,12 +1039,19 @@ public class HardwareFeatureExtractor {
 
     /** As above, with the adaptive stage pinned to one catalogue method. */
     static Edges computeEdges(Context context, Mat src, Boolean forceGlareCorrection,
-                              SizePrior sizePrior, AdaptivePreprocessing.Choice[] choiceOut,
+                              ReferenceFit referenceFit, AdaptivePreprocessing.Choice[] choiceOut,
                               String pinnedMethodId) {
         EdgeMethodLab.Method method = EdgeMethodLab.selected(context);
+        // A pinned method runs whatever Edge Lab has selected: the results screen re-runs an
+        // inspection with the method the operator picked there.
+        EdgeMethodLab.Method pinned = pinnedMethodId == null ? null
+                : EdgeMethodLab.byId(pinnedMethodId);
+        if (pinned != null && !EdgeMethodLab.ADAPTIVE_ID.equals(method.id)) {
+            return EdgeMethodLab.computeWith(pinned, src, forceGlareCorrection);
+        }
         if (EdgeMethodLab.ADAPTIVE_ID.equals(method.id)) {
             try {
-                return AdaptivePreprocessing.compute(src, forceGlareCorrection, sizePrior,
+                return AdaptivePreprocessing.compute(src, forceGlareCorrection, referenceFit,
                         choiceOut, pinnedMethodId);
             } catch (Throwable t) {
                 // Same contract as computeWith: a method that throws yields no detections,

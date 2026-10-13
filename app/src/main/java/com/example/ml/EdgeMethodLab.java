@@ -48,8 +48,8 @@ import java.util.Map;
  *   <li><b>One scorer.</b> Every edge map is pushed through the detector's own
  *       {@link HardwareFeatureExtractor#findFeatureBoxes} geometry filter. Ranking by raw
  *       contour count would crown whichever method produced the most noise.
- *   <li><b>The inspection's own input and output.</b> Every method sees the image after the
- *       chassis mask has painted out the background, as an inspection's edge stage does, and
+ *   <li><b>The inspection's own input and output.</b> Every method sees the image an
+ *       inspection's edge stage sees (the photo as taken, now that the chassis mask is off), and
  *       each card carries the boxes and crops an inspection would take from its map — padded,
  *       sourced and numbered the same way — so a method is judged on what the classifier
  *       would actually be handed.
@@ -202,7 +202,7 @@ public final class EdgeMethodLab {
         public boolean picked;
         /**
          * How far this method's boxes sit from the chosen part's reference ({@link
-         * SizePrior#agreement}, lower is better); NaN when no part was chosen or the boxes
+         * ReferenceFit#agreement}, lower is better); NaN when no part was chosen or the boxes
          * could not be aligned onto it. The number the adaptive stage decides on.
          */
         public double referenceScore = Double.NaN;
@@ -333,9 +333,9 @@ public final class EdgeMethodLab {
      * v1 is the stack the detector shipped with; v2 to v6 the tuned replacements for it, each
      * from a study run; v7 and v8 the light and strong versions of v6 the adaptive stage
      * reaches for on soft or noisy photographs; v9 and v10 the two Canny baselines the rest
-     * are built up from; v11 to v18 the methods found on the lighting test photos, which run
-     * without the chassis mask and each hold a different part through a change of light. The ids are older than the names and are kept, because layouts and
-     * preferences store them.
+     * are built up from; v11 to v18 the methods found on the lighting test photos, each of
+     * which holds a different part through a change of light. The ids are older than the
+     * names and are kept, because layouts and preferences store them.
      *
      * <p>The bare operators that used to open the list — Canny at fixed thresholds, Sobel and
      * Scharr gradient magnitude, Laplacian of Gaussian, morphological gradient and adaptive
@@ -567,7 +567,7 @@ public final class EdgeMethodLab {
         methods.add(new Method("unmasked-strict-canny", "Hybrid v11",
                 "The all-rounder for changing light: 5, 9 and 6 of 9 lighting variants on "
                         + "the three test plates, every defect caught.",
-                "No chassis mask · CLAHE · bilateral 5 · Canny at 1.3x Otsu, low 0.5x · "
+                "CLAHE · bilateral 5 · Canny at 1.3x Otsu, low 0.5x · "
                         + "pieces over 15% of the frame dropped",
                 "Hybrid v9 with Canny's thresholds raised to 1.3x Otsu, so a soft shadow edge "
                         + "does not register, and every connected piece wider or taller than "
@@ -590,7 +590,7 @@ public final class EdgeMethodLab {
         methods.add(new Method("unmasked-v4-capped", "Hybrid v12",
                 "Holes and bolt heads under any light: all 9 lighting variants of the 3-hole "
                         + "plate. Weak on raised studs and screws.",
-                "No chassis mask · Hybrid v4's steps · pieces over 15% of the frame dropped",
+                "Hybrid v4's steps · pieces over 15% of the frame dropped",
                 "Hybrid v4, the most stable of the tuned variants, on the unmasked photo, "
                         + "with every piece wider or taller than 15% of the frame dropped. Under "
                         + "light from below, the shadow's edge runs into the top threaded hole "
@@ -607,7 +607,7 @@ public final class EdgeMethodLab {
         methods.add(new Method("unmasked-grayworld-v4", "Hybrid v13",
                 "Warm and yellow light: colour cast removed first. 8 and 9 of 9 on the two "
                         + "hole plates; its reference missed a screw on the stud plate.",
-                "No chassis mask · gray-world colour balance · Hybrid v12's steps",
+                "gray-world colour balance · Hybrid v12's steps",
                 "Scales each colour channel so the photo averages to grey before Hybrid v12 "
                         + "runs, so a warm or yellow lamp gives the same grey image as a white "
                         + "one. 8 of 9 on the 3-hole plate and 9 of 9 on the threaded holes; on "
@@ -628,7 +628,7 @@ public final class EdgeMethodLab {
         methods.add(new Method("unmasked-stud-canny", "Hybrid v14",
                 "Raised studs and screws lit from the side: 7 of 9 on the stud plate, the "
                         + "best there. Missed the threaded-hole plate's defect.",
-                "No chassis mask · CLAHE · bilateral 5 · Gaussian 5 · Canny at Otsu, low "
+                "CLAHE · bilateral 5 · Gaussian 5 · Canny at Otsu, low "
                         + "0.5x · dilate 3, close 5",
                 "Hybrid v9 with a light Gaussian before Canny and a light join after it "
                         + "(dilate 3, close 5): enough to make a threaded shank one outline "
@@ -649,7 +649,7 @@ public final class EdgeMethodLab {
         methods.add(new Method("unmasked-median-flat-v3", "Hybrid v15",
                 "Hard shadows: divides them out of the photo before looking for edges. 9 of "
                         + "9 on the threaded-hole plate.",
-                "No chassis mask · photo divided by its median background (window 6% of "
+                "photo divided by its median background (window 6% of "
                         + "the frame) · Hybrid v3's steps",
                 "Estimates the background with a median filter wider than any fastener and "
                         + "divides the photo by it. A median keeps a shadow's sharp step, so the "
@@ -676,7 +676,7 @@ public final class EdgeMethodLab {
         methods.add(new Method("unmasked-flat-v4", "Hybrid v16",
                 "Uneven light - lamp pools and gradients across the plate: 6, 9 and 2 of 9 "
                         + "on the three test plates.",
-                "No chassis mask · gray-world balance · photo divided by a wide Gaussian "
+                "gray-world balance · photo divided by a wide Gaussian "
                         + "blur of itself · Hybrid v12's steps",
                 "Colour-balances, then divides the photo by a Gaussian blur of itself (sigma 3% "
                         + "of the frame), which flattens slow changes in brightness: the bright "
@@ -707,7 +707,7 @@ public final class EdgeMethodLab {
         methods.add(new Method("unmasked-mser", "Hybrid v17",
                 "Round holes and heads, found as regions rather than edges: 7 and 9 of 9 on "
                         + "the hole plates. Misses studs seen side-on.",
-                "No chassis mask · Gaussian flattening · MSER stable regions · roundish "
+                "Gaussian flattening · MSER stable regions · roundish "
                         + "ones kept, filled",
                 "Maximally stable extremal regions: blobs that keep the same outline across "
                         + "a wide range of thresholds, as a hole or a head does and a shadow's "
@@ -728,7 +728,7 @@ public final class EdgeMethodLab {
         methods.add(new Method("unmasked-hough-v4", "Hybrid v18",
                 "Circular features that edges break up: circles found by voting, joined with "
                         + "Hybrid v12. 6 and 9 of 9 on the hole plates.",
-                "No chassis mask · Gaussian flattening · median 5 · Hough circles, filled · "
+                "Gaussian flattening · median 5 · Hough circles, filled · "
                         + "OR Hybrid v12",
                 "Hough circle voting on the flattened photo finds a round hole even when only "
                         + "part of its rim shows as edge, and each circle is drawn filled so "
@@ -752,15 +752,16 @@ public final class EdgeMethodLab {
                 }, true));
 
         methods.add(new Method(ADAPTIVE_ID, "Adaptive (chooses a method per photograph)",
-                "Choosing for you: on each inspection photo it keeps the method that best "
-                        + "reproduces the part's labelled reference.",
-                "Every method from Hybrid v1 to v18, scored against the reference layout",
+                "Choosing for you: on each inspection photo it keeps the method whose "
+                        + "boxes sit where the reference's features are and carry their labels.",
+                "Every method from Hybrid v1 to v18 · scored by position against the "
+                        + "reference's features · close fits decided by the labels",
                 "On every inspection photograph, runs every other method on this screen and "
-                        + "scores each one's boxes against the part's labelled reference: a "
-                        + "box the wrong size, a slot nothing matched and a box invented on "
-                        + "the part all count against it. The method that best reproduces "
-                        + "what the operator labelled runs; the reference's own method is kept "
-                        + "unless another beats it clearly. Without a reference (reference "
+                        + "scores each one's boxes by position against the part's labelled "
+                        + "reference: a feature with no box near it and a box on the part where "
+                        + "the reference has nothing both count against it. Of the few that fit "
+                        + "best, the one whose boxes classify as the labels the operator gave "
+                        + "runs; the reference's own method wins a tie. Without a reference (reference "
                         + "setup itself) it starts from the photo's noise and contrast, and the "
                         + "operator can re-run with any method. Pick a part at the top of this "
                         + "screen to see the real choice on this card.",
@@ -1418,20 +1419,19 @@ public final class EdgeMethodLab {
      * reference-URI guard is skipped, since the lab's photograph is by definition not the
      * reference. Null when the part cannot be scored against.
      */
-    static SizePrior priorForPart(Context context, String partId) {
+    static ReferenceFit priorForPart(Context context, String partId) {
         FeatureLayout layout = FeatureLayout.load(context, partId);
         if (layout == null) return null;
         FeatureLayout critical = layout.retaining(s -> FeatureTypeRegistry.severityOf(
                 context, s.type) == FeatureTypeRegistry.Severity.CRITICAL);
-        return SizePrior.from(critical.isEmpty() ? null : critical);
+        return ReferenceFit.from(critical.isEmpty() ? null : critical);
     }
 
     private static String priorProblem(Context context, String partId) {
         FeatureLayout layout = FeatureLayout.load(context, partId);
         if (layout == null) return "it has no labelled reference layout";
-        return "its reference has too few critical slots with a usable box to score against ("
-                + layout.slots().size() + " slots; at least 4 critical ones of 30 px or more "
-                + "are needed)";
+        return "its reference has no critical features to score against ("
+                + layout.slots().size() + " labelled, none of a critical type)";
     }
 
     /**
@@ -1446,7 +1446,7 @@ public final class EdgeMethodLab {
      * has more detail than the working copy: the pixels the encoder would be handed.
      *
      * <p>With a part, every method's boxes are also scored against that part's labelled
-     * reference, the same {@link SizePrior#agreement} an inspection decides on, and the
+     * reference, the same {@link ReferenceFit#agreement} an inspection decides on, and the
      * adaptive card runs exactly as an inspection of that part would, so the lab shows the
      * real per-photograph choice rather than a fallback.
      *
@@ -1475,7 +1475,7 @@ public final class EdgeMethodLab {
             return Comparison.empty(inUse, partId);
         }
 
-        final SizePrior prior = partId == null ? null : priorForPart(context, partId);
+        final ReferenceFit prior = partId == null ? null : priorForPart(context, partId);
         String partProblem = partId != null && prior == null ? priorProblem(context, partId) : null;
 
         Mat src = new Mat();
@@ -1543,8 +1543,8 @@ public final class EdgeMethodLab {
                 if (prior != null && ballot.contains(r.id)) scores.put(r.id, r.referenceScore);
             }
             chosen = prior != null
-                    ? AdaptivePreprocessing.choose(incumbent, scores,
-                            AdaptivePreprocessing.AGREEMENT_MARGIN)
+                    ? AdaptivePreprocessing.choose(incumbent, scores, null,
+                            AdaptivePreprocessing.SHORTLIST_MARGIN)
                     : incumbent;
             for (MethodResult r : results) r.picked = r.id.equals(chosen);
         } catch (Throwable t) {
@@ -1583,10 +1583,11 @@ public final class EdgeMethodLab {
         List<String> lines = new ArrayList<>();
         if (quality == null || chosenId == null) return lines;
         if (scores != null && !scores.isEmpty()) {
-            lines.add("Every method scored against " + partId + "'s labelled reference ("
-                    + priorDescription + "). Lower is closer to what the operator labelled: a "
-                    + "wrong-sized box, a missed slot and an invented box on the part all "
-                    + "count against a method.");
+            lines.add("Every method scored by position against " + partId + "'s labelled "
+                    + "reference (" + priorDescription + "). Lower is closer to what the operator "
+                    + "labelled: a feature with no box near it and a box on the part where the "
+                    + "reference has nothing both count against a method. An inspection also "
+                    + "checks labels between the closest few; this screen shows position only.");
             List<Map.Entry<String, Double>> ranked = new ArrayList<>(scores.entrySet());
             ranked.sort((a, b) -> Double.compare(orInf(a.getValue()), orInf(b.getValue())));
             int shown = 0;
@@ -1599,12 +1600,12 @@ public final class EdgeMethodLab {
                                 ? "   (reference's method)" : ""));
             }
             if (chosenId.equals(incumbentId)) {
-                lines.add("The reference's method stands: nothing beat it by more than "
-                        + fmt(AdaptivePreprocessing.AGREEMENT_MARGIN) + ".");
+                lines.add("The reference's method stands: it is within "
+                        + fmt(AdaptivePreprocessing.SHORTLIST_MARGIN) + " of the best fit.");
             } else {
                 lines.add(nameOf(chosenId) + " reproduces the reference better than "
                         + (incumbentId == null ? "the starting point" : nameOf(incumbentId))
-                        + " by more than " + fmt(AdaptivePreprocessing.AGREEMENT_MARGIN)
+                        + " by more than " + fmt(AdaptivePreprocessing.SHORTLIST_MARGIN)
                         + ", so it runs.");
             }
         } else {
@@ -1675,7 +1676,7 @@ public final class EdgeMethodLab {
     /** Runs one method, measures it, cuts its crops and converts its map for display. */
     private static MethodResult run(Method method, Mat gray, Mat src, boolean inUse,
                                     ScaleCalibration calibration, CropSource cropSource,
-                                    SizePrior prior) {
+                                    ReferenceFit prior) {
         Mat edges = null;
         try {
             long startedAt = System.currentTimeMillis();

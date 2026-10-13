@@ -320,16 +320,17 @@ public class ChassisOverlayView extends View {
         int viewWidth = getWidth();
         int viewHeight = getHeight();
         if (viewWidth == 0 || viewHeight == 0) return -1;
+        RectF frame = photoFrame(viewWidth, viewHeight);
 
         int best = -1;
         float bestArea = Float.MAX_VALUE;
         for (int i = 0; i < features.size(); i++) {
             if (hidden.contains(i)) continue;
             RectF fr = features.get(i).rectFraction;
-            float left = fr.left * viewWidth - touchPadding;
-            float top = fr.top * viewHeight - touchPadding;
-            float right = fr.right * viewWidth + touchPadding;
-            float bottom = fr.bottom * viewHeight + touchPadding;
+            float left = frame.left + fr.left * frame.width() - touchPadding;
+            float top = frame.top + fr.top * frame.height() - touchPadding;
+            float right = frame.left + fr.right * frame.width() + touchPadding;
+            float bottom = frame.top + fr.bottom * frame.height() + touchPadding;
             if (x >= left && x <= right && y >= top && y <= bottom) {
                 float area = (right - left) * (bottom - top);
                 if (area < bestArea) {
@@ -359,17 +360,44 @@ public class ChassisOverlayView extends View {
 
         if (viewWidth == 0 || viewHeight == 0) return;
 
+        RectF frame = photoFrame(viewWidth, viewHeight);
         if (sourceBitmap != null) {
             // Rebuild the scaled copy only when the view size actually changes.
             if (scaledCache == null || scaledCache.isRecycled()
                     || cachedW != viewWidth || cachedH != viewHeight) {
                 if (scaledCache != null && !scaledCache.isRecycled()) scaledCache.recycle();
-                scaledCache = Bitmap.createScaledBitmap(sourceBitmap, viewWidth, viewHeight, true);
+                scaledCache = Bitmap.createScaledBitmap(sourceBitmap,
+                        Math.max(1, Math.round(frame.width())),
+                        Math.max(1, Math.round(frame.height())), true);
                 cachedW = viewWidth;
                 cachedH = viewHeight;
             }
+            // The bars either side of a photo whose shape is not the view's.
+            canvas.drawColor(Color.BLACK);
         }
-        drawScene(canvas, viewWidth, viewHeight, sourceBitmap != null ? scaledCache : null, true);
+        drawScene(canvas, frame, sourceBitmap != null ? scaledCache : null, true);
+    }
+
+    /**
+     * Where the photo sits in a view of this size: as large as fits without changing its
+     * shape, centred. Every box, marker and tap is placed in this rectangle, not the view.
+     * The whole view when there is no photo.
+     *
+     * <p>The photo used to be stretched to the view, which squashed a portrait camera still
+     * into the landscape box the results screen gives it, and the boxes with it.
+     */
+    private RectF photoFrame(int viewWidth, int viewHeight) {
+        if (sourceBitmap == null || sourceBitmap.isRecycled()
+                || sourceBitmap.getWidth() == 0 || sourceBitmap.getHeight() == 0) {
+            return new RectF(0, 0, viewWidth, viewHeight);
+        }
+        float scale = Math.min(viewWidth / (float) sourceBitmap.getWidth(),
+                viewHeight / (float) sourceBitmap.getHeight());
+        float w = sourceBitmap.getWidth() * scale;
+        float h = sourceBitmap.getHeight() * scale;
+        float left = (viewWidth - w) / 2f;
+        float top = (viewHeight - h) / 2f;
+        return new RectF(left, top, left + w, top + h);
     }
 
     /**
@@ -381,27 +409,32 @@ public class ChassisOverlayView extends View {
         if (sourceBitmap == null || sourceBitmap.isRecycled()) return null;
         int w = sourceBitmap.getWidth(), h = sourceBitmap.getHeight();
         Bitmap out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
-        drawScene(new Canvas(out), w, h, sourceBitmap, false);
+        drawScene(new Canvas(out), new RectF(0, 0, w, h), sourceBitmap, false);
         return out;
     }
 
     /**
-     * Everything this view draws, at a given size: the photo (already that size), then the
-     * excluded background, the boxes and the slot markers.
+     * Everything this view draws, into the photo's rectangle on the canvas: the photo
+     * (already that size), then the excluded background, the boxes and the slot markers.
      *
      * @param showSelection whether to outline the tapped box — on screen yes, in a saved image no
      */
-    private void drawScene(Canvas canvas, int viewWidth, int viewHeight, Bitmap photo,
-                           boolean showSelection) {
+    private void drawScene(Canvas canvas, RectF frame, Bitmap photo, boolean showSelection) {
+        float fx = frame.left;
+        float fy = frame.top;
+        float fw = frame.width();
+        float fh = frame.height();
+        int viewWidth = Math.round(fw);
+        int viewHeight = Math.round(fh);
         if (photo != null) {
-            canvas.drawBitmap(photo, 0f, 0f, null);
+            canvas.drawBitmap(photo, fx, fy, null);
             // What the detector was not allowed to look at. Drawn after the photo and before
             // the boxes, so a box can never be hidden by it.
             if (backgroundOverlay != null && !backgroundOverlay.isRecycled()) {
                 canvas.drawBitmap(backgroundOverlay,
                         new android.graphics.Rect(0, 0, backgroundOverlay.getWidth(),
                                 backgroundOverlay.getHeight()),
-                        new android.graphics.Rect(0, 0, viewWidth, viewHeight), null);
+                        frame, null);
             }
         } else {
             canvas.drawColor(Color.rgb(43, 41, 48)); 
@@ -417,10 +450,10 @@ public class ChassisOverlayView extends View {
         for (int i = 0; i < features.size(); i++) {
             if (hidden.contains(i)) continue;
             DetectedFeature feature = features.get(i);
-            float left = feature.rectFraction.left * viewWidth;
-            float top = feature.rectFraction.top * viewHeight;
-            float right = feature.rectFraction.right * viewWidth;
-            float bottom = feature.rectFraction.bottom * viewHeight;
+            float left = fx + feature.rectFraction.left * fw;
+            float top = fy + feature.rectFraction.top * fh;
+            float right = fx + feature.rectFraction.right * fw;
+            float bottom = fy + feature.rectFraction.bottom * fh;
 
             RectF targetRect = new RectF(left, top, right, bottom);
 
@@ -445,8 +478,8 @@ public class ChassisOverlayView extends View {
         // over it — the whole point is that these stay visible.
         float radius = Math.min(viewWidth, viewHeight) * 0.045f;
         for (ExpectedSlot slot : expectedSlots) {
-            float cx = slot.x * viewWidth;
-            float cy = slot.y * viewHeight;
+            float cx = fx + slot.x * fw;
+            float cy = fy + slot.y * fh;
             int color = slot.missing ? Color.rgb(248, 113, 113) : Color.rgb(251, 191, 36);
             paintSlot.setColor(color);
             canvas.drawCircle(cx, cy, radius, paintSlot);

@@ -110,7 +110,7 @@ public class ImageQualityTest {
      * <p>Light used to be withheld above a contrast of 40 because it over-detects on sharp
      * photographs and the size score could not see that. It also withheld light on
      * {@code screws_none.jpg} (contrast 62), where it is the only rung that finds one of the
-     * bolts — so the layout came out with five slots instead of six. {@link SizePrior} charges
+     * bolts — so the layout came out with five slots instead of six. {@link ReferenceFit} charges
      * unmatched detections on the part now, so over-detection is scored rather than assumed.
      */
     @Test

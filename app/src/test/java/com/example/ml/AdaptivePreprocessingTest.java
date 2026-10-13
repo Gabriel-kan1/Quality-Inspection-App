@@ -17,14 +17,12 @@ import java.util.Map;
  * Covers the decision the adaptive edge stage makes once every rung has been scored — the
  * part that can be tested without OpenCV.
  *
- * <p>The margin is the load-bearing constant. {@code python/adaptive_preprocessing_study.py}
- * found that at 0.03 the size test made bad overrides (a rung winning on size while
- * over-detecting everywhere else) and that at 0.08 it never chose worse than the image-quality
- * rung; these tests pin that behaviour rather than the number alone.
+ * <p>Position decides, labels break close calls, and the reference's own method wins what is
+ * still tied; these tests pin that order.
  */
 public class AdaptivePreprocessingTest {
 
-    private static final double MARGIN = AdaptivePreprocessing.AGREEMENT_MARGIN;
+    private static final double MARGIN = AdaptivePreprocessing.SHORTLIST_MARGIN;
 
     private static Map<PreprocessingStrength, Double> scores(double medium, double strong) {
         Map<PreprocessingStrength, Double> m = new LinkedHashMap<>();
@@ -68,54 +66,66 @@ public class AdaptivePreprocessingTest {
                 AdaptivePreprocessing.byCloseness(counts, 0));
     }
 
+    /** Position decides: the best fit runs when nothing is close to it. */
     @Test
-    public void theSuggestedRungStandsWhenNothingBeatsItByTheMargin() {
-        // Strong is better, but by less than size jitter between two photographs of the same
-        // hardware (median 0.058): not evidence.
-        assertEquals(MEDIUM, AdaptivePreprocessing.choose(MEDIUM, scores(0.10, 0.06), MARGIN));
-        assertEquals(MEDIUM, AdaptivePreprocessing.choose(MEDIUM, scores(0.10, 0.10), MARGIN));
-        assertEquals(MEDIUM, AdaptivePreprocessing.choose(MEDIUM, scores(0.10, 0.30), MARGIN));
+    public void theBestPositionFitWins() {
+        assertEquals(STRONG, AdaptivePreprocessing.choose(MEDIUM, scores(0.30, 0.05), null, MARGIN));
+        assertEquals(MEDIUM, AdaptivePreprocessing.choose(STRONG, scores(0.014, 0.20), null, MARGIN));
+    }
+
+    /** Within the margin of the best, the reference's own method keeps the job. */
+    @Test
+    public void theReferencesMethodWinsACloseCallWithoutLabels() {
+        assertEquals(MEDIUM, AdaptivePreprocessing.choose(MEDIUM, scores(0.10, 0.06), null, MARGIN));
+        assertEquals(MEDIUM, AdaptivePreprocessing.choose(MEDIUM, scores(0.10, 0.10), null, MARGIN));
+        assertEquals(STRONG, AdaptivePreprocessing.choose(MEDIUM, scores(0.20, 0.20 - MARGIN - 1e-9), null, MARGIN));
+        assertEquals(MEDIUM, AdaptivePreprocessing.choose(MEDIUM, scores(0.20, 0.20 - MARGIN + 1e-9), null, MARGIN));
+    }
+
+    /** Between close fits, the one whose boxes carry the reference's labels wins. */
+    @Test
+    public void labelsDecideBetweenCloseFits() {
+        Map<PreprocessingStrength, Integer> labels = new LinkedHashMap<>();
+        labels.put(MEDIUM, 2);
+        labels.put(STRONG, 3);
+        assertEquals(STRONG, AdaptivePreprocessing.choose(MEDIUM, scores(0.06, 0.08), labels, MARGIN));
+        // Equal labels: back to the reference's method.
+        labels.put(STRONG, 2);
+        assertEquals(MEDIUM, AdaptivePreprocessing.choose(MEDIUM, scores(0.06, 0.08), labels, MARGIN));
+    }
+
+    /** Labels never rescue a method whose position fit is clearly worse. */
+    @Test
+    public void labelsDoNotOverrulePosition() {
+        Map<PreprocessingStrength, Integer> labels = new LinkedHashMap<>();
+        labels.put(MEDIUM, 0);
+        labels.put(STRONG, 3);
+        assertEquals(MEDIUM, AdaptivePreprocessing.choose(STRONG, scores(0.05, 0.40), labels, MARGIN));
     }
 
     @Test
-    public void aRungThatAgreesClearlyBetterDisplacesIt() {
-        // The screws2 -> screws_two pair under noise: strong suggested, medium at 0.014
-        // against strong's 0.097. Medium found all four fasteners at the reference's sizes.
-        assertEquals(MEDIUM, AdaptivePreprocessing.choose(STRONG, scores(0.014, 0.097), MARGIN));
-        assertEquals(STRONG, AdaptivePreprocessing.choose(MEDIUM, scores(0.30, 0.05), MARGIN));
+    public void theShortlistIsTheCloseFitsBestFirst() {
+        Map<String, Double> s = new LinkedHashMap<>();
+        s.put("a", 0.30);
+        s.put("b", 0.10);
+        s.put("c", Double.NaN);
+        s.put("d", 0.12);
+        s.put("e", 0.14);
+        assertEquals(java.util.Arrays.asList("b", "d", "e"),
+                AdaptivePreprocessing.shortlist(s, MARGIN, 10));
+        assertEquals(java.util.Arrays.asList("b", "d"), AdaptivePreprocessing.shortlist(s, MARGIN, 2));
     }
 
+    /** A method that failed is never chosen; with nothing scored the incumbent stands. */
     @Test
-    public void theMarginIsAppliedExactly() {
-        assertEquals(STRONG, AdaptivePreprocessing.choose(MEDIUM, scores(0.20, 0.20 - MARGIN - 1e-9), MARGIN));
-        assertEquals(MEDIUM, AdaptivePreprocessing.choose(MEDIUM, scores(0.20, 0.20 - MARGIN + 1e-9), MARGIN));
-    }
-
-    /**
-     * A rung whose boxes could not be registered onto the part found something other than
-     * the part. It is never chosen, and if it was the suggestion the best aligned rung wins
-     * outright — there is nothing for the margin to protect.
-     */
-    @Test
-    public void anUnalignedRungIsNeverChosenAndAnUnalignedSuggestionYields() {
-        assertEquals(MEDIUM, AdaptivePreprocessing.choose(MEDIUM, scores(0.30, Double.NaN), MARGIN));
-        assertEquals(STRONG, AdaptivePreprocessing.choose(MEDIUM, scores(Double.NaN, 0.30), MARGIN));
-
+    public void aFailedMethodIsNeverChosen() {
+        assertEquals(MEDIUM, AdaptivePreprocessing.choose(MEDIUM, scores(0.30, Double.NaN), null, MARGIN));
+        assertEquals(STRONG, AdaptivePreprocessing.choose(MEDIUM, scores(Double.NaN, 0.30), null, MARGIN));
         Map<PreprocessingStrength, Double> withNull = scores(0.30, 0.10);
         withNull.put(LIGHT, null);
-        assertEquals(STRONG, AdaptivePreprocessing.choose(LIGHT, withNull, MARGIN));
-    }
-
-    @Test
-    public void withNothingAlignedTheSuggestionStands() {
-        assertEquals(STRONG, AdaptivePreprocessing.choose(STRONG, scores(Double.NaN, Double.NaN), MARGIN));
-        assertEquals(LIGHT, AdaptivePreprocessing.choose(LIGHT, new LinkedHashMap<>(), MARGIN));
-    }
-
-    /** A suggestion the candidate set did not include is still the fallback, never a crash. */
-    @Test
-    public void aSuggestionAbsentFromTheScoresFallsBackToTheBestAligned() {
-        assertEquals(MEDIUM, AdaptivePreprocessing.choose(LIGHT, scores(0.10, 0.12), MARGIN));
+        assertEquals(STRONG, AdaptivePreprocessing.choose(LIGHT, withNull, null, MARGIN));
+        assertEquals(STRONG, AdaptivePreprocessing.choose(STRONG, scores(Double.NaN, Double.NaN), null, MARGIN));
+        assertEquals(LIGHT, AdaptivePreprocessing.choose(LIGHT, new LinkedHashMap<>(), null, MARGIN));
     }
 
     @Test
@@ -131,21 +141,26 @@ public class AdaptivePreprocessingTest {
 
         FeatureLayout layout = new FeatureLayout();
         layout.setImageSize(1280, 960);
-        for (int i = 0; i < 4; i++) layout.addSlot("screw", 0.2f + 0.2f * i, 0.5f, 0.05f, 0.05f);
+        for (int i = 0; i < 3; i++) layout.addSlot("screw", 0.2f + 0.2f * i, 0.5f, 0.05f, 0.05f);
         Map<String, Double> scores = new LinkedHashMap<>();
         scores.put(EdgeMethodLab.SHIPPED_ID, 0.014);
         scores.put(MEDIUM.id, 0.297);
+        Map<String, Integer> labels = new LinkedHashMap<>();
+        labels.put(EdgeMethodLab.SHIPPED_ID, 3);
+        labels.put(MEDIUM.id, 1);
         AdaptivePreprocessing.Choice won = new AdaptivePreprocessing.Choice(
-                EdgeMethodLab.SHIPPED_ID, MEDIUM.id, q, scores, SizePrior.from(layout), false);
+                EdgeMethodLab.SHIPPED_ID, MEDIUM.id, q, scores, labels,
+                ReferenceFit.from(layout), false);
         assertTrue(won.overridden());
         assertNull("not a rung", won.rung());
         assertEquals("a layout records the method id", EdgeMethodLab.SHIPPED_ID, won.label());
         String why = won.describe();
         assertTrue(why, why.startsWith(EdgeMethodLab.nameOf(EdgeMethodLab.SHIPPED_ID)));
-        assertTrue(why, why.contains("best of 2 methods"));
+        assertTrue(why, why.contains("best position fit of 2 methods"));
+        assertTrue(why, why.contains("3 labelled features"));
         assertTrue(why, why.contains("score 0.01"));
+        assertTrue(why, why.contains("matched 3 of 3 labels"));
         assertTrue(why, why.contains("scored 0.30"));
-        assertTrue(why, why.contains("4 slots sized"));
     }
 
     @Test

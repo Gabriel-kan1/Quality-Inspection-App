@@ -27,19 +27,24 @@ import java.util.Map;
  * nothing.
  *
  * <p>The ground truth a real deployment has is the reference layout: during reference setup
- * the operator labels every detection, and the critical ones become slots with a position and
- * a box. So when a labelled layout exists, <b>every method on the {@link #ballot} runs on
- * the photograph</b>, each one's boxes are aligned onto the layout by {@link LayoutMatcher}
- * and scored by {@link SizePrior} — a box the wrong size, a slot nothing matched and a box
- * invented on the part all cost on one scale — and the method that reproduces the operator's
- * part best runs. The shipped stack, the tuned hybrids, the two Canny baselines and the three
- * strengths all compete on equal terms, on every image.
+ * the operator labels every detection, and the critical ones become features with a position,
+ * a box and a type. So when a labelled layout exists, <b>every method on the {@link #ballot}
+ * runs on the photograph</b> and is judged in two steps:
  *
- * <p>The incumbent is the method that drew the reference's own boxes
- * ({@link SizePrior#referenceMethodId}); another displaces it only by beating it by
- * {@link #AGREEMENT_MARGIN}. Size jitter between two genuine detections of the same hardware
- * is a median 0.058 in these units ({@code python/size_ratio_study.py}), so a smaller
- * advantage is not evidence.
+ * <ol>
+ *   <li><b>Position.</b> {@link ReferenceFit} matches each method's boxes onto the reference
+ *       features by where they are: a feature with no box near it, and a box on the part where
+ *       the reference has nothing, both count against the method. This decides, and it works
+ *       for a part of any size — three features as well as thirty.
+ *   <li><b>Labels.</b> The methods within {@link #SHORTLIST_MARGIN} of the best position fit
+ *       (at most {@link #MAX_LABELLED} of them) have their matched boxes classified, and the
+ *       one whose boxes classify as the types the operator gave those features wins. Position
+ *       says a box is in the right place; the label says it is around the right thing.
+ * </ol>
+ *
+ * <p>Ties after both steps go to the method that drew the reference's own boxes
+ * ({@link ReferenceFit#referenceMethodId}), so the reference and the inspection box the part
+ * the same way unless another method is actually better here.
  *
  * <h3>Without a layout</h3>
  * Reference setup is the step that creates the layout, so there it has nothing to score
@@ -57,10 +62,19 @@ public final class AdaptivePreprocessing {
     private static final String TAG = "AdaptivePreprocessing";
 
     /**
-     * How much lower (in {@code |ln ratio|} units) another method's score must be before it
-     * displaces the incumbent.
+     * How close to the best position score a method must be to stay in the running for the
+     * label check. On the lighting test photos every method that boxed all of a plate's
+     * features scored within about 0.1 of the others, from where it centred its boxes: at
+     * 0.05 the methods that labelled the 3-hole plate correctly under warm light from below
+     * were cut before the labels were looked at, and at 0.10 they were kept (lighting variants
+     * passed: 8, 9 and 6 of 9 against 7, 9 and 6). {@code python/variation_test_study.py}.
      */
-    public static final double AGREEMENT_MARGIN = 0.08;
+    public static final double SHORTLIST_MARGIN = 0.10;
+    /**
+     * Most methods whose boxes are classified for the label check. Each classification is a
+     * crop through the encoder; identical boxes from different methods are classified once.
+     */
+    public static final int MAX_LABELLED = 6;
 
     private AdaptivePreprocessing() {}
 
@@ -74,20 +88,32 @@ public final class AdaptivePreprocessing {
          */
         public final String incumbentId;
         public final ImageQuality quality;
-        /** Score per method tried, NaN where it could not be aligned; empty when no prior. */
+        /** Position score per method tried, NaN where it failed; empty when no reference. */
         public final Map<String, Double> agreement;
-        /** The prior the methods were scored against, or null. */
-        public final SizePrior sizePrior;
+        /**
+         * Reference features each shortlisted method's boxes labelled correctly; empty when
+         * labels were not checked.
+         */
+        public final Map<String, Integer> labels;
+        /** The reference the methods were scored against, or null. */
+        public final ReferenceFit fit;
         /** True when the operator pinned the method, so nothing was compared. */
         public final boolean pinned;
 
         Choice(String methodId, String incumbentId, ImageQuality quality,
-               Map<String, Double> agreement, SizePrior sizePrior, boolean pinned) {
+               Map<String, Double> agreement, ReferenceFit fit, boolean pinned) {
+            this(methodId, incumbentId, quality, agreement, new LinkedHashMap<>(), fit, pinned);
+        }
+
+        Choice(String methodId, String incumbentId, ImageQuality quality,
+               Map<String, Double> agreement, Map<String, Integer> labels, ReferenceFit fit,
+               boolean pinned) {
             this.methodId = methodId;
             this.incumbentId = incumbentId;
             this.quality = quality;
             this.agreement = Collections.unmodifiableMap(new LinkedHashMap<>(agreement));
-            this.sizePrior = sizePrior;
+            this.labels = Collections.unmodifiableMap(new LinkedHashMap<>(labels));
+            this.fit = fit;
             this.pinned = pinned;
         }
 
@@ -121,22 +147,25 @@ public final class AdaptivePreprocessing {
                         .append("quality starting point (").append(quality.describe())
                         .append(')').toString();
             }
-            int scored = 0;
-            for (Double v : agreement.values()) if (v != null && !Double.isNaN(v)) scored++;
-            sb.append(" — best of ").append(agreement.size()).append(" methods against the ")
-                    .append("reference (").append(sizePrior.describe()).append("; ")
-                    .append(scored).append(" aligned)");
+            sb.append(" — best position fit of ").append(agreement.size())
+                    .append(" methods against the reference's ").append(fit.describe());
             Double own = agreement.get(methodId);
             if (own != null && !Double.isNaN(own)) {
-                sb.append(String.format(Locale.US, ", score %.2f", own));
+                sb.append(String.format(Locale.US, " (score %.2f)", own));
+            }
+            Integer agree = labels.get(methodId);
+            if (agree != null && agree >= 0) {
+                sb.append("; of the ").append(labels.size()).append(" closest, its boxes matched ")
+                        .append(agree).append(" of ").append(fit.featureCount())
+                        .append(" labels");
             }
             if (overridden()) {
                 Double inc = agreement.get(incumbentId);
                 sb.append("; the reference's method, ").append(EdgeMethodLab.nameOf(incumbentId))
-                        .append(inc == null || Double.isNaN(inc) ? ", could not be aligned"
+                        .append(inc == null || Double.isNaN(inc) ? ", did not run"
                                 : String.format(Locale.US, ", scored %.2f", inc));
             } else {
-                sb.append("; nothing beat it by ").append(AGREEMENT_MARGIN);
+                sb.append("; the reference's own method");
             }
             return sb.toString();
         }
@@ -215,27 +244,59 @@ public final class AdaptivePreprocessing {
     }
 
     /**
-     * The decision, separated from the OpenCV work so it can be tested: the incumbent stands
-     * unless some other candidate's score is lower by more than {@code margin}. A candidate
-     * that could not be aligned (NaN) is never chosen. If the incumbent itself could not be
-     * aligned, or was not scored, the best aligned candidate wins outright — boxes that cannot
-     * be registered onto the part found something other than the part.
+     * The methods close enough to the best position score to be decided between by labels:
+     * within {@code margin} of it, best first, at most {@code max}. A method that failed (NaN
+     * or null) is never on it.
      */
-    static <K> K choose(K incumbent, Map<K, Double> scores, double margin) {
-        K best = null;
-        double bestScore = Double.POSITIVE_INFINITY;
+    static <K> List<K> shortlist(Map<K, Double> scores, double margin, int max) {
+        List<Map.Entry<K, Double>> ranked = new ArrayList<>();
         for (Map.Entry<K, Double> e : scores.entrySet()) {
-            double v = e.getValue() == null ? Double.NaN : e.getValue();
-            if (Double.isNaN(v)) continue;
-            if (v < bestScore) {
-                bestScore = v;
-                best = e.getKey();
+            if (e.getValue() != null && !Double.isNaN(e.getValue())) ranked.add(e);
+        }
+        ranked.sort((a, b) -> Double.compare(a.getValue(), b.getValue()));
+        List<K> out = new ArrayList<>();
+        if (ranked.isEmpty()) return out;
+        double best = ranked.get(0).getValue();
+        for (Map.Entry<K, Double> e : ranked) {
+            if (out.size() >= max || e.getValue() > best + margin) break;
+            out.add(e.getKey());
+        }
+        return out;
+    }
+
+    /**
+     * The decision, separated from the OpenCV work so it can be tested.
+     *
+     * <ol>
+     *   <li>Position: only the {@link #shortlist} — the methods within {@code margin} of the
+     *       best position score — are in the running.
+     *   <li>Labels: among those, the most reference features labelled correctly wins. Without
+     *       label counts (none given, or a method missing from them) this step is skipped.
+     *   <li>Ties: the incumbent if it is among the tied, otherwise the best position score.
+     * </ol>
+     *
+     * Nothing scored: the incumbent stands.
+     */
+    static <K> K choose(K incumbent, Map<K, Double> scores, Map<K, Integer> labels,
+                        double margin) {
+        List<K> running = shortlist(scores, margin, Integer.MAX_VALUE);
+        if (running.isEmpty()) return incumbent;
+        if (labels != null && !labels.isEmpty()) {
+            int most = Integer.MIN_VALUE;
+            for (K k : running) {
+                Integer v = labels.get(k);
+                if (v != null) most = Math.max(most, v);
+            }
+            if (most != Integer.MIN_VALUE) {
+                List<K> tied = new ArrayList<>();
+                for (K k : running) {
+                    Integer v = labels.get(k);
+                    if (v != null && v == most) tied.add(k);
+                }
+                running = tied;
             }
         }
-        if (best == null) return incumbent;
-        Double own = scores.get(incumbent);
-        if (own == null || Double.isNaN(own)) return best;
-        return bestScore < own - margin ? best : incumbent;
+        return running.contains(incumbent) ? incumbent : running.get(0);
     }
 
     /**
@@ -243,14 +304,15 @@ public final class AdaptivePreprocessing {
      *
      * @param src        working-resolution RGBA image; not modified
      * @param forceGlare pins the black-hat glare branch, as for every other method
-     * @param sizePrior  the operator's labelled part to score against, or null
+     * @param fit        the operator's labelled part to score against, or null; with a
+     *                   labeller attached, labels decide between close position fits
      * @param choiceOut  one-element array that receives what was chosen and why; may be null
      * @param pinnedId   a catalogue id the operator chose, run without comparison; or null
      * @return the maps, owned by the caller
      * @throws IllegalStateException when the method that has to run produced nothing
      */
     static HardwareFeatureExtractor.Edges compute(Mat src, Boolean forceGlare,
-                                                  SizePrior sizePrior, Choice[] choiceOut,
+                                                  ReferenceFit fit, Choice[] choiceOut,
                                                   String pinnedId) {
         ImageQuality quality;
         Mat gray = new Mat();
@@ -264,71 +326,63 @@ public final class AdaptivePreprocessing {
         if (pinnedId != null && !ballot.contains(pinnedId)) pinnedId = null;
 
         String incumbent = quality.suggest().id;
-        if (sizePrior != null && sizePrior.referenceMethodId() != null
-                && ballot.contains(sizePrior.referenceMethodId())) {
-            incumbent = sizePrior.referenceMethodId();
+        if (fit != null && fit.referenceMethodId() != null
+                && ballot.contains(fit.referenceMethodId())) {
+            incumbent = fit.referenceMethodId();
         }
 
-        boolean compare = pinnedId == null && sizePrior != null;
-        List<String> candidates = pinnedId != null ? Collections.singletonList(pinnedId)
-                : compare ? ballot : Collections.singletonList(incumbent);
-
-        Map<String, HardwareFeatureExtractor.Edges> edgesById = new LinkedHashMap<>();
-        Map<String, Double> scores = new LinkedHashMap<>();
         long startedAt = System.currentTimeMillis();
-        try {
-            for (String id : candidates) {
-                HardwareFeatureExtractor.Edges e =
-                        EdgeMethodLab.computeWith(EdgeMethodLab.byId(id), src, forceGlare);
-                if (e == null) {
-                    if (compare) scores.put(id, Double.NaN);
-                    continue;
-                }
-                edgesById.put(id, e);
-                if (!compare) continue;
-                List<RectF> rects = boxesOf(e.edgesClosed, src.width(), src.height());
-                scores.put(id, sizePrior.agreement(rects));
-                // Only the winner's maps are needed afterwards, and each costs three
-                // working-resolution Mats; keep the incumbent and the current best only.
-                pruneLosers(edgesById, scores, incumbent);
-            }
-
-            String chosen = compare ? choose(incumbent, scores, AGREEMENT_MARGIN)
-                    : candidates.get(0);
-            Choice choice = new Choice(chosen, pinnedId != null ? pinnedId : incumbent,
-                    quality, scores, compare ? sizePrior : null, pinnedId != null);
+        if (pinnedId != null || fit == null) {
+            String only = pinnedId != null ? pinnedId : incumbent;
+            HardwareFeatureExtractor.Edges e =
+                    EdgeMethodLab.computeWith(EdgeMethodLab.byId(only), src, forceGlare);
+            Choice choice = new Choice(only, only, quality, new LinkedHashMap<>(), null,
+                    pinnedId != null);
             if (choiceOut != null && choiceOut.length > 0) choiceOut[0] = choice;
-            Log.d(TAG, choice.describe() + String.format(Locale.US, " [%d ms for %d method%s]",
-                    System.currentTimeMillis() - startedAt, candidates.size(),
-                    candidates.size() == 1 ? "" : "s"));
-
-            HardwareFeatureExtractor.Edges out = edgesById.remove(chosen);
-            if (out == null) {
-                throw new IllegalStateException(EdgeMethodLab.nameOf(chosen) + " produced no map");
+            if (e == null) {
+                throw new IllegalStateException(EdgeMethodLab.nameOf(only) + " produced no map");
             }
-            return out;
-        } finally {
-            for (HardwareFeatureExtractor.Edges e : edgesById.values()) e.release();
+            return e;
         }
-    }
 
-    /** Frees every held map that can no longer win: all but the incumbent and the best. */
-    private static void pruneLosers(Map<String, HardwareFeatureExtractor.Edges> held,
-                                    Map<String, Double> scores, String incumbent) {
-        String best = null;
-        double bestScore = Double.POSITIVE_INFINITY;
-        for (Map.Entry<String, Double> e : scores.entrySet()) {
-            Double v = e.getValue();
-            if (v != null && !Double.isNaN(v) && v < bestScore) {
-                bestScore = v;
-                best = e.getKey();
+        // Only the boxes are kept per method: three working-resolution maps for each of
+        // eighteen methods would be most of a hundred megabytes. The winner runs again.
+        Map<String, List<RectF>> boxes = new LinkedHashMap<>();
+        Map<String, ReferenceFit.Fit> fits = new LinkedHashMap<>();
+        Map<String, Double> scores = new LinkedHashMap<>();
+        for (String id : ballot) {
+            List<RectF> rects = boxesFor(id, src, forceGlare, null);
+            if (rects == null) {
+                scores.put(id, Double.NaN);
+                continue;
+            }
+            ReferenceFit.Fit f = fit.fit(rects);
+            boxes.put(id, rects);
+            fits.put(id, f);
+            scores.put(id, f.score);
+        }
+
+        Map<String, Integer> labels = new LinkedHashMap<>();
+        if (fit.canCheckLabels()) {
+            List<String> close = shortlist(scores, SHORTLIST_MARGIN, MAX_LABELLED);
+            if (close.size() > 1) {
+                for (String id : close) {
+                    labels.put(id, fit.labelsAgreeing(boxes.get(id), fits.get(id)));
+                }
             }
         }
-        List<String> drop = new ArrayList<>();
-        for (String id : held.keySet()) {
-            if (!id.equals(incumbent) && !id.equals(best)) drop.add(id);
+        String chosen = choose(incumbent, scores, labels, SHORTLIST_MARGIN);
+        Choice choice = new Choice(chosen, incumbent, quality, scores, labels, fit, false);
+        if (choiceOut != null && choiceOut.length > 0) choiceOut[0] = choice;
+        Log.d(TAG, choice.describe() + String.format(Locale.US, " [%d ms for %d methods]",
+                System.currentTimeMillis() - startedAt, ballot.size()));
+
+        HardwareFeatureExtractor.Edges out =
+                EdgeMethodLab.computeWith(EdgeMethodLab.byId(chosen), src, forceGlare);
+        if (out == null) {
+            throw new IllegalStateException(EdgeMethodLab.nameOf(chosen) + " produced no map");
         }
-        for (String id : drop) held.remove(id).release();
+        return out;
     }
 
     /**
