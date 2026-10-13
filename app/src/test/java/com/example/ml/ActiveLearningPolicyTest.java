@@ -288,7 +288,7 @@ public class ActiveLearningPolicyTest {
         all.add(accepted(lib));                 // 0: scores 1.00, trusted
         all.add(unknownAt(lib, 0.20f));         // 1: below the floor
         all.add(unknownAt(lib, 0.70f));         // 2: borderline unknown
-        all.add(scoringAt(lib, 0.80f));         // 3: accepted, under the ceiling
+        all.add(scoringAt(lib, 0.80f));         // 3: accepted, so trusted
 
         java.util.Set<Integer> asked = askedAbout(
                 ActiveLearningPolicy.select(all, lib, new Random(SEED), type -> true));
@@ -296,8 +296,7 @@ public class ActiveLearningPolicyTest {
         assertFalse("above the ceiling is trusted", asked.contains(0));
         assertFalse("below the floor is not worth naming", asked.contains(1));
         assertTrue("a borderline unknown is still asked about", asked.contains(2));
-        assertTrue("an accepted call under the ceiling can still be spot-checked",
-                asked.contains(3));
+        assertFalse("an accepted call at 0.74 or above is trusted", asked.contains(3));
     }
 
     @Test
@@ -329,12 +328,13 @@ public class ActiveLearningPolicyTest {
                 ReferenceLibrary.Reason.ACCEPTED, new java.util.HashMap<>());
     }
 
-    /** "Below 0.30" and "above 0.85" are what is left out; the two lines themselves are asked. */
+    /** 0.30 is asked and anything under it is not; 0.74 and above is trusted, just under is asked. */
     @Test
-    public void theFloorAndTheCeilingThemselvesAreAsked() {
+    public void theFloorIsAskedAndTheCeilingIsTrusted() {
         assertTrue(ActiveLearningPolicy.worthAsking(bestMatch(0.30f), type -> true));
         assertFalse(ActiveLearningPolicy.worthAsking(bestMatch(0.299f), type -> true));
-        assertTrue(ActiveLearningPolicy.worthAsking(bestMatch(0.85f), type -> true));
-        assertFalse(ActiveLearningPolicy.worthAsking(bestMatch(0.851f), type -> true));
+        assertTrue(ActiveLearningPolicy.worthAsking(bestMatch(0.739f), type -> true));
+        assertFalse(ActiveLearningPolicy.worthAsking(bestMatch(0.74f), type -> true));
+        assertFalse(ActiveLearningPolicy.worthAsking(bestMatch(0.85f), type -> true));
     }
 }

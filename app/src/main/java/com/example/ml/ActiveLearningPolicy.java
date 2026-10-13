@@ -87,12 +87,15 @@ public final class ActiveLearningPolicy {
      */
     public static final float REVIEW_FLOOR = 0.30f;
     /**
-     * Above this best-match score the classifier's call is trusted without asking. This gives
-     * up the spot checks above it: the known silent misclassifications lived in the 0.74-0.88
-     * band ({@code python/margin_study.py}), so one scoring over 0.85 is now found only by an
-     * operator tapping its box.
+     * At or above this best-match score the classifier's call is trusted without asking: the
+     * library's default similarity threshold, so anything that clears it is not put to the
+     * operator. This gives up the spot checks — an accepted call scores at least this — and
+     * the known silent misclassifications lived in the 0.74-0.88 band
+     * ({@code python/margin_study.py}), so one of those is now found only by an operator
+     * tapping its box. An ambiguous crop scoring this high (two types within the margin) is
+     * left as unknown rather than asked about.
      */
-    public static final float REVIEW_CEILING = 0.85f;
+    public static final float REVIEW_CEILING = ReferenceLibrary.DEFAULT_SIMILARITY_THRESHOLD;
 
     public enum Kind {
         UNKNOWN,
@@ -124,8 +127,8 @@ public final class ActiveLearningPolicy {
 
     /**
      * As {@link #select(List, ReferenceLibrary, Random)}, but only detections worth the
-     * operator's time are eligible at all: a best match from {@link #REVIEW_FLOOR} to
-     * {@link #REVIEW_CEILING}, nearest a type that drives pass/fail. A confident call, a crop
+     * operator's time are eligible at all: a best match from {@link #REVIEW_FLOOR} up to but
+     * not including {@link #REVIEW_CEILING}, nearest a type that drives pass/fail. A confident call, a crop
      * that resembles nothing, and anything of an advisory or ignored type — including what the
      * {@link NoiseGate} routed to an ignored type, so there are no noise audits — are left as
      * the classifier called them. The operator can still tap any box to correct it.
@@ -147,7 +150,7 @@ public final class ActiveLearningPolicy {
     /** Whether a detection is one the operator is asked about at all. */
     static boolean worthAsking(ReferenceLibrary.Classification c,
                                java.util.function.Predicate<String> critical) {
-        return c.score >= REVIEW_FLOOR && c.score <= REVIEW_CEILING
+        return c.score >= REVIEW_FLOOR && c.score < REVIEW_CEILING
                 && c.closestMatch != null && critical.test(c.closestMatch);
     }
 

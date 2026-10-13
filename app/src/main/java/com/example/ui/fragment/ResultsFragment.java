@@ -507,11 +507,10 @@ public class ResultsFragment extends Fragment {
             }
 
             // Active learning: rather than prompting on every unknown, ask only about the
-            // detections where a human answer would actually move the classifier, plus a
-            // small sample of accepted ones to keep the tuning set unbiased. Only critical
-            // types with a best match from REVIEW_FLOOR to REVIEW_CEILING are eligible: a
-            // confident call, a crop that resembles nothing, and advisory or ignored hardware
-            // are left as classified. Any box can still be tapped to correct it.
+            // detections where a human answer would actually move the classifier. Only
+            // critical types with a best match from REVIEW_FLOOR up to REVIEW_CEILING (0.74)
+            // are eligible: an accepted call, a crop that resembles nothing, and advisory or
+            // ignored hardware are left as classified. Any box can still be tapped to correct it.
             List<ReferenceLibrary.Classification> classifications = new ArrayList<>();
             for (HardwareFeatureExtractor.ExtractedFeature f : activeResult.features) {
                 classifications.add(f.classification);
