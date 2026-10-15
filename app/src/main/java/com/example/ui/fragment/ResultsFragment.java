@@ -41,6 +41,7 @@ import com.example.ml.PartFiles;
 import com.example.report.InspectionExport;
 import com.example.ml.LearningCropStore;
 import com.example.ml.NoiseGate;
+import com.example.ml.ProcessingTimes;
 import com.example.ml.ReferenceLibrary;
 import com.example.report.AdvisoryNotes;
 import com.example.ml.ReferenceLibraryProvider;
@@ -420,6 +421,7 @@ public class ResultsFragment extends Fragment {
         // mid-analysis would otherwise crash on a background thread.
         final android.content.Context context = requireContext().getApplicationContext();
         new Thread(() -> {
+            final long analysisStart = ProcessingTimes.now();
             AppDatabase db = AppDatabase.getInstance(context);
             ReferenceProfile ref = db.referenceProfileDao().getProfileByPartType(partId);
 
@@ -525,6 +527,12 @@ public class ResultsFragment extends Fragment {
             // here bounds the dataset without racing anything the UI is about to read.
             pruneLearningData(context, db);
 
+            // Stopped here, before any review question is shown, so the operator's time
+            // answering is not counted as processing.
+            if (activeResult.times != null) {
+                activeResult.times.afterCaptureMs = ProcessingTimes.msSince(analysisStart);
+            }
+
             postToUi(() -> {
                 if (!isAdded() || binding == null) return;
                 resolveCandidatesSequentially(activeResult, candidates, 0,
@@ -623,6 +631,29 @@ public class ResultsFragment extends Fragment {
         binding.chassisOverlayView.setOnFeatureClickListener((index, f) -> correctFeatureAt(index));
 
         recomputeAndRender();
+        showProcessingTimes(activeResult.times);
+    }
+
+    /**
+     * The processing-time card: how long each stage took on this device. Shown and copied
+     * only on the operator's own screen — the app writes it nowhere and has no network.
+     */
+    private void showProcessingTimes(ProcessingTimes times) {
+        if (times == null) {
+            binding.cardProcessingTimes.setVisibility(View.GONE);
+            return;
+        }
+        String text = times.describe();
+        binding.tvProcessingTimes.setText(text);
+        binding.cardProcessingTimes.setVisibility(View.VISIBLE);
+        binding.btnCopyTimes.setOnClickListener(v -> {
+            android.content.ClipboardManager clipboard = (android.content.ClipboardManager)
+                    requireContext().getSystemService(android.content.Context.CLIPBOARD_SERVICE);
+            if (clipboard == null) return;
+            clipboard.setPrimaryClip(android.content.ClipData.newPlainText("Processing times",
+                    binding.tvProcessingTimes.getText()));
+            binding.btnCopyTimes.setText("COPIED");
+        });
     }
 
     /**
@@ -810,12 +841,46 @@ public class ResultsFragment extends Fragment {
      */
     private List<ChassisOverlayView.ExpectedSlot> missingSlotMarkers() {
         List<ChassisOverlayView.ExpectedSlot> markers = new ArrayList<>();
-        if (localisation == null || !localisation.aligned) return markers;
-        for (FeatureLocalisation.SlotFinding f : localisation.findings) {
-            if (f.status == FeatureLocalisation.Status.PRESENT) continue;
-            if (!f.hasProjection()) continue;
-            markers.add(new ChassisOverlayView.ExpectedSlot(f.displayNumber, f.projectedX, f.projectedY,
-                    f.status == FeatureLocalisation.Status.MISSING));
+        Set<HardwareFeatureExtractor.ExtractedFeature> claimed = new java.util.HashSet<>();
+        if (localisation != null && localisation.aligned) {
+            for (FeatureLocalisation.SlotFinding f : localisation.findings) {
+                HardwareFeatureExtractor.ExtractedFeature found = featureFor(f);
+                if (found != null) claimed.add(found);
+                if (f.status == FeatureLocalisation.Status.PRESENT) continue;
+                if (!f.hasProjection()) continue;
+                markers.add(new ChassisOverlayView.ExpectedSlot(f.displayNumber, f.projectedX, f.projectedY,
+                        f.status == FeatureLocalisation.Status.MISSING));
+            }
+        }
+        markers.addAll(unexpectedFeatureMarkers(claimed));
+        return markers;
+    }
+
+    /**
+     * Rings round every detection of a critical type the reference expects none of — the one
+     * defect that can be pointed at without registering the photo, so it still gets circled on
+     * a layout too small to align (under four positions) or a photo that would not register.
+     * A hole where a PEM should be is the motivating case.
+     *
+     * Only types expected zero times: with two expected and three found, which of the three is
+     * the extra one is exactly what alignment would have to decide, and circling all three
+     * would mark two good fasteners as defects. Detections a slot finding already accounts for
+     * are left to that finding's marker, so nothing is circled twice.
+     */
+    private List<ChassisOverlayView.ExpectedSlot> unexpectedFeatureMarkers(
+            Set<HardwareFeatureExtractor.ExtractedFeature> claimed) {
+        List<ChassisOverlayView.ExpectedSlot> markers = new ArrayList<>();
+        if (!hasRealReference || analysisResult == null || analysisResult.features == null) {
+            return markers;
+        }
+        android.content.Context context = requireContext();
+        for (HardwareFeatureExtractor.ExtractedFeature f : analysisResult.features) {
+            if (f.type == null || ReferenceLibrary.UNKNOWN.equals(f.type)) continue;
+            if (claimed.contains(f) || count(expectedCounts, f.type) > 0) continue;
+            if (!FeatureTypeRegistry.isCritical(context, f.type)) continue;
+            markers.add(new ChassisOverlayView.ExpectedSlot(0, f.rectFraction.centerX(),
+                    f.rectFraction.centerY(), false,
+                    FeatureTypeRegistry.displayName(context, f.type) + " (unexpected)"));
         }
         return markers;
     }
@@ -1908,6 +1973,15 @@ public class ResultsFragment extends Fragment {
      */
     private FeatureLocalisation.Result runLocalisation() {
         localisedFeatureIndices.clear();
+        long started = ProcessingTimes.now();
+        FeatureLocalisation.Result result = localiseCritical();
+        if (analysisResult != null && analysisResult.times != null) {
+            analysisResult.times.localiseMs = ProcessingTimes.msSince(started);
+        }
+        return result;
+    }
+
+    private FeatureLocalisation.Result localiseCritical() {
         if (referenceLayout == null) {
             return FeatureLocalisation.localise(null, null, null, null);
         }
@@ -2268,6 +2342,9 @@ public class ResultsFragment extends Fragment {
             // The part's reference can be replaced later; the report shows the one used now.
             com.example.report.InspectionReferences.record(context, record.getUuid(),
                     hasRealReference ? referenceImageUri : null);
+            // Likewise where each defect sat in this photo, so the report can circle it.
+            com.example.report.InspectionDefectMarkers.record(context, record.getUuid(),
+                    missingSlotMarkers());
 
             List<FeatureResult> results = new ArrayList<>();
             for (String type : orderedTypes) {

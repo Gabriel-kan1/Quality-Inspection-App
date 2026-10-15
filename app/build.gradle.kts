@@ -22,7 +22,13 @@ android {
     // APK past 350MB and made every install-and-run cycle painfully slow. x86_64
     // covers emulators, arm64-v8a covers modern physical devices; the dropped 32-bit
     // ABIs (x86, armeabi-v7a) have no supported target left worth the ~180MB.
-    ndk { abiFilters += listOf("x86_64", "arm64-v8a") }
+    // -PphoneOnly builds arm64-v8a alone: half the size, for installing on a real phone.
+    // -PemulatorOnly builds x86_64 alone, for an emulator short of storage.
+    ndk {
+      abiFilters += if (project.hasProperty("phoneOnly")) listOf("arm64-v8a")
+                    else if (project.hasProperty("emulatorOnly")) listOf("x86_64")
+                    else listOf("x86_64", "arm64-v8a")
+    }
   }
 
   signingConfigs {

@@ -44,6 +44,7 @@ import com.example.ml.HardwareFeatureExtractor;
 import com.example.ui.GhostMode;
 import com.example.ml.AlignmentGate;
 import com.example.ml.HoldTimer;
+import com.example.ml.ProcessingTimes;
 import com.example.ml.PartFiles;
 import com.example.ui.util.AssetBitmaps;
 import com.example.ui.view.TrafficLightView;
@@ -180,6 +181,8 @@ public class InspectionFragment extends Fragment {
         super.onViewCreated(view, savedInstanceState);
         mainHandler = new Handler(Looper.getMainLooper());
         analysisExecutor = Executors.newSingleThreadExecutor();
+        // The results screen reports the gate's time per frame for this capture only.
+        ProcessingTimes.resetGate();
 
         binding.tvPartInfo.setText("Part ID: " + partId);
 
@@ -587,7 +590,9 @@ public class InspectionFragment extends Fragment {
             // Read before evaluate: it times the motion rate, which must not include
             // the encoder passes evaluate is about to spend.
             long now = SystemClock.elapsedRealtime();
+            long gateStart = ProcessingTimes.now();
             AlignmentGate.Reading reading = gate.evaluate(upright, now);
+            ProcessingTimes.recordGateFrame(ProcessingTimes.now() - gateStart);
             float progress = holdTimer.update(reading.inTolerance, now);
             boolean passed = holdTimer.isSatisfied();
 

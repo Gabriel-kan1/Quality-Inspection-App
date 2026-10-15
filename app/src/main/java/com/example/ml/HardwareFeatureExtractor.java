@@ -152,8 +152,11 @@ public class HardwareFeatureExtractor {
      * frame border, so an interior region is never removed. Measured against the ground-truth
      * counts: false positives fall from 13 to 3 over 26 photographs and the weighted score
      * from 19 to 11, at the cost of one miss. See {@code python/background_mask_study.py}.
+     *
+     * <p>Off: on the chassis sections it removed parts of the plate (section B in particular)
+     * and caused wrong verdicts, and every result in the final report was measured without it.
      */
-    static final boolean MASK_BACKGROUND = true;
+    static final boolean MASK_BACKGROUND = false;
     /**
      * Logs every box before and after merging. Verbose — for tuning detection, not normal use.
      *
@@ -290,6 +293,8 @@ public class HardwareFeatureExtractor {
          * box in {@link #features}; the results screen reports it beside the reference's.
          */
         public AdaptivePreprocessing.Choice preprocessing;
+        /** How long each stage took on this device, or null when the pipeline did not run. */
+        public ProcessingTimes times;
 
         public AnalysisResult(List<ExtractedFeature> features, Bitmap processedBitmap) {
             this(features, processedBitmap, null, false);
@@ -568,13 +573,19 @@ public class HardwareFeatureExtractor {
             return new AnalysisResult(features, null);
         }
 
+        ProcessingTimes times = new ProcessingTimes();
+        long detectionStart = ProcessingTimes.now();
+
         boolean canClassify = library != null && !library.isEmpty();
+        long stage = ProcessingTimes.now();
         FeatureEmbedder embedder = canClassify ? FeatureEmbedder.get(context) : null;
+        times.encoderLoadMs = ProcessingTimes.msSince(stage);
 
         String filename = getFilename(uriString);
         Log.d(TAG, "Running OpenCV Pipeline for: " + filename);
 
         // Load image at the fixed working resolution every pixel-denominated constant assumes.
+        stage = ProcessingTimes.now();
         Bitmap bitmap = loadBitmap(context, uriString, WORKING_MAX_DIM);
         if (bitmap == null) {
             Log.e(TAG, "Failed to load bitmap for URI: " + uriString);
@@ -604,11 +615,14 @@ public class HardwareFeatureExtractor {
         try {
             src = new Mat();
             Utils.bitmapToMat(bitmap, src);
+            times.loadMs = ProcessingTimes.msSince(stage);
 
             // STEP 1 — pixel-to-millimetre scale from the calibration marker, if one is in
             // frame. Runs on the unprocessed source: the marker is high-contrast by design and
             // the glare/CLAHE stage below is tuned for fastener detail, not for finding it.
+            stage = ProcessingTimes.now();
             calibration = ScaleCalibration.detect(src);
+            times.markerMs = ProcessingTimes.msSince(stage);
 
             // STEP 1b — exclude what is not the chassis. After marker detection, so a
             // calibration marker lying near the part's edge is still found on real pixels,
@@ -623,8 +637,12 @@ public class HardwareFeatureExtractor {
 
             // STEP 2 — preprocessing + edge detection (shared with extractCrops()), by
             // whichever method the operator chose in the Edge Lab.
+            stage = ProcessingTimes.now();
             e = computeEdges(context, src, forceGlareCorrection, sizePrior, preprocessing,
                     pinnedMethodId);
+            times.edgeMs = ProcessingTimes.msSince(stage);
+            times.edgeMethods = preprocessing[0] != null && !preprocessing[0].agreement.isEmpty()
+                    ? preprocessing[0].agreement.size() : 1;
             if (e == null) {
                 Log.e(TAG, "Edge stage produced nothing for " + filename + " — no detections.");
                 AnalysisResult empty = new AnalysisResult(features, null, null, false);
@@ -651,7 +669,7 @@ public class HardwareFeatureExtractor {
 
             // STEP 3-6 — OpenCV crop extraction + embedding classification + measurement
             performDynamicDetection(ChassisMask.unmaskedOr(src), e.edgesClosed, e.edgesRaw,
-                    embedder, library, sink, features, calibration, sourceCropper);
+                    embedder, library, sink, features, calibration, sourceCropper, times);
 
         } catch (Throwable t) {
             // Throwable, not Exception: an OpenCV ABI problem arrives as UnsatisfiedLinkError.
@@ -676,6 +694,8 @@ public class HardwareFeatureExtractor {
         result.preprocessing = preprocessing[0];
         result.backgroundFraction = backgroundFraction;
         result.backgroundOverlay = backgroundOverlay;
+        times.detectionMs = ProcessingTimes.msSince(detectionStart);
+        result.times = times;
         return result;
     }
 
@@ -684,11 +704,14 @@ public class HardwareFeatureExtractor {
                                                 ReferenceLibrary library, CropSink sink,
                                                 List<ExtractedFeature> outFeatures,
                                                 ScaleCalibration calibration,
-                                                SourceCropper sourceCropper) {
+                                                SourceCropper sourceCropper,
+                                                ProcessingTimes times) {
         float imgWidth = (float) src.width();
         float imgHeight = (float) src.height();
 
+        long stage = ProcessingTimes.now();
         List<Rect> merged = findFeatureBoxes(edges, imgWidth, imgHeight);
+        times.boxesMs = ProcessingTimes.msSince(stage);
         boolean canClassify = embedder != null && library != null && !library.isEmpty();
 
         int boxId = 0;
@@ -705,7 +728,9 @@ public class HardwareFeatureExtractor {
 
             // One crop is alive at a time: created, embedded, persisted, then freed before the
             // next iteration. Keeping them all would make peak memory scale with contour count.
+            stage = ProcessingTimes.now();
             Bitmap crop = cropFeature(sourceCropper, src, r);
+            times.cropMs += ProcessingTimes.msSince(stage);
 
             String type = ReferenceLibrary.UNKNOWN;
             float confidence = 0f;
@@ -715,8 +740,11 @@ public class HardwareFeatureExtractor {
 
             try {
                 if (canClassify && crop != null) {
+                    stage = ProcessingTimes.now();
                     float[] embedding = embedder.embed(crop);
                     ReferenceLibrary.Classification c = library.classify(embedding);
+                    times.embedMs += ProcessingTimes.msSince(stage);
+                    times.crops++;
                     classification = c;
                     type = c.type;
                     confidence = c.score;
@@ -728,7 +756,9 @@ public class HardwareFeatureExtractor {
                     }
                 }
                 if (sink != null && crop != null) {
+                    stage = ProcessingTimes.now();
                     cropPath = sink.save(crop, boxId);
+                    times.saveMs += ProcessingTimes.msSince(stage);
                 }
             } finally {
                 if (crop != null) crop.recycle();

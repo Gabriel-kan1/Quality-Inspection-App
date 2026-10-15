@@ -50,12 +50,27 @@ public class ChassisOverlayView extends View {
         public final float y;
         /** True when nothing was found here; false when something wrong was. */
         public final boolean missing;
+        /**
+         * Text beside the ring, or null for {@code #slotId}. Set for a detection the reference
+         * expects none of, which has no slot to number.
+         */
+        public final String label;
 
         public ExpectedSlot(int slotId, float x, float y, boolean missing) {
+            this(slotId, x, y, missing, null);
+        }
+
+        public ExpectedSlot(int slotId, float x, float y, boolean missing, String label) {
             this.slotId = slotId;
             this.x = x;
             this.y = y;
             this.missing = missing;
+            this.label = label;
+        }
+
+        /** What is written beside the ring. */
+        public String text() {
+            return label != null ? label : "#" + slotId;
         }
     }
 
@@ -132,15 +147,7 @@ public class ChassisOverlayView extends View {
         paintSelected.setStrokeWidth(9f);
         paintSelected.setColor(Color.WHITE);
 
-        // Dashed, so an expected-but-absent position never reads as a detection. The detection
-        // boxes are solid; anything dashed on this overlay is somewhere to look, not something
-        // found.
-        paintSlot.setStyle(Paint.Style.STROKE);
-        paintSlot.setStrokeWidth(5f);
-        paintSlot.setPathEffect(new android.graphics.DashPathEffect(new float[]{14f, 10f}, 0f));
-
-        paintSlotLabel.setTextSize(24f);
-        paintSlotLabel.setFakeBoldText(true);
+        styleSlotPaints(paintSlot, paintSlotLabel);
 
         touchPadding = 12f * getResources().getDisplayMetrics().density;
         setClickable(true);
@@ -443,8 +450,52 @@ public class ChassisOverlayView extends View {
 
         // Expected positions last, so a marker is never hidden under a detection box drawn
         // over it — the whole point is that these stay visible.
-        float radius = Math.min(viewWidth, viewHeight) * 0.045f;
-        for (ExpectedSlot slot : expectedSlots) {
+        drawSlotMarkers(canvas, viewWidth, viewHeight, expectedSlots, paintSlot, paintSlotLabel,
+                0.045f);
+    }
+
+    /**
+     * A copy of {@code photo} with the given expected-position markers drawn on it, exactly as
+     * this view draws them — for screens that show a filed inspection's photo without the
+     * overlay. Owned by the caller; {@code photo} is left untouched.
+     */
+    public static Bitmap withSlotMarkers(Bitmap photo, List<ExpectedSlot> slots) {
+        Bitmap out = photo.copy(Bitmap.Config.ARGB_8888, true);
+        Paint ring = new Paint(Paint.ANTI_ALIAS_FLAG);
+        Paint label = new Paint(Paint.ANTI_ALIAS_FLAG);
+        styleSlotPaints(ring, label);
+        // The paints are sized for the full-width results overlay. The report shows the photo
+        // as a half-width thumbnail, scaled down by about half, so they are scaled up to match
+        // and still read there.
+        float scale = Math.max(1f, Math.min(out.getWidth(), out.getHeight()) / 300f);
+        ring.setStrokeWidth(ring.getStrokeWidth() * scale);
+        ring.setPathEffect(new android.graphics.DashPathEffect(
+                new float[]{14f * scale, 10f * scale}, 0f));
+        label.setTextSize(label.getTextSize() * scale);
+        // A wider ring than on screen too: at thumbnail size a 4.5% ring under a scaled-up
+        // dash closes into a blob over the very feature it is meant to frame.
+        drawSlotMarkers(new Canvas(out), out.getWidth(), out.getHeight(), slots, ring, label,
+                0.08f);
+        return out;
+    }
+
+    private static void styleSlotPaints(Paint ring, Paint label) {
+        // Dashed, so an expected-but-absent position never reads as a detection. The detection
+        // boxes are solid; anything dashed on this overlay is somewhere to look, not something
+        // found.
+        ring.setStyle(Paint.Style.STROKE);
+        ring.setStrokeWidth(5f);
+        ring.setPathEffect(new android.graphics.DashPathEffect(new float[]{14f, 10f}, 0f));
+
+        label.setTextSize(24f);
+        label.setFakeBoldText(true);
+    }
+
+    private static void drawSlotMarkers(Canvas canvas, int viewWidth, int viewHeight,
+                                        List<ExpectedSlot> slots, Paint paintSlot,
+                                        Paint paintSlotLabel, float radiusFraction) {
+        float radius = Math.min(viewWidth, viewHeight) * radiusFraction;
+        for (ExpectedSlot slot : slots) {
             float cx = slot.x * viewWidth;
             float cy = slot.y * viewHeight;
             int color = slot.missing ? Color.rgb(248, 113, 113) : Color.rgb(251, 191, 36);
@@ -454,9 +505,18 @@ public class ChassisOverlayView extends View {
             canvas.drawLine(cx - radius, cy, cx + radius, cy, paintSlot);
             canvas.drawLine(cx, cy - radius, cx, cy + radius, paintSlot);
 
-            String label = "#" + slot.slotId;
+            String label = slot.text();
             paintSlotLabel.setColor(color);
-            canvas.drawText(label, cx + radius + 6f, cy - radius, paintSlotLabel);
+            // Up and to the right of the ring, pulled back inside the photo where that would run
+            // off it — a marker near the edge otherwise loses the very words that name it.
+            float textWidth = paintSlotLabel.measureText(label);
+            float tx = cx + radius + 6f;
+            if (tx + textWidth > viewWidth) tx = Math.max(0f, viewWidth - textWidth - 4f);
+            float ty = cy - radius;
+            if (ty - paintSlotLabel.getTextSize() < 0f) {
+                ty = cy + radius + paintSlotLabel.getTextSize();
+            }
+            canvas.drawText(label, tx, ty, paintSlotLabel);
         }
     }
 }

@@ -206,11 +206,32 @@ public class ReportFragment extends Fragment {
             }
             final android.graphics.Bitmap reference = referenceUri == null ? null
                     : HardwareFeatureExtractor.loadBitmap(context, referenceUri, 900);
-            final android.graphics.Bitmap inspection =
+            android.graphics.Bitmap photo =
                     inspectionUri == null || inspectionUri.isEmpty() ? null
                             : HardwareFeatureExtractor.loadBitmap(context, inspectionUri, 900);
+            // The defective positions, circled as the results screen circled them: red where
+            // nothing was found, amber where the wrong or misplaced hardware was.
+            List<com.example.ui.view.ChassisOverlayView.ExpectedSlot> markers =
+                    com.example.report.InspectionDefectMarkers.recorded(context, rec.getUuid());
+            String circled = "";
+            if (photo != null && markers != null && !markers.isEmpty()) {
+                android.graphics.Bitmap marked =
+                        com.example.ui.view.ChassisOverlayView.withSlotMarkers(photo, markers);
+                photo.recycle();
+                photo = marked;
+                StringBuilder names = new StringBuilder();
+                for (com.example.ui.view.ChassisOverlayView.ExpectedSlot m : markers) {
+                    if (names.length() > 0) names.append(", ");
+                    names.append(m.text());
+                    if (m.label == null) {
+                        names.append(m.missing ? " missing" : " wrong or out of place");
+                    }
+                }
+                circled = " Circled: " + names + ".";
+            }
+            final android.graphics.Bitmap inspection = photo;
             final String inspectionCaption = inspection != null
-                    ? "Taken " + when.format(new Date(filedAt)) + "."
+                    ? "Taken " + when.format(new Date(filedAt)) + "." + circled
                     : "The inspection photo is no longer on this device.";
             final String finalReferenceCaption = referenceUri != null && reference == null
                     ? "The reference photo is no longer on this device." : referenceCaption;
