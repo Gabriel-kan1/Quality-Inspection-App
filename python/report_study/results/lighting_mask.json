@@ -1,0 +1,2326 @@
+{
+ "summary": {
+  "v1": {
+   "3 holes": {
+    "ref_ok": true,
+    "ref": "ref OK",
+    "light_pass": 2,
+    "light_n": 9,
+    "defect_caught": true,
+    "angle_pass": 1,
+    "angle_n": 2
+   },
+   "3 thread holes": {
+    "ref_ok": true,
+    "ref": "ref OK",
+    "light_pass": 6,
+    "light_n": 9,
+    "defect_caught": true,
+    "angle_pass": 2,
+    "angle_n": 2
+   },
+   "4 screws": {
+    "ref_ok": true,
+    "ref": "ref OK",
+    "light_pass": 4,
+    "light_n": 9,
+    "defect_caught": true,
+    "angle_pass": 1,
+    "angle_n": 3
+   }
+  },
+  "v2": {
+   "3 holes": {
+    "ref_ok": true,
+    "ref": "ref OK",
+    "light_pass": 2,
+    "light_n": 9,
+    "defect_caught": true,
+    "angle_pass": 1,
+    "angle_n": 2
+   },
+   "3 thread holes": {
+    "ref_ok": true,
+    "ref": "ref OK",
+    "light_pass": 6,
+    "light_n": 9,
+    "defect_caught": true,
+    "angle_pass": 2,
+    "angle_n": 2
+   },
+   "4 screws": {
+    "ref_ok": true,
+    "ref": "ref OK",
+    "light_pass": 2,
+    "light_n": 9,
+    "defect_caught": true,
+    "angle_pass": 1,
+    "angle_n": 3
+   }
+  },
+  "v3": {
+   "3 holes": {
+    "ref_ok": true,
+    "ref": "ref OK",
+    "light_pass": 3,
+    "light_n": 9,
+    "defect_caught": true,
+    "angle_pass": 1,
+    "angle_n": 2
+   },
+   "3 thread holes": {
+    "ref_ok": true,
+    "ref": "ref OK",
+    "light_pass": 6,
+    "light_n": 9,
+    "defect_caught": true,
+    "angle_pass": 2,
+    "angle_n": 2
+   },
+   "4 screws": {
+    "ref_ok": true,
+    "ref": "ref OK",
+    "light_pass": 1,
+    "light_n": 9,
+    "defect_caught": true,
+    "angle_pass": 1,
+    "angle_n": 3
+   }
+  },
+  "v4": {
+   "3 holes": {
+    "ref_ok": true,
+    "ref": "ref OK",
+    "light_pass": 3,
+    "light_n": 9,
+    "defect_caught": true,
+    "angle_pass": 1,
+    "angle_n": 2
+   },
+   "3 thread holes": {
+    "ref_ok": true,
+    "ref": "ref OK",
+    "light_pass": 6,
+    "light_n": 9,
+    "defect_caught": true,
+    "angle_pass": 2,
+    "angle_n": 2
+   },
+   "4 screws": {
+    "ref_ok": true,
+    "ref": "ref OK",
+    "light_pass": 0,
+    "light_n": 9,
+    "defect_caught": true,
+    "angle_pass": 0,
+    "angle_n": 3
+   }
+  },
+  "v5": {
+   "3 holes": {
+    "ref_ok": true,
+    "ref": "ref OK",
+    "light_pass": 3,
+    "light_n": 9,
+    "defect_caught": true,
+    "angle_pass": 1,
+    "angle_n": 2
+   },
+   "3 thread holes": {
+    "ref_ok": true,
+    "ref": "ref OK",
+    "light_pass": 6,
+    "light_n": 9,
+    "defect_caught": true,
+    "angle_pass": 2,
+    "angle_n": 2
+   },
+   "4 screws": {
+    "ref_ok": true,
+    "ref": "ref OK",
+    "light_pass": 1,
+    "light_n": 9,
+    "defect_caught": true,
+    "angle_pass": 1,
+    "angle_n": 3
+   }
+  },
+  "v6": {
+   "3 holes": {
+    "ref_ok": true,
+    "ref": "ref OK",
+    "light_pass": 2,
+    "light_n": 9,
+    "defect_caught": true,
+    "angle_pass": 1,
+    "angle_n": 2
+   },
+   "3 thread holes": {
+    "ref_ok": true,
+    "ref": "ref OK",
+    "light_pass": 6,
+    "light_n": 9,
+    "defect_caught": true,
+    "angle_pass": 2,
+    "angle_n": 2
+   },
+   "4 screws": {
+    "ref_ok": true,
+    "ref": "ref OK",
+    "light_pass": 3,
+    "light_n": 9,
+    "defect_caught": false,
+    "angle_pass": 1,
+    "angle_n": 3
+   }
+  },
+  "v7": {
+   "3 holes": {
+    "ref_ok": true,
+    "ref": "ref OK",
+    "light_pass": 1,
+    "light_n": 9,
+    "defect_caught": true,
+    "angle_pass": 1,
+    "angle_n": 2
+   },
+   "3 thread holes": {
+    "ref_ok": true,
+    "ref": "ref OK",
+    "light_pass": 6,
+    "light_n": 9,
+    "defect_caught": true,
+    "angle_pass": 2,
+    "angle_n": 2
+   },
+   "4 screws": {
+    "ref_ok": true,
+    "ref": "ref OK",
+    "light_pass": 1,
+    "light_n": 9,
+    "defect_caught": true,
+    "angle_pass": 0,
+    "angle_n": 3
+   }
+  },
+  "v8": {
+   "3 holes": {
+    "ref_ok": true,
+    "ref": "ref OK",
+    "light_pass": 2,
+    "light_n": 9,
+    "defect_caught": true,
+    "angle_pass": 0,
+    "angle_n": 2
+   },
+   "3 thread holes": {
+    "ref_ok": true,
+    "ref": "ref OK",
+    "light_pass": 6,
+    "light_n": 9,
+    "defect_caught": true,
+    "angle_pass": 2,
+    "angle_n": 2
+   },
+   "4 screws": {
+    "ref_ok": true,
+    "ref": "ref OK",
+    "light_pass": 1,
+    "light_n": 9,
+    "defect_caught": true,
+    "angle_pass": 1,
+    "angle_n": 3
+   }
+  },
+  "v9": {
+   "3 holes": {
+    "ref_ok": true,
+    "ref": "ref OK",
+    "light_pass": 2,
+    "light_n": 9,
+    "defect_caught": true,
+    "angle_pass": 1,
+    "angle_n": 2
+   },
+   "3 thread holes": {
+    "ref_ok": true,
+    "ref": "ref OK",
+    "light_pass": 6,
+    "light_n": 9,
+    "defect_caught": true,
+    "angle_pass": 2,
+    "angle_n": 2
+   },
+   "4 screws": {
+    "ref_ok": true,
+    "ref": "ref OK",
+    "light_pass": 6,
+    "light_n": 9,
+    "defect_caught": true,
+    "angle_pass": 1,
+    "angle_n": 3
+   }
+  },
+  "v10": {
+   "3 holes": {
+    "ref_ok": false,
+    "ref": "ref BAD {'bolt_head': 1, 'threaded_hole': 1} missing ['bolt_head']",
+    "light_pass": 0,
+    "light_n": 9,
+    "defect_caught": true,
+    "angle_pass": 0,
+    "angle_n": 2
+   },
+   "3 thread holes": {
+    "ref_ok": true,
+    "ref": "ref OK",
+    "light_pass": 6,
+    "light_n": 9,
+    "defect_caught": true,
+    "angle_pass": 2,
+    "angle_n": 2
+   },
+   "4 screws": {
+    "ref_ok": false,
+    "ref": "ref BAD {'screw': 3, 'stud': 2} missing ['screw']",
+    "light_pass": 0,
+    "light_n": 9,
+    "defect_caught": true,
+    "angle_pass": 0,
+    "angle_n": 3
+   }
+  }
+ },
+ "detail": {
+  "3 holes|v1": {
+   "ref_boxes": 3,
+   "ref_counts": "{'bolt_head': 2, 'threaded_hole': 1}",
+   "photos": {
+    "defected": {
+     "verdict": "FAIL",
+     "boxes": 4,
+     "counts": "{'bolt_head': 1}"
+    },
+    "left": {
+     "verdict": "PASS",
+     "boxes": 4,
+     "counts": "{'bolt_head': 2, 'threaded_hole': 1}"
+    },
+    "right": {
+     "verdict": "FAIL",
+     "boxes": 12,
+     "counts": "{'bolt_head': 2}"
+    },
+    "warm bot": {
+     "verdict": "FAIL",
+     "boxes": 10,
+     "counts": "{'bolt_head': 2}"
+    },
+    "warm mid": {
+     "verdict": "FAIL",
+     "boxes": 6,
+     "counts": "{'bolt_head': 1, 'threaded_hole': 1}"
+    },
+    "warm top": {
+     "verdict": "PASS",
+     "boxes": 7,
+     "counts": "{'bolt_head': 2, 'threaded_hole': 1}"
+    },
+    "white bot": {
+     "verdict": "FAIL",
+     "boxes": 1,
+     "counts": "{}"
+    },
+    "white mid": {
+     "verdict": "FAIL",
+     "boxes": 7,
+     "counts": "{'bolt_head': 1, 'threaded_hole': 1}"
+    },
+    "white top": {
+     "verdict": "FAIL",
+     "boxes": 11,
+     "counts": "{'bolt_head': 2}"
+    },
+    "yellow bot": {
+     "verdict": "FAIL",
+     "boxes": 1,
+     "counts": "{}"
+    },
+    "yellow mid": {
+     "verdict": "FAIL",
+     "boxes": 8,
+     "counts": "{'bolt_head': 1, 'threaded_hole': 1}"
+    },
+    "yellow top": {
+     "verdict": "PASS",
+     "boxes": 8,
+     "counts": "{'bolt_head': 2, 'threaded_hole': 1}"
+    }
+   }
+  },
+  "3 holes|v2": {
+   "ref_boxes": 3,
+   "ref_counts": "{'bolt_head': 2, 'threaded_hole': 1}",
+   "photos": {
+    "defected": {
+     "verdict": "FAIL",
+     "boxes": 3,
+     "counts": "{'bolt_head': 1}"
+    },
+    "left": {
+     "verdict": "PASS",
+     "boxes": 4,
+     "counts": "{'bolt_head': 2, 'threaded_hole': 1}"
+    },
+    "right": {
+     "verdict": "FAIL",
+     "boxes": 5,
+     "counts": "{'bolt_head': 2}"
+    },
+    "warm bot": {
+     "verdict": "FAIL",
+     "boxes": 1,
+     "counts": "{}"
+    },
+    "warm mid": {
+     "verdict": "FAIL",
+     "boxes": 3,
+     "counts": "{'bolt_head': 1, 'threaded_hole': 1}"
+    },
+    "warm top": {
+     "verdict": "PASS",
+     "boxes": 3,
+     "counts": "{'bolt_head': 2, 'threaded_hole': 1}"
+    },
+    "white bot": {
+     "verdict": "FAIL",
+     "boxes": 1,
+     "counts": "{}"
+    },
+    "white mid": {
+     "verdict": "FAIL",
+     "boxes": 2,
+     "counts": "{'bolt_head': 1, 'threaded_hole': 1}"
+    },
+    "white top": {
+     "verdict": "FAIL",
+     "boxes": 4,
+     "counts": "{'bolt_head': 2}"
+    },
+    "yellow bot": {
+     "verdict": "FAIL",
+     "boxes": 2,
+     "counts": "{'bolt_head': 1}"
+    },
+    "yellow mid": {
+     "verdict": "FAIL",
+     "boxes": 3,
+     "counts": "{'bolt_head': 1, 'threaded_hole': 1}"
+    },
+    "yellow top": {
+     "verdict": "PASS",
+     "boxes": 4,
+     "counts": "{'bolt_head': 2, 'threaded_hole': 1}"
+    }
+   }
+  },
+  "3 holes|v3": {
+   "ref_boxes": 3,
+   "ref_counts": "{'bolt_head': 2, 'threaded_hole': 1}",
+   "photos": {
+    "defected": {
+     "verdict": "FAIL",
+     "boxes": 3,
+     "counts": "{}"
+    },
+    "left": {
+     "verdict": "PASS",
+     "boxes": 5,
+     "counts": "{'bolt_head': 2, 'threaded_hole': 1}"
+    },
+    "right": {
+     "verdict": "FAIL",
+     "boxes": 6,
+     "counts": "{'bolt_head': 2}"
+    },
+    "warm bot": {
+     "verdict": "FAIL",
+     "boxes": 3,
+     "counts": "{'bolt_head': 2}"
+    },
+    "warm mid": {
+     "verdict": "FAIL",
+     "boxes": 4,
+     "counts": "{'bolt_head': 1, 'threaded_hole': 1}"
+    },
+    "warm top": {
+     "verdict": "PASS",
+     "boxes": 3,
+     "counts": "{'bolt_head': 2, 'threaded_hole': 1}"
+    },
+    "white bot": {
+     "verdict": "FAIL",
+     "boxes": 3,
+     "counts": "{'bolt_head': 2}"
+    },
+    "white mid": {
+     "verdict": "FAIL",
+     "boxes": 2,
+     "counts": "{'bolt_head': 1, 'threaded_hole': 1}"
+    },
+    "white top": {
+     "verdict": "PASS",
+     "boxes": 4,
+     "counts": "{'bolt_head': 2, 'threaded_hole': 1}"
+    },
+    "yellow bot": {
+     "verdict": "FAIL",
+     "boxes": 2,
+     "counts": "{'bolt_head': 1}"
+    },
+    "yellow mid": {
+     "verdict": "FAIL",
+     "boxes": 3,
+     "counts": "{'bolt_head': 1, 'threaded_hole': 1}"
+    },
+    "yellow top": {
+     "verdict": "PASS",
+     "boxes": 4,
+     "counts": "{'bolt_head': 2, 'threaded_hole': 1}"
+    }
+   }
+  },
+  "3 holes|v4": {
+   "ref_boxes": 3,
+   "ref_counts": "{'bolt_head': 2, 'threaded_hole': 1}",
+   "photos": {
+    "defected": {
+     "verdict": "FAIL",
+     "boxes": 3,
+     "counts": "{'threaded_hole': 1}"
+    },
+    "left": {
+     "verdict": "PASS",
+     "boxes": 4,
+     "counts": "{'bolt_head': 2, 'threaded_hole': 1}"
+    },
+    "right": {
+     "verdict": "FAIL",
+     "boxes": 6,
+     "counts": "{'bolt_head': 2}"
+    },
+    "warm bot": {
+     "verdict": "FAIL",
+     "boxes": 1,
+     "counts": "{}"
+    },
+    "warm mid": {
+     "verdict": "FAIL",
+     "boxes": 2,
+     "counts": "{'bolt_head': 1, 'threaded_hole': 1}"
+    },
+    "warm top": {
+     "verdict": "PASS",
+     "boxes": 3,
+     "counts": "{'bolt_head': 2, 'threaded_hole': 1}"
+    },
+    "white bot": {
+     "verdict": "FAIL",
+     "boxes": 1,
+     "counts": "{}"
+    },
+    "white mid": {
+     "verdict": "FAIL",
+     "boxes": 2,
+     "counts": "{'bolt_head': 1, 'threaded_hole': 1}"
+    },
+    "white top": {
+     "verdict": "PASS",
+     "boxes": 4,
+     "counts": "{'bolt_head': 2, 'threaded_hole': 1}"
+    },
+    "yellow bot": {
+     "verdict": "FAIL",
+     "boxes": 1,
+     "counts": "{}"
+    },
+    "yellow mid": {
+     "verdict": "FAIL",
+     "boxes": 2,
+     "counts": "{'bolt_head': 1, 'threaded_hole': 1}"
+    },
+    "yellow top": {
+     "verdict": "PASS",
+     "boxes": 4,
+     "counts": "{'bolt_head': 2, 'threaded_hole': 1}"
+    }
+   }
+  },
+  "3 holes|v5": {
+   "ref_boxes": 3,
+   "ref_counts": "{'bolt_head': 2, 'threaded_hole': 1}",
+   "photos": {
+    "defected": {
+     "verdict": "FAIL",
+     "boxes": 3,
+     "counts": "{}"
+    },
+    "left": {
+     "verdict": "PASS",
+     "boxes": 5,
+     "counts": "{'bolt_head': 2, 'threaded_hole': 1}"
+    },
+    "right": {
+     "verdict": "FAIL",
+     "boxes": 7,
+     "counts": "{'bolt_head': 2}"
+    },
+    "warm bot": {
+     "verdict": "FAIL",
+     "boxes": 3,
+     "counts": "{'bolt_head': 2}"
+    },
+    "warm mid": {
+     "verdict": "FAIL",
+     "boxes": 4,
+     "counts": "{'bolt_head': 1, 'threaded_hole': 1}"
+    },
+    "warm top": {
+     "verdict": "PASS",
+     "boxes": 3,
+     "counts": "{'bolt_head': 2, 'threaded_hole': 1}"
+    },
+    "white bot": {
+     "verdict": "FAIL",
+     "boxes": 3,
+     "counts": "{'bolt_head': 2}"
+    },
+    "white mid": {
+     "verdict": "FAIL",
+     "boxes": 2,
+     "counts": "{'bolt_head': 1, 'threaded_hole': 1}"
+    },
+    "white top": {
+     "verdict": "PASS",
+     "boxes": 4,
+     "counts": "{'bolt_head': 2, 'threaded_hole': 1}"
+    },
+    "yellow bot": {
+     "verdict": "FAIL",
+     "boxes": 2,
+     "counts": "{'bolt_head': 1}"
+    },
+    "yellow mid": {
+     "verdict": "FAIL",
+     "boxes": 3,
+     "counts": "{'bolt_head': 1, 'threaded_hole': 1}"
+    },
+    "yellow top": {
+     "verdict": "PASS",
+     "boxes": 4,
+     "counts": "{'bolt_head': 2, 'threaded_hole': 1}"
+    }
+   }
+  },
+  "3 holes|v6": {
+   "ref_boxes": 3,
+   "ref_counts": "{'bolt_head': 2, 'threaded_hole': 1}",
+   "photos": {
+    "defected": {
+     "verdict": "FAIL",
+     "boxes": 3,
+     "counts": "{'bolt_head': 1}"
+    },
+    "left": {
+     "verdict": "PASS",
+     "boxes": 4,
+     "counts": "{'bolt_head': 2, 'threaded_hole': 1}"
+    },
+    "right": {
+     "verdict": "FAIL",
+     "boxes": 6,
+     "counts": "{'bolt_head': 2}"
+    },
+    "warm bot": {
+     "verdict": "FAIL",
+     "boxes": 3,
+     "counts": "{'bolt_head': 2}"
+    },
+    "warm mid": {
+     "verdict": "FAIL",
+     "boxes": 4,
+     "counts": "{'bolt_head': 1, 'threaded_hole': 1}"
+    },
+    "warm top": {
+     "verdict": "PASS",
+     "boxes": 3,
+     "counts": "{'bolt_head': 2, 'threaded_hole': 1}"
+    },
+    "white bot": {
+     "verdict": "FAIL",
+     "boxes": 1,
+     "counts": "{}"
+    },
+    "white mid": {
+     "verdict": "FAIL",
+     "boxes": 2,
+     "counts": "{'bolt_head': 1, 'threaded_hole': 1}"
+    },
+    "white top": {
+     "verdict": "FAIL",
+     "boxes": 4,
+     "counts": "{'bolt_head': 2}"
+    },
+    "yellow bot": {
+     "verdict": "FAIL",
+     "boxes": 1,
+     "counts": "{}"
+    },
+    "yellow mid": {
+     "verdict": "FAIL",
+     "boxes": 4,
+     "counts": "{'bolt_head': 1}"
+    },
+    "yellow top": {
+     "verdict": "PASS",
+     "boxes": 4,
+     "counts": "{'bolt_head': 2, 'threaded_hole': 1}"
+    }
+   }
+  },
+  "3 holes|v7": {
+   "ref_boxes": 13,
+   "ref_counts": "{'bolt_head': 2, 'threaded_hole': 1}",
+   "photos": {
+    "defected": {
+     "verdict": "FAIL",
+     "boxes": 11,
+     "counts": "{}"
+    },
+    "left": {
+     "verdict": "PASS",
+     "boxes": 3,
+     "counts": "{'bolt_head': 2, 'threaded_hole': 1}"
+    },
+    "right": {
+     "verdict": "FAIL",
+     "boxes": 9,
+     "counts": "{'bolt_head': 3}"
+    },
+    "warm bot": {
+     "verdict": "FAIL",
+     "boxes": 1,
+     "counts": "{}"
+    },
+    "warm mid": {
+     "verdict": "FAIL",
+     "boxes": 30,
+     "counts": "{'bolt_head': 1}"
+    },
+    "warm top": {
+     "verdict": "FAIL",
+     "boxes": 9,
+     "counts": "{'bolt_head': 2}"
+    },
+    "white bot": {
+     "verdict": "FAIL",
+     "boxes": 3,
+     "counts": "{}"
+    },
+    "white mid": {
+     "verdict": "PASS",
+     "boxes": 29,
+     "counts": "{'bolt_head': 2, 'threaded_hole': 1}"
+    },
+    "white top": {
+     "verdict": "FAIL",
+     "boxes": 14,
+     "counts": "{'bolt_head': 2}"
+    },
+    "yellow bot": {
+     "verdict": "FAIL",
+     "boxes": 1,
+     "counts": "{}"
+    },
+    "yellow mid": {
+     "verdict": "FAIL",
+     "boxes": 24,
+     "counts": "{'bolt_head': 1, 'threaded_hole': 1}"
+    },
+    "yellow top": {
+     "verdict": "FAIL",
+     "boxes": 9,
+     "counts": "{'bolt_head': 2}"
+    }
+   }
+  },
+  "3 holes|v8": {
+   "ref_boxes": 3,
+   "ref_counts": "{'bolt_head': 2, 'threaded_hole': 1}",
+   "photos": {
+    "defected": {
+     "verdict": "FAIL",
+     "boxes": 3,
+     "counts": "{'bolt_head': 1}"
+    },
+    "left": {
+     "verdict": "FAIL",
+     "boxes": 5,
+     "counts": "{'bolt_head': 1, 'threaded_hole': 1}"
+    },
+    "right": {
+     "verdict": "FAIL",
+     "boxes": 6,
+     "counts": "{'bolt_head': 2}"
+    },
+    "warm bot": {
+     "verdict": "FAIL",
+     "boxes": 1,
+     "counts": "{}"
+    },
+    "warm mid": {
+     "verdict": "FAIL",
+     "boxes": 3,
+     "counts": "{'bolt_head': 1, 'threaded_hole': 1}"
+    },
+    "warm top": {
+     "verdict": "PASS",
+     "boxes": 3,
+     "counts": "{'bolt_head': 2, 'threaded_hole': 1}"
+    },
+    "white bot": {
+     "verdict": "FAIL",
+     "boxes": 1,
+     "counts": "{}"
+    },
+    "white mid": {
+     "verdict": "FAIL",
+     "boxes": 2,
+     "counts": "{'bolt_head': 1, 'threaded_hole': 1}"
+    },
+    "white top": {
+     "verdict": "FAIL",
+     "boxes": 4,
+     "counts": "{'bolt_head': 2}"
+    },
+    "yellow bot": {
+     "verdict": "FAIL",
+     "boxes": 2,
+     "counts": "{'bolt_head': 2}"
+    },
+    "yellow mid": {
+     "verdict": "FAIL",
+     "boxes": 4,
+     "counts": "{'bolt_head': 1, 'threaded_hole': 1}"
+    },
+    "yellow top": {
+     "verdict": "PASS",
+     "boxes": 4,
+     "counts": "{'bolt_head': 2, 'threaded_hole': 1}"
+    }
+   }
+  },
+  "3 holes|v9": {
+   "ref_boxes": 45,
+   "ref_counts": "{'bolt_head': 2, 'threaded_hole': 1}",
+   "photos": {
+    "defected": {
+     "verdict": "FAIL",
+     "boxes": 25,
+     "counts": "{'threaded_hole': 1}"
+    },
+    "left": {
+     "verdict": "PASS",
+     "boxes": 6,
+     "counts": "{'bolt_head': 2, 'threaded_hole': 1}"
+    },
+    "right": {
+     "verdict": "FAIL",
+     "boxes": 14,
+     "counts": "{'bolt_head': 1}"
+    },
+    "warm bot": {
+     "verdict": "FAIL",
+     "boxes": 32,
+     "counts": "{'bolt_head': 1}"
+    },
+    "warm mid": {
+     "verdict": "FAIL",
+     "boxes": 61,
+     "counts": "{'bolt_head': 1, 'threaded_hole': 1}"
+    },
+    "warm top": {
+     "verdict": "PASS",
+     "boxes": 84,
+     "counts": "{'bolt_head': 2, 'threaded_hole': 1}"
+    },
+    "white bot": {
+     "verdict": "FAIL",
+     "boxes": 31,
+     "counts": "{'bolt_head': 2}"
+    },
+    "white mid": {
+     "verdict": "FAIL",
+     "boxes": 53,
+     "counts": "{'bolt_head': 1, 'threaded_hole': 1}"
+    },
+    "white top": {
+     "verdict": "FAIL",
+     "boxes": 61,
+     "counts": "{'bolt_head': 2}"
+    },
+    "yellow bot": {
+     "verdict": "FAIL",
+     "boxes": 37,
+     "counts": "{'bolt_head': 2}"
+    },
+    "yellow mid": {
+     "verdict": "FAIL",
+     "boxes": 59,
+     "counts": "{'bolt_head': 1, 'threaded_hole': 1}"
+    },
+    "yellow top": {
+     "verdict": "PASS",
+     "boxes": 81,
+     "counts": "{'bolt_head': 2, 'threaded_hole': 1}"
+    }
+   }
+  },
+  "3 holes|v10": {
+   "ref_boxes": 3,
+   "ref_counts": "{'bolt_head': 1, 'threaded_hole': 1}",
+   "photos": {
+    "defected": {
+     "verdict": "FAIL",
+     "boxes": 3,
+     "counts": "{'threaded_hole': 1}"
+    },
+    "left": {
+     "verdict": "FAIL",
+     "boxes": 2,
+     "counts": "{'bolt_head': 1, 'threaded_hole': 1}"
+    },
+    "right": {
+     "verdict": "FAIL",
+     "boxes": 10,
+     "counts": "{'bolt_head': 1, 'threaded_hole': 1}"
+    },
+    "warm bot": {
+     "verdict": "FAIL",
+     "boxes": 7,
+     "counts": "{'bolt_head': 2}"
+    },
+    "warm mid": {
+     "verdict": "FAIL",
+     "boxes": 7,
+     "counts": "{'bolt_head': 1, 'threaded_hole': 1}"
+    },
+    "warm top": {
+     "verdict": "FAIL",
+     "boxes": 5,
+     "counts": "{'bolt_head': 2, 'threaded_hole': 1}"
+    },
+    "white bot": {
+     "verdict": "FAIL",
+     "boxes": 7,
+     "counts": "{'bolt_head': 2}"
+    },
+    "white mid": {
+     "verdict": "FAIL",
+     "boxes": 6,
+     "counts": "{'bolt_head': 1, 'threaded_hole': 1}"
+    },
+    "white top": {
+     "verdict": "FAIL",
+     "boxes": 5,
+     "counts": "{'bolt_head': 1, 'threaded_hole': 1}"
+    },
+    "yellow bot": {
+     "verdict": "FAIL",
+     "boxes": 6,
+     "counts": "{'bolt_head': 2}"
+    },
+    "yellow mid": {
+     "verdict": "FAIL",
+     "boxes": 4,
+     "counts": "{'bolt_head': 1}"
+    },
+    "yellow top": {
+     "verdict": "FAIL",
+     "boxes": 5,
+     "counts": "{'bolt_head': 2, 'threaded_hole': 1}"
+    }
+   }
+  },
+  "3 thread holes|v1": {
+   "ref_boxes": 6,
+   "ref_counts": "{'threaded_hole': 3}",
+   "photos": {
+    "defected": {
+     "verdict": "FAIL",
+     "boxes": 19,
+     "counts": "{'threaded_hole': 2}"
+    },
+    "left": {
+     "verdict": "PASS",
+     "boxes": 13,
+     "counts": "{'threaded_hole': 3}"
+    },
+    "right": {
+     "verdict": "PASS",
+     "boxes": 15,
+     "counts": "{'threaded_hole': 3}"
+    },
+    "warm left": {
+     "verdict": "PASS",
+     "boxes": 44,
+     "counts": "{'threaded_hole': 3}"
+    },
+    "warm mid": {
+     "verdict": "PASS",
+     "boxes": 18,
+     "counts": "{'threaded_hole': 3}"
+    },
+    "warm right": {
+     "verdict": "FAIL",
+     "boxes": 47,
+     "counts": "{'threaded_hole': 2}"
+    },
+    "white left": {
+     "verdict": "PASS",
+     "boxes": 38,
+     "counts": "{'threaded_hole': 3}"
+    },
+    "white mid": {
+     "verdict": "PASS",
+     "boxes": 36,
+     "counts": "{'threaded_hole': 3}"
+    },
+    "white right": {
+     "verdict": "FAIL",
+     "boxes": 50,
+     "counts": "{'threaded_hole': 2}"
+    },
+    "yellow left": {
+     "verdict": "PASS",
+     "boxes": 43,
+     "counts": "{'threaded_hole': 3}"
+    },
+    "yellow mid": {
+     "verdict": "PASS",
+     "boxes": 21,
+     "counts": "{'threaded_hole': 3}"
+    },
+    "yellow right": {
+     "verdict": "FAIL",
+     "boxes": 41,
+     "counts": "{'threaded_hole': 2}"
+    }
+   }
+  },
+  "3 thread holes|v2": {
+   "ref_boxes": 4,
+   "ref_counts": "{'threaded_hole': 3}",
+   "photos": {
+    "defected": {
+     "verdict": "FAIL",
+     "boxes": 4,
+     "counts": "{'threaded_hole': 2}"
+    },
+    "left": {
+     "verdict": "PASS",
+     "boxes": 3,
+     "counts": "{'threaded_hole': 3}"
+    },
+    "right": {
+     "verdict": "PASS",
+     "boxes": 4,
+     "counts": "{'threaded_hole': 3}"
+    },
+    "warm left": {
+     "verdict": "PASS",
+     "boxes": 4,
+     "counts": "{'threaded_hole': 3}"
+    },
+    "warm mid": {
+     "verdict": "PASS",
+     "boxes": 4,
+     "counts": "{'threaded_hole': 3}"
+    },
+    "warm right": {
+     "verdict": "FAIL",
+     "boxes": 10,
+     "counts": "{'threaded_hole': 2}"
+    },
+    "white left": {
+     "verdict": "PASS",
+     "boxes": 4,
+     "counts": "{'threaded_hole': 3}"
+    },
+    "white mid": {
+     "verdict": "PASS",
+     "boxes": 4,
+     "counts": "{'threaded_hole': 3}"
+    },
+    "white right": {
+     "verdict": "FAIL",
+     "boxes": 7,
+     "counts": "{'threaded_hole': 2}"
+    },
+    "yellow left": {
+     "verdict": "PASS",
+     "boxes": 4,
+     "counts": "{'threaded_hole': 3}"
+    },
+    "yellow mid": {
+     "verdict": "PASS",
+     "boxes": 4,
+     "counts": "{'threaded_hole': 3}"
+    },
+    "yellow right": {
+     "verdict": "FAIL",
+     "boxes": 9,
+     "counts": "{'threaded_hole': 2}"
+    }
+   }
+  },
+  "3 thread holes|v3": {
+   "ref_boxes": 3,
+   "ref_counts": "{'threaded_hole': 3}",
+   "photos": {
+    "defected": {
+     "verdict": "FAIL",
+     "boxes": 4,
+     "counts": "{'threaded_hole': 2}"
+    },
+    "left": {
+     "verdict": "PASS",
+     "boxes": 3,
+     "counts": "{'threaded_hole': 3}"
+    },
+    "right": {
+     "verdict": "PASS",
+     "boxes": 4,
+     "counts": "{'threaded_hole': 3}"
+    },
+    "warm left": {
+     "verdict": "PASS",
+     "boxes": 4,
+     "counts": "{'threaded_hole': 3}"
+    },
+    "warm mid": {
+     "verdict": "PASS",
+     "boxes": 4,
+     "counts": "{'threaded_hole': 3}"
+    },
+    "warm right": {
+     "verdict": "FAIL",
+     "boxes": 5,
+     "counts": "{'threaded_hole': 2}"
+    },
+    "white left": {
+     "verdict": "PASS",
+     "boxes": 4,
+     "counts": "{'threaded_hole': 3}"
+    },
+    "white mid": {
+     "verdict": "PASS",
+     "boxes": 4,
+     "counts": "{'threaded_hole': 3}"
+    },
+    "white right": {
+     "verdict": "FAIL",
+     "boxes": 13,
+     "counts": "{'threaded_hole': 2}"
+    },
+    "yellow left": {
+     "verdict": "PASS",
+     "boxes": 4,
+     "counts": "{'threaded_hole': 3}"
+    },
+    "yellow mid": {
+     "verdict": "PASS",
+     "boxes": 4,
+     "counts": "{'threaded_hole': 3}"
+    },
+    "yellow right": {
+     "verdict": "FAIL",
+     "boxes": 4,
+     "counts": "{'threaded_hole': 2}"
+    }
+   }
+  },
+  "3 thread holes|v4": {
+   "ref_boxes": 3,
+   "ref_counts": "{'threaded_hole': 3}",
+   "photos": {
+    "defected": {
+     "verdict": "FAIL",
+     "boxes": 4,
+     "counts": "{'threaded_hole': 2}"
+    },
+    "left": {
+     "verdict": "PASS",
+     "boxes": 3,
+     "counts": "{'threaded_hole': 3}"
+    },
+    "right": {
+     "verdict": "PASS",
+     "boxes": 4,
+     "counts": "{'threaded_hole': 3}"
+    },
+    "warm left": {
+     "verdict": "PASS",
+     "boxes": 4,
+     "counts": "{'threaded_hole': 3}"
+    },
+    "warm mid": {
+     "verdict": "PASS",
+     "boxes": 4,
+     "counts": "{'threaded_hole': 3}"
+    },
+    "warm right": {
+     "verdict": "FAIL",
+     "boxes": 10,
+     "counts": "{'threaded_hole': 2}"
+    },
+    "white left": {
+     "verdict": "PASS",
+     "boxes": 4,
+     "counts": "{'threaded_hole': 3}"
+    },
+    "white mid": {
+     "verdict": "PASS",
+     "boxes": 4,
+     "counts": "{'threaded_hole': 3}"
+    },
+    "white right": {
+     "verdict": "FAIL",
+     "boxes": 11,
+     "counts": "{'threaded_hole': 2}"
+    },
+    "yellow left": {
+     "verdict": "PASS",
+     "boxes": 4,
+     "counts": "{'threaded_hole': 3}"
+    },
+    "yellow mid": {
+     "verdict": "PASS",
+     "boxes": 4,
+     "counts": "{'threaded_hole': 3}"
+    },
+    "yellow right": {
+     "verdict": "FAIL",
+     "boxes": 6,
+     "counts": "{'threaded_hole': 2}"
+    }
+   }
+  },
+  "3 thread holes|v5": {
+   "ref_boxes": 4,
+   "ref_counts": "{'threaded_hole': 3}",
+   "photos": {
+    "defected": {
+     "verdict": "FAIL",
+     "boxes": 4,
+     "counts": "{'threaded_hole': 2}"
+    },
+    "left": {
+     "verdict": "PASS",
+     "boxes": 3,
+     "counts": "{'threaded_hole': 3}"
+    },
+    "right": {
+     "verdict": "PASS",
+     "boxes": 4,
+     "counts": "{'threaded_hole': 3}"
+    },
+    "warm left": {
+     "verdict": "PASS",
+     "boxes": 4,
+     "counts": "{'threaded_hole': 3}"
+    },
+    "warm mid": {
+     "verdict": "PASS",
+     "boxes": 4,
+     "counts": "{'threaded_hole': 3}"
+    },
+    "warm right": {
+     "verdict": "FAIL",
+     "boxes": 5,
+     "counts": "{'threaded_hole': 2}"
+    },
+    "white left": {
+     "verdict": "PASS",
+     "boxes": 4,
+     "counts": "{'threaded_hole': 3}"
+    },
+    "white mid": {
+     "verdict": "PASS",
+     "boxes": 4,
+     "counts": "{'threaded_hole': 3}"
+    },
+    "white right": {
+     "verdict": "FAIL",
+     "boxes": 13,
+     "counts": "{'threaded_hole': 2}"
+    },
+    "yellow left": {
+     "verdict": "PASS",
+     "boxes": 4,
+     "counts": "{'threaded_hole': 3}"
+    },
+    "yellow mid": {
+     "verdict": "PASS",
+     "boxes": 4,
+     "counts": "{'threaded_hole': 3}"
+    },
+    "yellow right": {
+     "verdict": "FAIL",
+     "boxes": 5,
+     "counts": "{'threaded_hole': 2}"
+    }
+   }
+  },
+  "3 thread holes|v6": {
+   "ref_boxes": 3,
+   "ref_counts": "{'threaded_hole': 3}",
+   "photos": {
+    "defected": {
+     "verdict": "FAIL",
+     "boxes": 4,
+     "counts": "{'threaded_hole': 2}"
+    },
+    "left": {
+     "verdict": "PASS",
+     "boxes": 3,
+     "counts": "{'threaded_hole': 3}"
+    },
+    "right": {
+     "verdict": "PASS",
+     "boxes": 4,
+     "counts": "{'threaded_hole': 3}"
+    },
+    "warm left": {
+     "verdict": "PASS",
+     "boxes": 4,
+     "counts": "{'threaded_hole': 3}"
+    },
+    "warm mid": {
+     "verdict": "PASS",
+     "boxes": 4,
+     "counts": "{'threaded_hole': 3}"
+    },
+    "warm right": {
+     "verdict": "FAIL",
+     "boxes": 8,
+     "counts": "{'threaded_hole': 2}"
+    },
+    "white left": {
+     "verdict": "PASS",
+     "boxes": 4,
+     "counts": "{'threaded_hole': 3}"
+    },
+    "white mid": {
+     "verdict": "PASS",
+     "boxes": 4,
+     "counts": "{'threaded_hole': 3}"
+    },
+    "white right": {
+     "verdict": "FAIL",
+     "boxes": 9,
+     "counts": "{'threaded_hole': 2}"
+    },
+    "yellow left": {
+     "verdict": "PASS",
+     "boxes": 4,
+     "counts": "{'threaded_hole': 3}"
+    },
+    "yellow mid": {
+     "verdict": "PASS",
+     "boxes": 4,
+     "counts": "{'threaded_hole': 3}"
+    },
+    "yellow right": {
+     "verdict": "FAIL",
+     "boxes": 12,
+     "counts": "{'threaded_hole': 2}"
+    }
+   }
+  },
+  "3 thread holes|v7": {
+   "ref_boxes": 13,
+   "ref_counts": "{'threaded_hole': 3}",
+   "photos": {
+    "defected": {
+     "verdict": "FAIL",
+     "boxes": 26,
+     "counts": "{'threaded_hole': 2}"
+    },
+    "left": {
+     "verdict": "PASS",
+     "boxes": 15,
+     "counts": "{'threaded_hole': 3}"
+    },
+    "right": {
+     "verdict": "PASS",
+     "boxes": 11,
+     "counts": "{'threaded_hole': 3}"
+    },
+    "warm left": {
+     "verdict": "PASS",
+     "boxes": 61,
+     "counts": "{'threaded_hole': 3}"
+    },
+    "warm mid": {
+     "verdict": "PASS",
+     "boxes": 51,
+     "counts": "{'threaded_hole': 3}"
+    },
+    "warm right": {
+     "verdict": "FAIL",
+     "boxes": 9,
+     "counts": "{'threaded_hole': 1}"
+    },
+    "white left": {
+     "verdict": "PASS",
+     "boxes": 62,
+     "counts": "{'threaded_hole': 3}"
+    },
+    "white mid": {
+     "verdict": "PASS",
+     "boxes": 38,
+     "counts": "{'threaded_hole': 3}"
+    },
+    "white right": {
+     "verdict": "FAIL",
+     "boxes": 17,
+     "counts": "{'threaded_hole': 1}"
+    },
+    "yellow left": {
+     "verdict": "PASS",
+     "boxes": 64,
+     "counts": "{'threaded_hole': 3}"
+    },
+    "yellow mid": {
+     "verdict": "PASS",
+     "boxes": 41,
+     "counts": "{'threaded_hole': 3}"
+    },
+    "yellow right": {
+     "verdict": "FAIL",
+     "boxes": 19,
+     "counts": "{'threaded_hole': 1}"
+    }
+   }
+  },
+  "3 thread holes|v8": {
+   "ref_boxes": 4,
+   "ref_counts": "{'threaded_hole': 3}",
+   "photos": {
+    "defected": {
+     "verdict": "FAIL",
+     "boxes": 4,
+     "counts": "{'threaded_hole': 2}"
+    },
+    "left": {
+     "verdict": "PASS",
+     "boxes": 3,
+     "counts": "{'threaded_hole': 3}"
+    },
+    "right": {
+     "verdict": "PASS",
+     "boxes": 5,
+     "counts": "{'threaded_hole': 3}"
+    },
+    "warm left": {
+     "verdict": "PASS",
+     "boxes": 4,
+     "counts": "{'threaded_hole': 3}"
+    },
+    "warm mid": {
+     "verdict": "PASS",
+     "boxes": 4,
+     "counts": "{'threaded_hole': 3}"
+    },
+    "warm right": {
+     "verdict": "FAIL",
+     "boxes": 3,
+     "counts": "{'threaded_hole': 2}"
+    },
+    "white left": {
+     "verdict": "PASS",
+     "boxes": 4,
+     "counts": "{'threaded_hole': 3}"
+    },
+    "white mid": {
+     "verdict": "PASS",
+     "boxes": 4,
+     "counts": "{'threaded_hole': 3}"
+    },
+    "white right": {
+     "verdict": "FAIL",
+     "boxes": 4,
+     "counts": "{'threaded_hole': 2}"
+    },
+    "yellow left": {
+     "verdict": "PASS",
+     "boxes": 4,
+     "counts": "{'threaded_hole': 3}"
+    },
+    "yellow mid": {
+     "verdict": "PASS",
+     "boxes": 4,
+     "counts": "{'threaded_hole': 3}"
+    },
+    "yellow right": {
+     "verdict": "FAIL",
+     "boxes": 3,
+     "counts": "{'threaded_hole': 2}"
+    }
+   }
+  },
+  "3 thread holes|v9": {
+   "ref_boxes": 9,
+   "ref_counts": "{'threaded_hole': 3}",
+   "photos": {
+    "defected": {
+     "verdict": "FAIL",
+     "boxes": 7,
+     "counts": "{'threaded_hole': 2}"
+    },
+    "left": {
+     "verdict": "PASS",
+     "boxes": 12,
+     "counts": "{'threaded_hole': 3}"
+    },
+    "right": {
+     "verdict": "PASS",
+     "boxes": 7,
+     "counts": "{'threaded_hole': 3}"
+    },
+    "warm left": {
+     "verdict": "PASS",
+     "boxes": 50,
+     "counts": "{'threaded_hole': 3}"
+    },
+    "warm mid": {
+     "verdict": "PASS",
+     "boxes": 93,
+     "counts": "{'threaded_hole': 3}"
+    },
+    "warm right": {
+     "verdict": "FAIL",
+     "boxes": 66,
+     "counts": "{'threaded_hole': 2}"
+    },
+    "white left": {
+     "verdict": "PASS",
+     "boxes": 27,
+     "counts": "{'threaded_hole': 3}"
+    },
+    "white mid": {
+     "verdict": "PASS",
+     "boxes": 66,
+     "counts": "{'threaded_hole': 3}"
+    },
+    "white right": {
+     "verdict": "FAIL",
+     "boxes": 43,
+     "counts": "{'threaded_hole': 2}"
+    },
+    "yellow left": {
+     "verdict": "PASS",
+     "boxes": 51,
+     "counts": "{'threaded_hole': 3}"
+    },
+    "yellow mid": {
+     "verdict": "PASS",
+     "boxes": 115,
+     "counts": "{'threaded_hole': 3}"
+    },
+    "yellow right": {
+     "verdict": "FAIL",
+     "boxes": 61,
+     "counts": "{'threaded_hole': 1}"
+    }
+   }
+  },
+  "3 thread holes|v10": {
+   "ref_boxes": 4,
+   "ref_counts": "{'threaded_hole': 3}",
+   "photos": {
+    "defected": {
+     "verdict": "FAIL",
+     "boxes": 4,
+     "counts": "{'threaded_hole': 2}"
+    },
+    "left": {
+     "verdict": "PASS",
+     "boxes": 4,
+     "counts": "{'threaded_hole': 3}"
+    },
+    "right": {
+     "verdict": "PASS",
+     "boxes": 5,
+     "counts": "{'threaded_hole': 3}"
+    },
+    "warm left": {
+     "verdict": "PASS",
+     "boxes": 7,
+     "counts": "{'threaded_hole': 3}"
+    },
+    "warm mid": {
+     "verdict": "PASS",
+     "boxes": 6,
+     "counts": "{'threaded_hole': 3}"
+    },
+    "warm right": {
+     "verdict": "FAIL",
+     "boxes": 13,
+     "counts": "{'threaded_hole': 2}"
+    },
+    "white left": {
+     "verdict": "PASS",
+     "boxes": 6,
+     "counts": "{'threaded_hole': 3}"
+    },
+    "white mid": {
+     "verdict": "PASS",
+     "boxes": 8,
+     "counts": "{'threaded_hole': 3}"
+    },
+    "white right": {
+     "verdict": "FAIL",
+     "boxes": 9,
+     "counts": "{'threaded_hole': 2}"
+    },
+    "yellow left": {
+     "verdict": "PASS",
+     "boxes": 6,
+     "counts": "{'threaded_hole': 3}"
+    },
+    "yellow mid": {
+     "verdict": "PASS",
+     "boxes": 8,
+     "counts": "{'threaded_hole': 3}"
+    },
+    "yellow right": {
+     "verdict": "FAIL",
+     "boxes": 8,
+     "counts": "{'threaded_hole': 2}"
+    }
+   }
+  },
+  "4 screws|v1": {
+   "ref_boxes": 6,
+   "ref_counts": "{'screw': 2, 'stud': 2}",
+   "photos": {
+    "bot": {
+     "verdict": "FAIL",
+     "boxes": 8,
+     "counts": "{}"
+    },
+    "defected": {
+     "verdict": "FAIL",
+     "boxes": 7,
+     "counts": "{'stud': 2, 'screw': 1}"
+    },
+    "front": {
+     "verdict": "PASS",
+     "boxes": 10,
+     "counts": "{'screw': 2, 'stud': 2}"
+    },
+    "right": {
+     "verdict": "FAIL",
+     "boxes": 8,
+     "counts": "{'screw': 1, 'stud': 2}"
+    },
+    "warm mid": {
+     "verdict": "PASS",
+     "boxes": 23,
+     "counts": "{'stud': 2, 'screw': 2}"
+    },
+    "warm right": {
+     "verdict": "PASS",
+     "boxes": 14,
+     "counts": "{'screw': 2, 'stud': 2}"
+    },
+    "white left": {
+     "verdict": "FAIL",
+     "boxes": 12,
+     "counts": "{'screw': 2, 'stud': 1}"
+    },
+    "white left 2": {
+     "verdict": "PASS",
+     "boxes": 9,
+     "counts": "{'screw': 2, 'stud': 2}"
+    },
+    "white mid": {
+     "verdict": "FAIL",
+     "boxes": 9,
+     "counts": "{'stud': 1, 'screw': 1}"
+    },
+    "white right": {
+     "verdict": "FAIL",
+     "boxes": 16,
+     "counts": "{'screw': 1, 'stud': 1}"
+    },
+    "yellow left": {
+     "verdict": "FAIL",
+     "boxes": 9,
+     "counts": "{'screw': 2, 'stud': 1}"
+    },
+    "yellow mid": {
+     "verdict": "FAIL",
+     "boxes": 22,
+     "counts": "{}"
+    },
+    "yellow right": {
+     "verdict": "PASS",
+     "boxes": 22,
+     "counts": "{'screw': 2, 'stud': 2}"
+    }
+   }
+  },
+  "4 screws|v2": {
+   "ref_boxes": 5,
+   "ref_counts": "{'screw': 2, 'stud': 2}",
+   "photos": {
+    "bot": {
+     "verdict": "FAIL",
+     "boxes": 5,
+     "counts": "{}"
+    },
+    "defected": {
+     "verdict": "FAIL",
+     "boxes": 4,
+     "counts": "{'stud': 2, 'screw': 1}"
+    },
+    "front": {
+     "verdict": "PASS",
+     "boxes": 4,
+     "counts": "{'screw': 2, 'stud': 2}"
+    },
+    "right": {
+     "verdict": "FAIL",
+     "boxes": 3,
+     "counts": "{'stud': 2}"
+    },
+    "warm mid": {
+     "verdict": "PASS",
+     "boxes": 7,
+     "counts": "{'screw': 2, 'stud': 2}"
+    },
+    "warm right": {
+     "verdict": "FAIL",
+     "boxes": 4,
+     "counts": "{'screw': 2, 'stud': 1}"
+    },
+    "white left": {
+     "verdict": "FAIL",
+     "boxes": 8,
+     "counts": "{}"
+    },
+    "white left 2": {
+     "verdict": "FAIL",
+     "boxes": 5,
+     "counts": "{'screw': 1}"
+    },
+    "white mid": {
+     "verdict": "FAIL",
+     "boxes": 6,
+     "counts": "{'screw': 2, 'stud': 1}"
+    },
+    "white right": {
+     "verdict": "FAIL",
+     "boxes": 4,
+     "counts": "{'screw': 2, 'stud': 1}"
+    },
+    "yellow left": {
+     "verdict": "FAIL",
+     "boxes": 4,
+     "counts": "{'stud': 1, 'screw': 2}"
+    },
+    "yellow mid": {
+     "verdict": "PASS",
+     "boxes": 7,
+     "counts": "{'screw': 2, 'stud': 2}"
+    },
+    "yellow right": {
+     "verdict": "FAIL",
+     "boxes": 4,
+     "counts": "{'screw': 2, 'stud': 1}"
+    }
+   }
+  },
+  "4 screws|v3": {
+   "ref_boxes": 6,
+   "ref_counts": "{'stud': 2, 'screw': 2}",
+   "photos": {
+    "bot": {
+     "verdict": "FAIL",
+     "boxes": 5,
+     "counts": "{}"
+    },
+    "defected": {
+     "verdict": "FAIL",
+     "boxes": 5,
+     "counts": "{'stud': 2, 'screw': 1}"
+    },
+    "front": {
+     "verdict": "PASS",
+     "boxes": 4,
+     "counts": "{'screw': 2, 'stud': 2}"
+    },
+    "right": {
+     "verdict": "FAIL",
+     "boxes": 3,
+     "counts": "{'screw': 1, 'stud': 2}"
+    },
+    "warm mid": {
+     "verdict": "PASS",
+     "boxes": 6,
+     "counts": "{'stud': 2, 'screw': 2}"
+    },
+    "warm right": {
+     "verdict": "FAIL",
+     "boxes": 4,
+     "counts": "{'screw': 2, 'stud': 1}"
+    },
+    "white left": {
+     "verdict": "FAIL",
+     "boxes": 5,
+     "counts": "{}"
+    },
+    "white left 2": {
+     "verdict": "FAIL",
+     "boxes": 4,
+     "counts": "{}"
+    },
+    "white mid": {
+     "verdict": "FAIL",
+     "boxes": 7,
+     "counts": "{'stud': 1, 'screw': 2}"
+    },
+    "white right": {
+     "verdict": "FAIL",
+     "boxes": 4,
+     "counts": "{'screw': 2, 'stud': 1}"
+    },
+    "yellow left": {
+     "verdict": "FAIL",
+     "boxes": 4,
+     "counts": "{'screw': 2, 'stud': 1}"
+    },
+    "yellow mid": {
+     "verdict": "FAIL",
+     "boxes": 6,
+     "counts": "{'stud': 1, 'screw': 2}"
+    },
+    "yellow right": {
+     "verdict": "FAIL",
+     "boxes": 4,
+     "counts": "{'screw': 2, 'stud': 1}"
+    }
+   }
+  },
+  "4 screws|v4": {
+   "ref_boxes": 7,
+   "ref_counts": "{'screw': 2, 'stud': 2}",
+   "photos": {
+    "bot": {
+     "verdict": "FAIL",
+     "boxes": 4,
+     "counts": "{}"
+    },
+    "defected": {
+     "verdict": "FAIL",
+     "boxes": 6,
+     "counts": "{'stud': 2, 'screw': 1}"
+    },
+    "front": {
+     "verdict": "FAIL",
+     "boxes": 4,
+     "counts": "{'screw': 1, 'stud': 2}"
+    },
+    "right": {
+     "verdict": "FAIL",
+     "boxes": 3,
+     "counts": "{'stud': 2}"
+    },
+    "warm mid": {
+     "verdict": "FAIL",
+     "boxes": 7,
+     "counts": "{'stud': 2, 'screw': 1}"
+    },
+    "warm right": {
+     "verdict": "FAIL",
+     "boxes": 3,
+     "counts": "{'screw': 2, 'stud': 1}"
+    },
+    "white left": {
+     "verdict": "FAIL",
+     "boxes": 5,
+     "counts": "{'screw': 1}"
+    },
+    "white left 2": {
+     "verdict": "FAIL",
+     "boxes": 6,
+     "counts": "{'screw': 1}"
+    },
+    "white mid": {
+     "verdict": "FAIL",
+     "boxes": 7,
+     "counts": "{}"
+    },
+    "white right": {
+     "verdict": "FAIL",
+     "boxes": 4,
+     "counts": "{'screw': 2, 'stud': 1}"
+    },
+    "yellow left": {
+     "verdict": "FAIL",
+     "boxes": 4,
+     "counts": "{'screw': 1, 'stud': 1}"
+    },
+    "yellow mid": {
+     "verdict": "FAIL",
+     "boxes": 5,
+     "counts": "{'stud': 1}"
+    },
+    "yellow right": {
+     "verdict": "FAIL",
+     "boxes": 4,
+     "counts": "{'screw': 2, 'stud': 1}"
+    }
+   }
+  },
+  "4 screws|v5": {
+   "ref_boxes": 5,
+   "ref_counts": "{'stud': 2, 'screw': 2}",
+   "photos": {
+    "bot": {
+     "verdict": "FAIL",
+     "boxes": 5,
+     "counts": "{}"
+    },
+    "defected": {
+     "verdict": "FAIL",
+     "boxes": 5,
+     "counts": "{'stud': 2, 'screw': 1}"
+    },
+    "front": {
+     "verdict": "PASS",
+     "boxes": 4,
+     "counts": "{'screw': 2, 'stud': 2}"
+    },
+    "right": {
+     "verdict": "FAIL",
+     "boxes": 3,
+     "counts": "{'stud': 1}"
+    },
+    "warm mid": {
+     "verdict": "PASS",
+     "boxes": 6,
+     "counts": "{'screw': 2, 'stud': 2}"
+    },
+    "warm right": {
+     "verdict": "FAIL",
+     "boxes": 4,
+     "counts": "{'screw': 2}"
+    },
+    "white left": {
+     "verdict": "FAIL",
+     "boxes": 6,
+     "counts": "{}"
+    },
+    "white left 2": {
+     "verdict": "FAIL",
+     "boxes": 4,
+     "counts": "{'stud': 1, 'screw': 1}"
+    },
+    "white mid": {
+     "verdict": "FAIL",
+     "boxes": 7,
+     "counts": "{'stud': 1, 'screw': 1}"
+    },
+    "white right": {
+     "verdict": "FAIL",
+     "boxes": 5,
+     "counts": "{'screw': 2, 'stud': 1}"
+    },
+    "yellow left": {
+     "verdict": "FAIL",
+     "boxes": 4,
+     "counts": "{'screw': 2, 'stud': 1}"
+    },
+    "yellow mid": {
+     "verdict": "FAIL",
+     "boxes": 6,
+     "counts": "{'screw': 2}"
+    },
+    "yellow right": {
+     "verdict": "FAIL",
+     "boxes": 4,
+     "counts": "{'screw': 2, 'stud': 1}"
+    }
+   }
+  },
+  "4 screws|v6": {
+   "ref_boxes": 6,
+   "ref_counts": "{'screw': 2, 'stud': 2}",
+   "photos": {
+    "bot": {
+     "verdict": "FAIL",
+     "boxes": 5,
+     "counts": "{}"
+    },
+    "defected": {
+     "verdict": "PASS",
+     "boxes": 6,
+     "counts": "{'screw': 2, 'stud': 2}"
+    },
+    "front": {
+     "verdict": "PASS",
+     "boxes": 4,
+     "counts": "{'screw': 2, 'stud': 2}"
+    },
+    "right": {
+     "verdict": "FAIL",
+     "boxes": 3,
+     "counts": "{'stud': 2}"
+    },
+    "warm mid": {
+     "verdict": "PASS",
+     "boxes": 6,
+     "counts": "{'screw': 2, 'stud': 2}"
+    },
+    "warm right": {
+     "verdict": "FAIL",
+     "boxes": 4,
+     "counts": "{'screw': 2, 'stud': 1}"
+    },
+    "white left": {
+     "verdict": "FAIL",
+     "boxes": 4,
+     "counts": "{'stud': 1}"
+    },
+    "white left 2": {
+     "verdict": "FAIL",
+     "boxes": 4,
+     "counts": "{'screw': 2}"
+    },
+    "white mid": {
+     "verdict": "FAIL",
+     "boxes": 4,
+     "counts": "{}"
+    },
+    "white right": {
+     "verdict": "PASS",
+     "boxes": 4,
+     "counts": "{'screw': 2, 'stud': 2}"
+    },
+    "yellow left": {
+     "verdict": "FAIL",
+     "boxes": 4,
+     "counts": "{'screw': 2}"
+    },
+    "yellow mid": {
+     "verdict": "FAIL",
+     "boxes": 3,
+     "counts": "{}"
+    },
+    "yellow right": {
+     "verdict": "PASS",
+     "boxes": 4,
+     "counts": "{'screw': 2, 'stud': 2}"
+    }
+   }
+  },
+  "4 screws|v7": {
+   "ref_boxes": 11,
+   "ref_counts": "{'screw': 2, 'stud': 2}",
+   "photos": {
+    "bot": {
+     "verdict": "FAIL",
+     "boxes": 14,
+     "counts": "{}"
+    },
+    "defected": {
+     "verdict": "FAIL",
+     "boxes": 5,
+     "counts": "{'stud': 2, 'screw': 1}"
+    },
+    "front": {
+     "verdict": "FAIL",
+     "boxes": 11,
+     "counts": "{'stud': 2, 'screw': 1}"
+    },
+    "right": {
+     "verdict": "FAIL",
+     "boxes": 12,
+     "counts": "{'stud': 2, 'screw': 1}"
+    },
+    "warm mid": {
+     "verdict": "FAIL",
+     "boxes": 14,
+     "counts": "{'screw': 1}"
+    },
+    "warm right": {
+     "verdict": "FAIL",
+     "boxes": 15,
+     "counts": "{'screw': 2, 'stud': 1}"
+    },
+    "white left": {
+     "verdict": "FAIL",
+     "boxes": 18,
+     "counts": "{'screw': 2, 'stud': 1}"
+    },
+    "white left 2": {
+     "verdict": "FAIL",
+     "boxes": 11,
+     "counts": "{'stud': 1, 'screw': 2}"
+    },
+    "white mid": {
+     "verdict": "FAIL",
+     "boxes": 7,
+     "counts": "{}"
+    },
+    "white right": {
+     "verdict": "FAIL",
+     "boxes": 21,
+     "counts": "{'screw': 1, 'stud': 1}"
+    },
+    "yellow left": {
+     "verdict": "PASS",
+     "boxes": 16,
+     "counts": "{'stud': 2, 'screw': 2}"
+    },
+    "yellow mid": {
+     "verdict": "FAIL",
+     "boxes": 1,
+     "counts": "{}"
+    },
+    "yellow right": {
+     "verdict": "FAIL",
+     "boxes": 20,
+     "counts": "{'screw': 2, 'stud': 1}"
+    }
+   }
+  },
+  "4 screws|v8": {
+   "ref_boxes": 9,
+   "ref_counts": "{'stud': 2, 'screw': 2}",
+   "photos": {
+    "bot": {
+     "verdict": "FAIL",
+     "boxes": 5,
+     "counts": "{}"
+    },
+    "defected": {
+     "verdict": "FAIL",
+     "boxes": 5,
+     "counts": "{'stud': 2}"
+    },
+    "front": {
+     "verdict": "PASS",
+     "boxes": 4,
+     "counts": "{'screw': 2, 'stud': 2}"
+    },
+    "right": {
+     "verdict": "FAIL",
+     "boxes": 4,
+     "counts": "{'stud': 2}"
+    },
+    "warm mid": {
+     "verdict": "PASS",
+     "boxes": 6,
+     "counts": "{'stud': 2, 'screw': 2}"
+    },
+    "warm right": {
+     "verdict": "FAIL",
+     "boxes": 3,
+     "counts": "{'screw': 2, 'stud': 1}"
+    },
+    "white left": {
+     "verdict": "FAIL",
+     "boxes": 4,
+     "counts": "{'stud': 1}"
+    },
+    "white left 2": {
+     "verdict": "FAIL",
+     "boxes": 6,
+     "counts": "{}"
+    },
+    "white mid": {
+     "verdict": "FAIL",
+     "boxes": 4,
+     "counts": "{'stud': 1, 'screw': 2}"
+    },
+    "white right": {
+     "verdict": "FAIL",
+     "boxes": 4,
+     "counts": "{'screw': 2, 'stud': 1}"
+    },
+    "yellow left": {
+     "verdict": "FAIL",
+     "boxes": 4,
+     "counts": "{'screw': 1}"
+    },
+    "yellow mid": {
+     "verdict": "FAIL",
+     "boxes": 5,
+     "counts": "{'stud': 1, 'screw': 2}"
+    },
+    "yellow right": {
+     "verdict": "FAIL",
+     "boxes": 4,
+     "counts": "{'screw': 2, 'stud': 1}"
+    }
+   }
+  },
+  "4 screws|v9": {
+   "ref_boxes": 12,
+   "ref_counts": "{'screw': 2, 'stud': 2}",
+   "photos": {
+    "bot": {
+     "verdict": "FAIL",
+     "boxes": 12,
+     "counts": "{'screw': 1}"
+    },
+    "defected": {
+     "verdict": "FAIL",
+     "boxes": 8,
+     "counts": "{'stud': 2, 'screw': 1}"
+    },
+    "front": {
+     "verdict": "PASS",
+     "boxes": 12,
+     "counts": "{'screw': 2, 'stud': 2}"
+    },
+    "right": {
+     "verdict": "FAIL",
+     "boxes": 12,
+     "counts": "{'screw': 2}"
+    },
+    "warm mid": {
+     "verdict": "PASS",
+     "boxes": 35,
+     "counts": "{'screw': 2, 'stud': 2}"
+    },
+    "warm right": {
+     "verdict": "FAIL",
+     "boxes": 17,
+     "counts": "{'screw': 2, 'stud': 1}"
+    },
+    "white left": {
+     "verdict": "FAIL",
+     "boxes": 28,
+     "counts": "{'stud': 1}"
+    },
+    "white left 2": {
+     "verdict": "PASS",
+     "boxes": 13,
+     "counts": "{'screw': 2, 'stud': 2}"
+    },
+    "white mid": {
+     "verdict": "PASS",
+     "boxes": 34,
+     "counts": "{'screw': 2, 'stud': 2}"
+    },
+    "white right": {
+     "verdict": "FAIL",
+     "boxes": 29,
+     "counts": "{'screw': 2, 'stud': 1}"
+    },
+    "yellow left": {
+     "verdict": "PASS",
+     "boxes": 21,
+     "counts": "{'screw': 2, 'stud': 2}"
+    },
+    "yellow mid": {
+     "verdict": "PASS",
+     "boxes": 32,
+     "counts": "{'screw': 2, 'stud': 2}"
+    },
+    "yellow right": {
+     "verdict": "PASS",
+     "boxes": 32,
+     "counts": "{'screw': 2, 'stud': 2}"
+    }
+   }
+  },
+  "4 screws|v10": {
+   "ref_boxes": 6,
+   "ref_counts": "{'screw': 3, 'stud': 2}",
+   "photos": {
+    "bot": {
+     "verdict": "FAIL",
+     "boxes": 6,
+     "counts": "{}"
+    },
+    "defected": {
+     "verdict": "FAIL",
+     "boxes": 4,
+     "counts": "{'stud': 2}"
+    },
+    "front": {
+     "verdict": "FAIL",
+     "boxes": 5,
+     "counts": "{'screw': 1, 'stud': 2}"
+    },
+    "right": {
+     "verdict": "FAIL",
+     "boxes": 5,
+     "counts": "{'screw': 3, 'stud': 2}"
+    },
+    "warm mid": {
+     "verdict": "FAIL",
+     "boxes": 16,
+     "counts": "{'stud': 1}"
+    },
+    "warm right": {
+     "verdict": "FAIL",
+     "boxes": 5,
+     "counts": "{'screw': 2, 'stud': 2}"
+    },
+    "white left": {
+     "verdict": "FAIL",
+     "boxes": 4,
+     "counts": "{'screw': 1, 'stud': 2}"
+    },
+    "white left 2": {
+     "verdict": "FAIL",
+     "boxes": 5,
+     "counts": "{'screw': 1, 'stud': 1}"
+    },
+    "white mid": {
+     "verdict": "FAIL",
+     "boxes": 12,
+     "counts": "{'stud': 1}"
+    },
+    "white right": {
+     "verdict": "FAIL",
+     "boxes": 5,
+     "counts": "{'screw': 2, 'stud': 1}"
+    },
+    "yellow left": {
+     "verdict": "FAIL",
+     "boxes": 4,
+     "counts": "{'screw': 2, 'stud': 2}"
+    },
+    "yellow mid": {
+     "verdict": "FAIL",
+     "boxes": 17,
+     "counts": "{'stud': 1}"
+    },
+    "yellow right": {
+     "verdict": "FAIL",
+     "boxes": 6,
+     "counts": "{'screw': 2, 'stud': 2}"
+    }
+   }
+  }
+ }
+}

@@ -1,0 +1,524 @@
+{
+ "v1": {
+  "3 holes": {
+   "ref_ok": true,
+   "ref": "ref OK",
+   "light_pass": 6,
+   "light_n": 9,
+   "defect_caught": true,
+   "angle_pass": 1,
+   "angle_n": 2
+  },
+  "3 thread holes": {
+   "ref_ok": true,
+   "ref": "ref OK",
+   "light_pass": 8,
+   "light_n": 9,
+   "defect_caught": true,
+   "angle_pass": 2,
+   "angle_n": 2
+  },
+  "4 screws": {
+   "ref_ok": true,
+   "ref": "ref OK",
+   "light_pass": 4,
+   "light_n": 9,
+   "defect_caught": true,
+   "angle_pass": 1,
+   "angle_n": 3
+  }
+ },
+ "v2": {
+  "3 holes": {
+   "ref_ok": true,
+   "ref": "ref OK",
+   "light_pass": 6,
+   "light_n": 9,
+   "defect_caught": true,
+   "angle_pass": 1,
+   "angle_n": 2
+  },
+  "3 thread holes": {
+   "ref_ok": true,
+   "ref": "ref OK",
+   "light_pass": 7,
+   "light_n": 9,
+   "defect_caught": true,
+   "angle_pass": 2,
+   "angle_n": 2
+  },
+  "4 screws": {
+   "ref_ok": true,
+   "ref": "ref OK",
+   "light_pass": 1,
+   "light_n": 9,
+   "defect_caught": true,
+   "angle_pass": 1,
+   "angle_n": 3
+  }
+ },
+ "v3": {
+  "3 holes": {
+   "ref_ok": true,
+   "ref": "ref OK",
+   "light_pass": 7,
+   "light_n": 9,
+   "defect_caught": true,
+   "angle_pass": 1,
+   "angle_n": 2
+  },
+  "3 thread holes": {
+   "ref_ok": true,
+   "ref": "ref OK",
+   "light_pass": 6,
+   "light_n": 9,
+   "defect_caught": true,
+   "angle_pass": 2,
+   "angle_n": 2
+  },
+  "4 screws": {
+   "ref_ok": true,
+   "ref": "ref OK",
+   "light_pass": 1,
+   "light_n": 9,
+   "defect_caught": true,
+   "angle_pass": 1,
+   "angle_n": 3
+  }
+ },
+ "v4": {
+  "3 holes": {
+   "ref_ok": true,
+   "ref": "ref OK",
+   "light_pass": 9,
+   "light_n": 9,
+   "defect_caught": true,
+   "angle_pass": 1,
+   "angle_n": 2
+  },
+  "3 thread holes": {
+   "ref_ok": true,
+   "ref": "ref OK",
+   "light_pass": 8,
+   "light_n": 9,
+   "defect_caught": true,
+   "angle_pass": 2,
+   "angle_n": 2
+  },
+  "4 screws": {
+   "ref_ok": true,
+   "ref": "ref OK",
+   "light_pass": 0,
+   "light_n": 9,
+   "defect_caught": true,
+   "angle_pass": 0,
+   "angle_n": 3
+  }
+ },
+ "v5": {
+  "3 holes": {
+   "ref_ok": true,
+   "ref": "ref OK",
+   "light_pass": 7,
+   "light_n": 9,
+   "defect_caught": true,
+   "angle_pass": 1,
+   "angle_n": 2
+  },
+  "3 thread holes": {
+   "ref_ok": true,
+   "ref": "ref OK",
+   "light_pass": 8,
+   "light_n": 9,
+   "defect_caught": true,
+   "angle_pass": 2,
+   "angle_n": 2
+  },
+  "4 screws": {
+   "ref_ok": true,
+   "ref": "ref OK",
+   "light_pass": 1,
+   "light_n": 9,
+   "defect_caught": true,
+   "angle_pass": 1,
+   "angle_n": 3
+  }
+ },
+ "v6": {
+  "3 holes": {
+   "ref_ok": true,
+   "ref": "ref OK",
+   "light_pass": 7,
+   "light_n": 9,
+   "defect_caught": true,
+   "angle_pass": 1,
+   "angle_n": 2
+  },
+  "3 thread holes": {
+   "ref_ok": true,
+   "ref": "ref OK",
+   "light_pass": 8,
+   "light_n": 9,
+   "defect_caught": true,
+   "angle_pass": 2,
+   "angle_n": 2
+  },
+  "4 screws": {
+   "ref_ok": true,
+   "ref": "ref OK",
+   "light_pass": 3,
+   "light_n": 9,
+   "defect_caught": false,
+   "angle_pass": 1,
+   "angle_n": 3
+  }
+ },
+ "v7": {
+  "3 holes": {
+   "ref_ok": true,
+   "ref": "ref OK",
+   "light_pass": 3,
+   "light_n": 9,
+   "defect_caught": true,
+   "angle_pass": 1,
+   "angle_n": 2
+  },
+  "3 thread holes": {
+   "ref_ok": true,
+   "ref": "ref OK",
+   "light_pass": 6,
+   "light_n": 9,
+   "defect_caught": true,
+   "angle_pass": 2,
+   "angle_n": 2
+  },
+  "4 screws": {
+   "ref_ok": true,
+   "ref": "ref OK",
+   "light_pass": 1,
+   "light_n": 9,
+   "defect_caught": true,
+   "angle_pass": 0,
+   "angle_n": 3
+  }
+ },
+ "v8": {
+  "3 holes": {
+   "ref_ok": true,
+   "ref": "ref OK",
+   "light_pass": 7,
+   "light_n": 9,
+   "defect_caught": true,
+   "angle_pass": 0,
+   "angle_n": 2
+  },
+  "3 thread holes": {
+   "ref_ok": true,
+   "ref": "ref OK",
+   "light_pass": 7,
+   "light_n": 9,
+   "defect_caught": true,
+   "angle_pass": 2,
+   "angle_n": 2
+  },
+  "4 screws": {
+   "ref_ok": true,
+   "ref": "ref OK",
+   "light_pass": 1,
+   "light_n": 9,
+   "defect_caught": true,
+   "angle_pass": 1,
+   "angle_n": 3
+  }
+ },
+ "v9": {
+  "3 holes": {
+   "ref_ok": true,
+   "ref": "ref OK",
+   "light_pass": 6,
+   "light_n": 9,
+   "defect_caught": true,
+   "angle_pass": 1,
+   "angle_n": 2
+  },
+  "3 thread holes": {
+   "ref_ok": true,
+   "ref": "ref OK",
+   "light_pass": 8,
+   "light_n": 9,
+   "defect_caught": true,
+   "angle_pass": 2,
+   "angle_n": 2
+  },
+  "4 screws": {
+   "ref_ok": true,
+   "ref": "ref OK",
+   "light_pass": 6,
+   "light_n": 9,
+   "defect_caught": true,
+   "angle_pass": 1,
+   "angle_n": 3
+  }
+ },
+ "v10": {
+  "3 holes": {
+   "ref_ok": false,
+   "ref": "ref BAD {'bolt_head': 1, 'threaded_hole': 1} missing ['bolt_head']",
+   "light_pass": 0,
+   "light_n": 9,
+   "defect_caught": true,
+   "angle_pass": 0,
+   "angle_n": 2
+  },
+  "3 thread holes": {
+   "ref_ok": true,
+   "ref": "ref OK",
+   "light_pass": 7,
+   "light_n": 9,
+   "defect_caught": true,
+   "angle_pass": 2,
+   "angle_n": 2
+  },
+  "4 screws": {
+   "ref_ok": false,
+   "ref": "ref BAD {'screw': 3, 'stud': 2} missing ['screw']",
+   "light_pass": 0,
+   "light_n": 9,
+   "defect_caught": true,
+   "angle_pass": 0,
+   "angle_n": 3
+  }
+ },
+ "v11": {
+  "3 holes": {
+   "ref_ok": true,
+   "ref": "ref OK",
+   "light_pass": 5,
+   "light_n": 9,
+   "defect_caught": true,
+   "angle_pass": 1,
+   "angle_n": 2
+  },
+  "3 thread holes": {
+   "ref_ok": true,
+   "ref": "ref OK",
+   "light_pass": 9,
+   "light_n": 9,
+   "defect_caught": true,
+   "angle_pass": 2,
+   "angle_n": 2
+  },
+  "4 screws": {
+   "ref_ok": true,
+   "ref": "ref OK",
+   "light_pass": 6,
+   "light_n": 9,
+   "defect_caught": true,
+   "angle_pass": 0,
+   "angle_n": 3
+  }
+ },
+ "v12": {
+  "3 holes": {
+   "ref_ok": true,
+   "ref": "ref OK",
+   "light_pass": 9,
+   "light_n": 9,
+   "defect_caught": true,
+   "angle_pass": 1,
+   "angle_n": 2
+  },
+  "3 thread holes": {
+   "ref_ok": true,
+   "ref": "ref OK",
+   "light_pass": 8,
+   "light_n": 9,
+   "defect_caught": true,
+   "angle_pass": 2,
+   "angle_n": 2
+  },
+  "4 screws": {
+   "ref_ok": true,
+   "ref": "ref OK",
+   "light_pass": 0,
+   "light_n": 9,
+   "defect_caught": true,
+   "angle_pass": 0,
+   "angle_n": 3
+  }
+ },
+ "v13": {
+  "3 holes": {
+   "ref_ok": true,
+   "ref": "ref OK",
+   "light_pass": 8,
+   "light_n": 9,
+   "defect_caught": true,
+   "angle_pass": 1,
+   "angle_n": 2
+  },
+  "3 thread holes": {
+   "ref_ok": true,
+   "ref": "ref OK",
+   "light_pass": 8,
+   "light_n": 9,
+   "defect_caught": true,
+   "angle_pass": 2,
+   "angle_n": 2
+  },
+  "4 screws": {
+   "ref_ok": true,
+   "ref": "ref OK",
+   "light_pass": 0,
+   "light_n": 9,
+   "defect_caught": true,
+   "angle_pass": 1,
+   "angle_n": 3
+  }
+ },
+ "v14": {
+  "3 holes": {
+   "ref_ok": true,
+   "ref": "ref OK",
+   "light_pass": 4,
+   "light_n": 9,
+   "defect_caught": true,
+   "angle_pass": 1,
+   "angle_n": 2
+  },
+  "3 thread holes": {
+   "ref_ok": true,
+   "ref": "ref OK",
+   "light_pass": 8,
+   "light_n": 9,
+   "defect_caught": false,
+   "angle_pass": 2,
+   "angle_n": 2
+  },
+  "4 screws": {
+   "ref_ok": true,
+   "ref": "ref OK",
+   "light_pass": 7,
+   "light_n": 9,
+   "defect_caught": true,
+   "angle_pass": 1,
+   "angle_n": 3
+  }
+ },
+ "v15": {
+  "3 holes": {
+   "ref_ok": true,
+   "ref": "ref OK",
+   "light_pass": 5,
+   "light_n": 9,
+   "defect_caught": true,
+   "angle_pass": 1,
+   "angle_n": 2
+  },
+  "3 thread holes": {
+   "ref_ok": true,
+   "ref": "ref OK",
+   "light_pass": 9,
+   "light_n": 9,
+   "defect_caught": true,
+   "angle_pass": 2,
+   "angle_n": 2
+  },
+  "4 screws": {
+   "ref_ok": true,
+   "ref": "ref OK",
+   "light_pass": 1,
+   "light_n": 9,
+   "defect_caught": true,
+   "angle_pass": 1,
+   "angle_n": 3
+  }
+ },
+ "v16": {
+  "3 holes": {
+   "ref_ok": true,
+   "ref": "ref OK",
+   "light_pass": 6,
+   "light_n": 9,
+   "defect_caught": true,
+   "angle_pass": 1,
+   "angle_n": 2
+  },
+  "3 thread holes": {
+   "ref_ok": true,
+   "ref": "ref OK",
+   "light_pass": 9,
+   "light_n": 9,
+   "defect_caught": true,
+   "angle_pass": 2,
+   "angle_n": 2
+  },
+  "4 screws": {
+   "ref_ok": false,
+   "ref": "ref BAD {'stud': 2, 'screw': 1} missing ['screw']",
+   "light_pass": 0,
+   "light_n": 9,
+   "defect_caught": true,
+   "angle_pass": 0,
+   "angle_n": 3
+  }
+ },
+ "v17": {
+  "3 holes": {
+   "ref_ok": true,
+   "ref": "ref OK",
+   "light_pass": 8,
+   "light_n": 9,
+   "defect_caught": true,
+   "angle_pass": 0,
+   "angle_n": 2
+  },
+  "3 thread holes": {
+   "ref_ok": true,
+   "ref": "ref OK",
+   "light_pass": 9,
+   "light_n": 9,
+   "defect_caught": true,
+   "angle_pass": 2,
+   "angle_n": 2
+  },
+  "4 screws": {
+   "ref_ok": false,
+   "ref": "ref BAD {'screw': 1} missing ['screw', 'stud', 'stud']",
+   "light_pass": 0,
+   "light_n": 9,
+   "defect_caught": true,
+   "angle_pass": 0,
+   "angle_n": 3
+  }
+ },
+ "v18": {
+  "3 holes": {
+   "ref_ok": true,
+   "ref": "ref OK",
+   "light_pass": 6,
+   "light_n": 9,
+   "defect_caught": true,
+   "angle_pass": 1,
+   "angle_n": 2
+  },
+  "3 thread holes": {
+   "ref_ok": true,
+   "ref": "ref OK",
+   "light_pass": 9,
+   "light_n": 9,
+   "defect_caught": true,
+   "angle_pass": 2,
+   "angle_n": 2
+  },
+  "4 screws": {
+   "ref_ok": true,
+   "ref": "ref OK",
+   "light_pass": 5,
+   "light_n": 9,
+   "defect_caught": true,
+   "angle_pass": 1,
+   "angle_n": 3
+  }
+ }
+}

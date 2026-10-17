@@ -1,0 +1,466 @@
+
+=== 3 holes ===
+  v1    ref OK                                        lighting  6/9 pass   defect caught   angles 1/2
+  v2    ref OK                                        lighting  6/9 pass   defect caught   angles 1/2
+  v3    ref OK                                        lighting  7/9 pass   defect caught   angles 1/2
+  v4    ref OK                                        lighting  9/9 pass   defect caught   angles 1/2
+  v5    ref OK                                        lighting  7/9 pass   defect caught   angles 1/2
+  v6    ref OK                                        lighting  7/9 pass   defect caught   angles 1/2
+  v7    ref OK                                        lighting  3/9 pass   defect caught   angles 1/2
+  v8    ref OK                                        lighting  7/9 pass   defect caught   angles 0/2
+  v9    ref OK                                        lighting  6/9 pass   defect caught   angles 1/2
+  v10   ref BAD {'bolt_head': 1, 'threaded_hole': 1} missing ['bolt_head'] lighting  0/9 pass   defect caught   angles 0/2
+
+=== 3 thread holes ===
+  v1    ref OK                                        lighting  8/9 pass   defect caught   angles 2/2
+  v2    ref OK                                        lighting  7/9 pass   defect caught   angles 2/2
+  v3    ref OK                                        lighting  6/9 pass   defect caught   angles 2/2
+  v4    ref OK                                        lighting  8/9 pass   defect caught   angles 2/2
+  v5    ref OK                                        lighting  8/9 pass   defect caught   angles 2/2
+  v6    ref OK                                        lighting  8/9 pass   defect caught   angles 2/2
+  v7    ref OK                                        lighting  6/9 pass   defect caught   angles 2/2
+  v8    ref OK                                        lighting  7/9 pass   defect caught   angles 2/2
+  v9    ref OK                                        lighting  8/9 pass   defect caught   angles 2/2
+  v10   ref OK                                        lighting  7/9 pass   defect caught   angles 2/2
+
+=== 4 screws ===
+  v1    ref OK                                        lighting  4/9 pass   defect caught   angles 1/3
+  v2    ref OK                                        lighting  1/9 pass   defect caught   angles 1/3
+  v3    ref OK                                        lighting  1/9 pass   defect caught   angles 1/3
+  v4    ref OK                                        lighting  0/9 pass   defect caught   angles 0/3
+  v5    ref OK                                        lighting  1/9 pass   defect caught   angles 1/3
+  v6    ref OK                                        lighting  3/9 pass   defect MISSED   angles 1/3
+  v7    ref OK                                        lighting  1/9 pass   defect caught   angles 0/3
+  v8    ref OK                                        lighting  1/9 pass   defect caught   angles 1/3
+  v9    ref OK                                        lighting  6/9 pass   defect caught   angles 1/3
+  v10   ref BAD {'screw': 3, 'stud': 2} missing ['screw'] lighting  0/9 pass   defect caught   angles 0/3
+
+3 holes / v1: reference 3 boxes -> {'bolt_head': 2, 'threaded_hole': 1}
+   defected       FAIL    4 boxes  {'bolt_head': 1}
+   left           PASS    4 boxes  {'bolt_head': 2, 'threaded_hole': 1}
+   right          FAIL   13 boxes  {'bolt_head': 3}
+   warm bot       FAIL   13 boxes  {'bolt_head': 3}
+   warm mid       PASS    5 boxes  {'bolt_head': 2, 'threaded_hole': 1}
+   warm top       PASS    9 boxes  {'bolt_head': 2, 'threaded_hole': 1}
+   white bot      FAIL    3 boxes  {'bolt_head': 3}
+   white mid      PASS    7 boxes  {'bolt_head': 2, 'threaded_hole': 1}
+   white top      PASS   10 boxes  {'bolt_head': 2, 'threaded_hole': 1}
+   yellow bot     FAIL   11 boxes  {'bolt_head': 3}
+   yellow mid     PASS   10 boxes  {'bolt_head': 2, 'threaded_hole': 1}
+   yellow top     PASS    8 boxes  {'bolt_head': 2, 'threaded_hole': 1}
+
+3 holes / v2: reference 3 boxes -> {'bolt_head': 2, 'threaded_hole': 1}
+   defected       FAIL    3 boxes  {'bolt_head': 1}
+   left           PASS    4 boxes  {'bolt_head': 2, 'threaded_hole': 1}
+   right          FAIL    7 boxes  {'bolt_head': 3}
+   warm bot       PASS    3 boxes  {'bolt_head': 2, 'threaded_hole': 1}
+   warm mid       PASS    3 boxes  {'bolt_head': 2, 'threaded_hole': 1}
+   warm top       PASS    3 boxes  {'bolt_head': 2, 'threaded_hole': 1}
+   white bot      FAIL    3 boxes  {'bolt_head': 3}
+   white mid      PASS    3 boxes  {'bolt_head': 2, 'threaded_hole': 1}
+   white top      FAIL    4 boxes  {'bolt_head': 2}
+   yellow bot     FAIL    3 boxes  {'bolt_head': 3}
+   yellow mid     PASS    3 boxes  {'bolt_head': 2, 'threaded_hole': 1}
+   yellow top     PASS    4 boxes  {'bolt_head': 2, 'threaded_hole': 1}
+
+3 holes / v3: reference 3 boxes -> {'bolt_head': 2, 'threaded_hole': 1}
+   defected       FAIL    3 boxes  {}
+   left           PASS    4 boxes  {'bolt_head': 2, 'threaded_hole': 1}
+   right          FAIL    4 boxes  {'bolt_head': 3}
+   warm bot       PASS    3 boxes  {'bolt_head': 2, 'threaded_hole': 1}
+   warm mid       PASS    3 boxes  {'bolt_head': 2, 'threaded_hole': 1}
+   warm top       PASS    3 boxes  {'bolt_head': 2, 'threaded_hole': 1}
+   white bot      FAIL    5 boxes  {'bolt_head': 2}
+   white mid      PASS    3 boxes  {'bolt_head': 2, 'threaded_hole': 1}
+   white top      PASS    4 boxes  {'bolt_head': 2, 'threaded_hole': 1}
+   yellow bot     FAIL    3 boxes  {'bolt_head': 3}
+   yellow mid     PASS    3 boxes  {'bolt_head': 2, 'threaded_hole': 1}
+   yellow top     PASS    4 boxes  {'bolt_head': 2, 'threaded_hole': 1}
+
+3 holes / v4: reference 3 boxes -> {'bolt_head': 2, 'threaded_hole': 1}
+   defected       FAIL    3 boxes  {'threaded_hole': 1}
+   left           PASS    5 boxes  {'bolt_head': 2, 'threaded_hole': 1}
+   right          FAIL    4 boxes  {'bolt_head': 3}
+   warm bot       PASS    3 boxes  {'bolt_head': 2, 'threaded_hole': 1}
+   warm mid       PASS    3 boxes  {'bolt_head': 2, 'threaded_hole': 1}
+   warm top       PASS    3 boxes  {'bolt_head': 2, 'threaded_hole': 1}
+   white bot      PASS    3 boxes  {'bolt_head': 2, 'threaded_hole': 1}
+   white mid      PASS    3 boxes  {'bolt_head': 2, 'threaded_hole': 1}
+   white top      PASS    4 boxes  {'bolt_head': 2, 'threaded_hole': 1}
+   yellow bot     PASS    3 boxes  {'bolt_head': 2, 'threaded_hole': 1}
+   yellow mid     PASS    3 boxes  {'bolt_head': 2, 'threaded_hole': 1}
+   yellow top     PASS    4 boxes  {'bolt_head': 2, 'threaded_hole': 1}
+
+3 holes / v5: reference 3 boxes -> {'bolt_head': 2, 'threaded_hole': 1}
+   defected       FAIL    3 boxes  {}
+   left           PASS    5 boxes  {'bolt_head': 2, 'threaded_hole': 1}
+   right          FAIL    4 boxes  {'bolt_head': 3}
+   warm bot       PASS    5 boxes  {'bolt_head': 2, 'threaded_hole': 1}
+   warm mid       PASS    3 boxes  {'bolt_head': 2, 'threaded_hole': 1}
+   warm top       PASS    3 boxes  {'bolt_head': 2, 'threaded_hole': 1}
+   white bot      FAIL    5 boxes  {'bolt_head': 2}
+   white mid      PASS    3 boxes  {'bolt_head': 2, 'threaded_hole': 1}
+   white top      PASS    4 boxes  {'bolt_head': 2, 'threaded_hole': 1}
+   yellow bot     FAIL    3 boxes  {'bolt_head': 3}
+   yellow mid     PASS    3 boxes  {'bolt_head': 2, 'threaded_hole': 1}
+   yellow top     PASS    4 boxes  {'bolt_head': 2, 'threaded_hole': 1}
+
+3 holes / v6: reference 3 boxes -> {'bolt_head': 2, 'threaded_hole': 1}
+   defected       FAIL    3 boxes  {'bolt_head': 1}
+   left           PASS    5 boxes  {'bolt_head': 2, 'threaded_hole': 1}
+   right          FAIL    4 boxes  {'bolt_head': 3}
+   warm bot       PASS    4 boxes  {'bolt_head': 2, 'threaded_hole': 1}
+   warm mid       PASS    3 boxes  {'bolt_head': 2, 'threaded_hole': 1}
+   warm top       PASS    4 boxes  {'bolt_head': 2, 'threaded_hole': 1}
+   white bot      PASS    3 boxes  {'bolt_head': 2, 'threaded_hole': 1}
+   white mid      PASS    3 boxes  {'bolt_head': 2, 'threaded_hole': 1}
+   white top      FAIL    4 boxes  {'bolt_head': 2}
+   yellow bot     FAIL    3 boxes  {'bolt_head': 3}
+   yellow mid     PASS    3 boxes  {'bolt_head': 2, 'threaded_hole': 1}
+   yellow top     PASS    4 boxes  {'bolt_head': 2, 'threaded_hole': 1}
+
+3 holes / v7: reference 18 boxes -> {'bolt_head': 2, 'threaded_hole': 1}
+   defected       FAIL   11 boxes  {}
+   left           PASS    3 boxes  {'bolt_head': 2, 'threaded_hole': 1}
+   right          FAIL   13 boxes  {'bolt_head': 3}
+   warm bot       FAIL   29 boxes  {'bolt_head': 3}
+   warm mid       PASS   27 boxes  {'bolt_head': 2, 'threaded_hole': 1}
+   warm top       FAIL   13 boxes  {'bolt_head': 2}
+   white bot      FAIL   23 boxes  {'bolt_head': 3}
+   white mid      PASS   35 boxes  {'bolt_head': 2, 'threaded_hole': 1}
+   white top      FAIL   14 boxes  {'bolt_head': 2}
+   yellow bot     FAIL   26 boxes  {'bolt_head': 3}
+   yellow mid     PASS   34 boxes  {'bolt_head': 2, 'threaded_hole': 1}
+   yellow top     FAIL    9 boxes  {'bolt_head': 2}
+
+3 holes / v8: reference 3 boxes -> {'bolt_head': 2, 'threaded_hole': 1}
+   defected       FAIL    3 boxes  {'bolt_head': 1}
+   left           FAIL    5 boxes  {'bolt_head': 1, 'threaded_hole': 1}
+   right          FAIL    4 boxes  {'bolt_head': 3}
+   warm bot       FAIL    3 boxes  {'bolt_head': 2}
+   warm mid       PASS    3 boxes  {'bolt_head': 2, 'threaded_hole': 1}
+   warm top       PASS    3 boxes  {'bolt_head': 2, 'threaded_hole': 1}
+   white bot      PASS    3 boxes  {'bolt_head': 2, 'threaded_hole': 1}
+   white mid      PASS    3 boxes  {'bolt_head': 2, 'threaded_hole': 1}
+   white top      FAIL    4 boxes  {'bolt_head': 2}
+   yellow bot     PASS    3 boxes  {'bolt_head': 2, 'threaded_hole': 1}
+   yellow mid     PASS    3 boxes  {'bolt_head': 2, 'threaded_hole': 1}
+   yellow top     PASS    4 boxes  {'bolt_head': 2, 'threaded_hole': 1}
+
+3 holes / v9: reference 45 boxes -> {'bolt_head': 2, 'threaded_hole': 1}
+   defected       FAIL   25 boxes  {'threaded_hole': 1}
+   left           PASS    6 boxes  {'bolt_head': 2, 'threaded_hole': 1}
+   right          FAIL   13 boxes  {'bolt_head': 2}
+   warm bot       FAIL   50 boxes  {'bolt_head': 3}
+   warm mid       PASS   61 boxes  {'bolt_head': 2, 'threaded_hole': 1}
+   warm top       PASS   84 boxes  {'bolt_head': 2, 'threaded_hole': 1}
+   white bot      FAIL   33 boxes  {'bolt_head': 2}
+   white mid      PASS   54 boxes  {'bolt_head': 2, 'threaded_hole': 1}
+   white top      PASS   75 boxes  {'bolt_head': 2, 'threaded_hole': 1}
+   yellow bot     FAIL   45 boxes  {'bolt_head': 2}
+   yellow mid     PASS   60 boxes  {'bolt_head': 2, 'threaded_hole': 1}
+   yellow top     PASS   81 boxes  {'bolt_head': 2, 'threaded_hole': 1}
+
+3 holes / v10: reference 3 boxes -> {'bolt_head': 1, 'threaded_hole': 1}
+   defected       FAIL    3 boxes  {'threaded_hole': 1}
+   left           FAIL    3 boxes  {'bolt_head': 1, 'threaded_hole': 1}
+   right          FAIL   10 boxes  {'bolt_head': 2, 'threaded_hole': 1}
+   warm bot       FAIL    7 boxes  {'bolt_head': 2}
+   warm mid       FAIL    8 boxes  {'bolt_head': 2, 'threaded_hole': 1}
+   warm top       FAIL    5 boxes  {'bolt_head': 2, 'threaded_hole': 1}
+   white bot      FAIL    7 boxes  {'bolt_head': 2}
+   white mid      FAIL    7 boxes  {'bolt_head': 2, 'threaded_hole': 1}
+   white top      FAIL    7 boxes  {'bolt_head': 1, 'threaded_hole': 1}
+   yellow bot     FAIL    7 boxes  {'bolt_head': 2, 'threaded_hole': 1}
+   yellow mid     FAIL    6 boxes  {'bolt_head': 2, 'threaded_hole': 1}
+   yellow top     FAIL    5 boxes  {'bolt_head': 2, 'threaded_hole': 1}
+
+3 thread holes / v1: reference 14 boxes -> {'threaded_hole': 3}
+   defected       FAIL   17 boxes  {'threaded_hole': 2}
+   left           PASS   13 boxes  {'threaded_hole': 3}
+   right          PASS   39 boxes  {'threaded_hole': 3}
+   warm left      PASS  104 boxes  {'threaded_hole': 3}
+   warm mid       PASS   23 boxes  {'threaded_hole': 3}
+   warm right     FAIL   48 boxes  {'threaded_hole': 2}
+   white left     PASS   41 boxes  {'threaded_hole': 3}
+   white mid      PASS   52 boxes  {'threaded_hole': 3}
+   white right    PASS   57 boxes  {'threaded_hole': 3}
+   yellow left    PASS   52 boxes  {'threaded_hole': 3}
+   yellow mid     PASS   21 boxes  {'threaded_hole': 3}
+   yellow right   PASS   42 boxes  {'threaded_hole': 3}
+
+3 thread holes / v2: reference 4 boxes -> {'threaded_hole': 3}
+   defected       FAIL    3 boxes  {'threaded_hole': 2}
+   left           PASS    3 boxes  {'threaded_hole': 3}
+   right          PASS    4 boxes  {'threaded_hole': 3}
+   warm left      PASS   10 boxes  {'threaded_hole': 3}
+   warm mid       PASS    4 boxes  {'threaded_hole': 3}
+   warm right     FAIL   14 boxes  {'threaded_hole': 2}
+   white left     PASS    9 boxes  {'threaded_hole': 3}
+   white mid      PASS    4 boxes  {'threaded_hole': 3}
+   white right    FAIL   11 boxes  {'threaded_hole': 2}
+   yellow left    PASS   11 boxes  {'threaded_hole': 3}
+   yellow mid     PASS    4 boxes  {'threaded_hole': 3}
+   yellow right   PASS    8 boxes  {'threaded_hole': 3}
+
+3 thread holes / v3: reference 4 boxes -> {'threaded_hole': 3}
+   defected       FAIL    3 boxes  {'threaded_hole': 2}
+   left           PASS    3 boxes  {'threaded_hole': 3}
+   right          PASS    3 boxes  {'threaded_hole': 3}
+   warm left      PASS   10 boxes  {'threaded_hole': 3}
+   warm mid       PASS    4 boxes  {'threaded_hole': 3}
+   warm right     FAIL    5 boxes  {'threaded_hole': 2}
+   white left     PASS    4 boxes  {'threaded_hole': 3}
+   white mid      PASS    4 boxes  {'threaded_hole': 3}
+   white right    FAIL   13 boxes  {'threaded_hole': 2}
+   yellow left    PASS    4 boxes  {'threaded_hole': 3}
+   yellow mid     PASS    4 boxes  {'threaded_hole': 3}
+   yellow right   FAIL    4 boxes  {'threaded_hole': 2}
+
+3 thread holes / v4: reference 4 boxes -> {'threaded_hole': 3}
+   defected       FAIL    3 boxes  {'threaded_hole': 2}
+   left           PASS    3 boxes  {'threaded_hole': 3}
+   right          PASS    3 boxes  {'threaded_hole': 3}
+   warm left      PASS    4 boxes  {'threaded_hole': 3}
+   warm mid       PASS    4 boxes  {'threaded_hole': 3}
+   warm right     FAIL    6 boxes  {'threaded_hole': 2}
+   white left     PASS    4 boxes  {'threaded_hole': 3}
+   white mid      PASS    4 boxes  {'threaded_hole': 3}
+   white right    PASS    6 boxes  {'threaded_hole': 3}
+   yellow left    PASS    4 boxes  {'threaded_hole': 3}
+   yellow mid     PASS    4 boxes  {'threaded_hole': 3}
+   yellow right   PASS    4 boxes  {'threaded_hole': 3}
+
+3 thread holes / v5: reference 4 boxes -> {'threaded_hole': 3}
+   defected       FAIL    3 boxes  {'threaded_hole': 2}
+   left           PASS    3 boxes  {'threaded_hole': 3}
+   right          PASS    7 boxes  {'threaded_hole': 3}
+   warm left      PASS   10 boxes  {'threaded_hole': 3}
+   warm mid       PASS    4 boxes  {'threaded_hole': 3}
+   warm right     PASS    5 boxes  {'threaded_hole': 3}
+   white left     PASS    4 boxes  {'threaded_hole': 3}
+   white mid      PASS    4 boxes  {'threaded_hole': 3}
+   white right    PASS   13 boxes  {'threaded_hole': 3}
+   yellow left    PASS    4 boxes  {'threaded_hole': 3}
+   yellow mid     PASS    4 boxes  {'threaded_hole': 3}
+   yellow right   FAIL    6 boxes  {'threaded_hole': 2}
+
+3 thread holes / v6: reference 4 boxes -> {'threaded_hole': 3}
+   defected       FAIL    3 boxes  {'threaded_hole': 2}
+   left           PASS    3 boxes  {'threaded_hole': 3}
+   right          PASS    3 boxes  {'threaded_hole': 3}
+   warm left      PASS    9 boxes  {'threaded_hole': 3}
+   warm mid       PASS    4 boxes  {'threaded_hole': 3}
+   warm right     FAIL    9 boxes  {'threaded_hole': 2}
+   white left     PASS    4 boxes  {'threaded_hole': 3}
+   white mid      PASS    4 boxes  {'threaded_hole': 3}
+   white right    PASS    6 boxes  {'threaded_hole': 3}
+   yellow left    PASS    4 boxes  {'threaded_hole': 3}
+   yellow mid     PASS    4 boxes  {'threaded_hole': 3}
+   yellow right   PASS   11 boxes  {'threaded_hole': 3}
+
+3 thread holes / v7: reference 18 boxes -> {'threaded_hole': 3}
+   defected       FAIL   18 boxes  {'threaded_hole': 2}
+   left           PASS   15 boxes  {'threaded_hole': 3}
+   right          PASS   16 boxes  {'threaded_hole': 3}
+   warm left      PASS   61 boxes  {'threaded_hole': 3}
+   warm mid       PASS   52 boxes  {'threaded_hole': 3}
+   warm right     FAIL   10 boxes  {'threaded_hole': 2}
+   white left     PASS   63 boxes  {'threaded_hole': 3}
+   white mid      PASS   45 boxes  {'threaded_hole': 3}
+   white right    FAIL   17 boxes  {'threaded_hole': 2}
+   yellow left    PASS   67 boxes  {'threaded_hole': 3}
+   yellow mid     PASS   41 boxes  {'threaded_hole': 3}
+   yellow right   FAIL   21 boxes  {'threaded_hole': 2}
+
+3 thread holes / v8: reference 3 boxes -> {'threaded_hole': 3}
+   defected       FAIL    3 boxes  {'threaded_hole': 2}
+   left           PASS    3 boxes  {'threaded_hole': 3}
+   right          PASS    3 boxes  {'threaded_hole': 3}
+   warm left      PASS    4 boxes  {'threaded_hole': 3}
+   warm mid       PASS    4 boxes  {'threaded_hole': 3}
+   warm right     FAIL    4 boxes  {'threaded_hole': 2}
+   white left     PASS    4 boxes  {'threaded_hole': 3}
+   white mid      PASS    4 boxes  {'threaded_hole': 3}
+   white right    FAIL    4 boxes  {'threaded_hole': 2}
+   yellow left    PASS    4 boxes  {'threaded_hole': 3}
+   yellow mid     PASS    4 boxes  {'threaded_hole': 3}
+   yellow right   PASS    4 boxes  {'threaded_hole': 3}
+
+3 thread holes / v9: reference 9 boxes -> {'threaded_hole': 3}
+   defected       FAIL   10 boxes  {'threaded_hole': 2}
+   left           PASS   12 boxes  {'threaded_hole': 3}
+   right          PASS   12 boxes  {'threaded_hole': 3}
+   warm left      PASS   60 boxes  {'threaded_hole': 3}
+   warm mid       PASS  108 boxes  {'threaded_hole': 3}
+   warm right     PASS   67 boxes  {'threaded_hole': 3}
+   white left     PASS   27 boxes  {'threaded_hole': 3}
+   white mid      PASS   79 boxes  {'threaded_hole': 3}
+   white right    PASS   55 boxes  {'threaded_hole': 3}
+   yellow left    PASS   51 boxes  {'threaded_hole': 3}
+   yellow mid     PASS  120 boxes  {'threaded_hole': 3}
+   yellow right   FAIL   62 boxes  {'threaded_hole': 2}
+
+3 thread holes / v10: reference 4 boxes -> {'threaded_hole': 3}
+   defected       FAIL    3 boxes  {'threaded_hole': 2}
+   left           PASS    4 boxes  {'threaded_hole': 3}
+   right          PASS    6 boxes  {'threaded_hole': 3}
+   warm left      PASS    7 boxes  {'threaded_hole': 3}
+   warm mid       PASS    5 boxes  {'threaded_hole': 3}
+   warm right     FAIL   15 boxes  {'threaded_hole': 2}
+   white left     PASS    4 boxes  {'threaded_hole': 3}
+   white mid      PASS    9 boxes  {'threaded_hole': 3}
+   white right    PASS    9 boxes  {'threaded_hole': 3}
+   yellow left    PASS    5 boxes  {'threaded_hole': 3}
+   yellow mid     PASS    9 boxes  {'threaded_hole': 3}
+   yellow right   FAIL   11 boxes  {'threaded_hole': 2}
+
+4 screws / v1: reference 6 boxes -> {'screw': 2, 'stud': 2}
+   bot            FAIL    8 boxes  {}
+   defected       FAIL    7 boxes  {'stud': 2, 'screw': 1}
+   front          PASS   10 boxes  {'screw': 2, 'stud': 2}
+   right          FAIL    8 boxes  {'screw': 1, 'stud': 2}
+   warm mid       PASS   21 boxes  {'stud': 2, 'screw': 2}
+   warm right     PASS   14 boxes  {'screw': 2, 'stud': 2}
+   white left     FAIL   12 boxes  {'screw': 2, 'stud': 1}
+   white left 2   PASS    9 boxes  {'screw': 2, 'stud': 2}
+   white mid      FAIL    9 boxes  {'stud': 1, 'screw': 1}
+   white right    FAIL   16 boxes  {'screw': 1, 'stud': 1}
+   yellow left    FAIL    9 boxes  {'screw': 2, 'stud': 1}
+   yellow mid     FAIL   19 boxes  {}
+   yellow right   PASS   22 boxes  {'screw': 2, 'stud': 2}
+
+4 screws / v2: reference 5 boxes -> {'screw': 2, 'stud': 2}
+   bot            FAIL    5 boxes  {}
+   defected       FAIL    4 boxes  {'stud': 2, 'screw': 1}
+   front          PASS    4 boxes  {'screw': 2, 'stud': 2}
+   right          FAIL    3 boxes  {'stud': 2}
+   warm mid       PASS    6 boxes  {'screw': 2, 'stud': 2}
+   warm right     FAIL    4 boxes  {'screw': 2, 'stud': 1}
+   white left     FAIL    8 boxes  {}
+   white left 2   FAIL    5 boxes  {'screw': 1}
+   white mid      FAIL    6 boxes  {'screw': 2, 'stud': 1}
+   white right    FAIL    4 boxes  {'screw': 2, 'stud': 1}
+   yellow left    FAIL    4 boxes  {'stud': 1, 'screw': 2}
+   yellow mid     FAIL    7 boxes  {'screw': 2, 'stud': 1}
+   yellow right   FAIL    4 boxes  {'screw': 2, 'stud': 1}
+
+4 screws / v3: reference 6 boxes -> {'stud': 2, 'screw': 2}
+   bot            FAIL    5 boxes  {}
+   defected       FAIL    5 boxes  {'stud': 2, 'screw': 1}
+   front          PASS    4 boxes  {'screw': 2, 'stud': 2}
+   right          FAIL    3 boxes  {'screw': 1, 'stud': 2}
+   warm mid       PASS    5 boxes  {'stud': 2, 'screw': 2}
+   warm right     FAIL    4 boxes  {'screw': 2, 'stud': 1}
+   white left     FAIL    5 boxes  {}
+   white left 2   FAIL    4 boxes  {}
+   white mid      FAIL    7 boxes  {'stud': 1, 'screw': 2}
+   white right    FAIL    4 boxes  {'screw': 2, 'stud': 1}
+   yellow left    FAIL    4 boxes  {'screw': 2, 'stud': 1}
+   yellow mid     FAIL    6 boxes  {'stud': 1, 'screw': 2}
+   yellow right   FAIL    4 boxes  {'screw': 2, 'stud': 1}
+
+4 screws / v4: reference 7 boxes -> {'screw': 2, 'stud': 2}
+   bot            FAIL    4 boxes  {}
+   defected       FAIL    6 boxes  {'stud': 2, 'screw': 1}
+   front          FAIL    4 boxes  {'screw': 1, 'stud': 2}
+   right          FAIL    3 boxes  {'stud': 2}
+   warm mid       FAIL    6 boxes  {'stud': 2, 'screw': 1}
+   warm right     FAIL    3 boxes  {'screw': 2, 'stud': 1}
+   white left     FAIL    5 boxes  {'screw': 1}
+   white left 2   FAIL    6 boxes  {'screw': 1}
+   white mid      FAIL    5 boxes  {}
+   white right    FAIL    4 boxes  {'screw': 2, 'stud': 1}
+   yellow left    FAIL    4 boxes  {'screw': 1, 'stud': 1}
+   yellow mid     FAIL    4 boxes  {'stud': 1}
+   yellow right   FAIL    4 boxes  {'screw': 2, 'stud': 1}
+
+4 screws / v5: reference 5 boxes -> {'stud': 2, 'screw': 2}
+   bot            FAIL    5 boxes  {}
+   defected       FAIL    5 boxes  {'stud': 2, 'screw': 1}
+   front          PASS    4 boxes  {'screw': 2, 'stud': 2}
+   right          FAIL    3 boxes  {'stud': 1}
+   warm mid       PASS    5 boxes  {'screw': 2, 'stud': 2}
+   warm right     FAIL    4 boxes  {'screw': 2}
+   white left     FAIL    6 boxes  {}
+   white left 2   FAIL    4 boxes  {'stud': 1, 'screw': 1}
+   white mid      FAIL    7 boxes  {'stud': 1, 'screw': 1}
+   white right    FAIL    5 boxes  {'screw': 2, 'stud': 1}
+   yellow left    FAIL    4 boxes  {'screw': 2, 'stud': 1}
+   yellow mid     FAIL    6 boxes  {'screw': 2}
+   yellow right   FAIL    4 boxes  {'screw': 2, 'stud': 1}
+
+4 screws / v6: reference 6 boxes -> {'screw': 2, 'stud': 2}
+   bot            FAIL    5 boxes  {}
+   defected       PASS    6 boxes  {'screw': 2, 'stud': 2}
+   front          PASS    4 boxes  {'screw': 2, 'stud': 2}
+   right          FAIL    3 boxes  {'stud': 2}
+   warm mid       PASS    5 boxes  {'screw': 2, 'stud': 2}
+   warm right     FAIL    4 boxes  {'screw': 2, 'stud': 1}
+   white left     FAIL    4 boxes  {'stud': 1}
+   white left 2   FAIL    4 boxes  {'screw': 2}
+   white mid      FAIL    4 boxes  {}
+   white right    PASS    4 boxes  {'screw': 2, 'stud': 2}
+   yellow left    FAIL    4 boxes  {'screw': 2}
+   yellow mid     FAIL    3 boxes  {}
+   yellow right   PASS    4 boxes  {'screw': 2, 'stud': 2}
+
+4 screws / v7: reference 11 boxes -> {'screw': 2, 'stud': 2}
+   bot            FAIL   14 boxes  {}
+   defected       FAIL    5 boxes  {'stud': 2, 'screw': 1}
+   front          FAIL   11 boxes  {'stud': 2, 'screw': 1}
+   right          FAIL   12 boxes  {'stud': 2, 'screw': 1}
+   warm mid       FAIL   14 boxes  {'screw': 1}
+   warm right     FAIL   15 boxes  {'screw': 2, 'stud': 1}
+   white left     FAIL   18 boxes  {'screw': 2, 'stud': 1}
+   white left 2   FAIL   11 boxes  {'stud': 1, 'screw': 2}
+   white mid      FAIL    7 boxes  {}
+   white right    FAIL   21 boxes  {'screw': 1, 'stud': 1}
+   yellow left    PASS   16 boxes  {'stud': 2, 'screw': 2}
+   yellow mid     FAIL    1 boxes  {}
+   yellow right   FAIL   20 boxes  {'screw': 2, 'stud': 1}
+
+4 screws / v8: reference 9 boxes -> {'stud': 2, 'screw': 2}
+   bot            FAIL    5 boxes  {}
+   defected       FAIL    5 boxes  {'stud': 2}
+   front          PASS    4 boxes  {'screw': 2, 'stud': 2}
+   right          FAIL    4 boxes  {'stud': 2}
+   warm mid       PASS    5 boxes  {'stud': 2, 'screw': 2}
+   warm right     FAIL    3 boxes  {'screw': 2, 'stud': 1}
+   white left     FAIL    4 boxes  {'stud': 1}
+   white left 2   FAIL    6 boxes  {}
+   white mid      FAIL    5 boxes  {'stud': 1, 'screw': 2}
+   white right    FAIL    4 boxes  {'screw': 2, 'stud': 1}
+   yellow left    FAIL    4 boxes  {'screw': 1}
+   yellow mid     FAIL    5 boxes  {'stud': 1, 'screw': 2}
+   yellow right   FAIL    4 boxes  {'screw': 2, 'stud': 1}
+
+4 screws / v9: reference 12 boxes -> {'screw': 2, 'stud': 2}
+   bot            FAIL   12 boxes  {'screw': 1}
+   defected       FAIL    8 boxes  {'stud': 2, 'screw': 1}
+   front          PASS   12 boxes  {'screw': 2, 'stud': 2}
+   right          FAIL   12 boxes  {'screw': 2}
+   warm mid       PASS   46 boxes  {'screw': 2, 'stud': 2}
+   warm right     FAIL   17 boxes  {'screw': 2, 'stud': 1}
+   white left     FAIL   28 boxes  {'stud': 1}
+   white left 2   PASS   13 boxes  {'screw': 2, 'stud': 2}
+   white mid      PASS   35 boxes  {'screw': 2, 'stud': 2}
+   white right    FAIL   29 boxes  {'screw': 2, 'stud': 1}
+   yellow left    PASS   21 boxes  {'screw': 2, 'stud': 2}
+   yellow mid     PASS   41 boxes  {'screw': 2, 'stud': 2}
+   yellow right   PASS   32 boxes  {'screw': 2, 'stud': 2}
+
+4 screws / v10: reference 6 boxes -> {'screw': 3, 'stud': 2}
+   bot            FAIL    6 boxes  {}
+   defected       FAIL    4 boxes  {'stud': 2}
+   front          FAIL    5 boxes  {'screw': 1, 'stud': 2}
+   right          FAIL    5 boxes  {'screw': 3, 'stud': 2}
+   warm mid       FAIL   15 boxes  {'stud': 1}
+   warm right     FAIL    5 boxes  {'screw': 2, 'stud': 2}
+   white left     FAIL    4 boxes  {'screw': 1, 'stud': 2}
+   white left 2   FAIL    5 boxes  {'screw': 1, 'stud': 1}
+   white mid      FAIL   12 boxes  {'stud': 1}
+   white right    FAIL    5 boxes  {'screw': 2, 'stud': 1}
+   yellow left    FAIL    4 boxes  {'screw': 2, 'stud': 2}
+   yellow mid     FAIL   17 boxes  {'stud': 1}
+   yellow right   FAIL    6 boxes  {'screw': 2, 'stud': 2}

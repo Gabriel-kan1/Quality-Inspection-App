@@ -18,6 +18,12 @@ named "<config> <variant>.jpg":
 A lighting variant should PASS and "defected" should FAIL. Photos named only for an angle
 (left, right, bot, front) are reported apart: framing was not what this set was for.
 
+All eighteen Edge Lab methods are here. Hybrid v1 to v10 run on the chassis-masked photo
+unless --no-mask is given; v11 to v18 always run on the photo as taken, as the app runs them.
+v11 to v18 are ports of EdgeMethodLab's Java (claheBilateralCanny, dropOversize, grayWorld,
+gaussianFlat, medianFlat, roundRegions, houghDiscs), so a result here should match the
+Edge Lab card up to OpenCV version differences.
+
     python python/variation_test_study.py "D:/path/to/Test photos"
     python python/variation_test_study.py "D:/path/to/Test photos" --methods v6 v11
 """
@@ -70,7 +76,112 @@ def clahe_bilateral_canny(img):
     return cv2.Canny(f, hi * 0.5, hi)
 
 
-# The app's ten, under their Hybrid names. Each takes the masked working image, returns a map.
+# ── Hybrid v11 to v18's building blocks, mirroring EdgeMethodLab's ────────────────────────
+OVERSIZE_FRACTION = 0.15
+V3 = HV.cfg(**HV.WINNERS["v3 gauss7 otsu1.2"])
+V4 = HV.cfg(**HV.WINNERS["v4 L2 light-morph"])
+
+
+def gray_of(img):
+    return cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
+
+def bgr_of(gray):
+    return cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
+
+
+def clahe_bilateral_canny_k(g, otsu_scale, gauss_k=0, dilate_k=0, close_k=0):
+    """EdgeMethodLab.claheBilateralCanny: Hybrid v9's chain with its knobs."""
+    f = cv2.bilateralFilter(cv2.createCLAHE(1.0, (16, 16)).apply(g), 5, 60, 20)
+    if gauss_k > 0:
+        f = cv2.GaussianBlur(f, (gauss_k, gauss_k), 0)
+    hi, _ = cv2.threshold(f, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
+    hi *= otsu_scale
+    out = cv2.Canny(f, hi * 0.5, hi)
+    if dilate_k > 0:
+        out = cv2.dilate(out, cv2.getStructuringElement(cv2.MORPH_RECT, (dilate_k, dilate_k)))
+    if close_k > 0:
+        out = cv2.morphologyEx(out, cv2.MORPH_CLOSE,
+                               cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (close_k, close_k)))
+    return out
+
+
+def drop_oversize(m, fraction=OVERSIZE_FRACTION):
+    """EdgeMethodLab.dropOversize: zero every 8-connected piece wider or taller than
+    `fraction` of the map's longest side."""
+    n, labels, stats, _ = cv2.connectedComponentsWithStats(m, connectivity=8)
+    limit = fraction * max(m.shape[:2])
+    drop = (stats[:, cv2.CC_STAT_WIDTH] > limit) | (stats[:, cv2.CC_STAT_HEIGHT] > limit)
+    drop[0] = False
+    if drop.any():
+        m = m.copy()
+        m[drop[labels]] = 0
+    return m
+
+
+def gray_world(img):
+    """EdgeMethodLab.grayWorld: each colour channel scaled so the three average the same."""
+    mean = img.reshape(-1, 3).mean(axis=0)
+    grey = mean.mean()
+    out = img.astype(np.float32) * (grey / np.maximum(mean, 1.0))
+    return np.clip(np.rint(out), 0, 255).astype(np.uint8)
+
+
+def divide_by(g, bg):
+    """128 * gray / background, saturated to 8 bits."""
+    den = np.maximum(bg.astype(np.float32), 1.0)
+    return np.clip(np.rint(128.0 * g.astype(np.float32) / den), 0, 255).astype(np.uint8)
+
+
+def gaussian_flat(g, sigma_fraction):
+    bg = cv2.GaussianBlur(g.astype(np.float32), (0, 0), max(g.shape[:2]) * sigma_fraction)
+    return divide_by(g, bg)
+
+
+def median_flat(g, window_fraction):
+    s = 4
+    small = cv2.resize(g, (g.shape[1] // s, g.shape[0] // s), interpolation=cv2.INTER_AREA)
+    k = int(max(g.shape[:2]) * window_fraction / s) | 1
+    small = cv2.medianBlur(small, max(3, k))
+    bg = cv2.resize(small, (g.shape[1], g.shape[0]), interpolation=cv2.INTER_LINEAR)
+    bg = cv2.GaussianBlur(bg, (0, 0), 3)
+    return divide_by(g, bg)
+
+
+def round_regions(g):
+    """EdgeMethodLab.roundRegions: roundish, fastener-sized MSER regions, filled as hulls."""
+    flat = cv2.GaussianBlur(gaussian_flat(g, 0.03), (5, 5), 0)
+    area = g.shape[0] * g.shape[1]
+    mser = cv2.MSER_create(5, int(area * 0.00015), int(area * 0.012))
+    regions, _ = mser.detectRegions(flat)
+    keep = []
+    for r in regions:
+        hull = cv2.convexHull(r.reshape(-1, 1, 2))
+        a, per = cv2.contourArea(hull), cv2.arcLength(hull, True)
+        if per > 0 and 4 * np.pi * a / (per * per) >= 0.5:
+            keep.append(hull)
+    out = np.zeros(g.shape[:2], np.uint8)
+    if keep:
+        cv2.drawContours(out, keep, -1, 255, -1)
+    return out
+
+
+def hough_discs(g):
+    """EdgeMethodLab.houghDiscs: Hough circles on the flattened photo, each drawn filled."""
+    flat = cv2.medianBlur(gaussian_flat(g, 0.03), 5)
+    md = min(g.shape[:2])
+    circles = cv2.HoughCircles(flat, cv2.HOUGH_GRADIENT, 1.5, md * 0.06, param1=120,
+                               param2=40, minRadius=int(md * 0.012), maxRadius=int(md * 0.08))
+    out = np.zeros(g.shape[:2], np.uint8)
+    if circles is not None:
+        for x, y, r in circles[0]:
+            cv2.circle(out, (int(round(x)), int(round(y))), int(round(r)), 255, -1)
+    return out
+
+
+# The app's eighteen, under their Hybrid names. Each takes a working image and returns a map.
+# v1 to v10 get the masked image (unless --no-mask); v11 to v18 always run on the photo as
+# taken, as the app runs them (ChassisMask.unmaskedOr).
 METHODS = {
     "v1": lambda im: HV.edges_for(im, HV.cfg()),
     "v2": lambda im: HV.edges_for(im, HV.cfg(**HV.WINNERS["v2 bilat9 low0.4"])),
@@ -82,7 +193,17 @@ METHODS = {
     "v8": lambda im: HV.edges_for(im, HV.cfg(**A.LADDER["strong"])),
     "v9": clahe_bilateral_canny,
     "v10": canny_otsu,
+    "v11": lambda im: drop_oversize(clahe_bilateral_canny_k(gray_of(im), 1.3)),
+    "v12": lambda im: drop_oversize(HV.edges_for(im, V4)),
+    "v13": lambda im: drop_oversize(HV.edges_for(gray_world(im), V4)),
+    "v14": lambda im: clahe_bilateral_canny_k(gray_of(im), 1.0, gauss_k=5, dilate_k=3, close_k=5),
+    "v15": lambda im: HV.edges_for(bgr_of(median_flat(gray_of(im), 0.06)), V3),
+    "v16": lambda im: drop_oversize(HV.edges_for(
+        bgr_of(gaussian_flat(gray_of(gray_world(im)), 0.03)), V4)),
+    "v17": lambda im: round_regions(gray_of(im)),
+    "v18": lambda im: cv2.bitwise_or(drop_oversize(HV.edges_for(im, V4)), hough_discs(gray_of(im))),
 }
+UNMASKED = {f"v{i}" for i in range(11, 19)}
 
 
 class Encoder:
@@ -165,7 +286,8 @@ def run(folder, method_ids, encoder):
         ref = photo(ref_file)
         for mid in method_ids:
             fn = METHODS[mid]
-            boxes = D.find_feature_boxes(fn(ref.masked))[0]
+            source = (lambda ph: ph.work) if mid in UNMASKED else (lambda ph: ph.masked)
+            boxes = D.find_feature_boxes(fn(source(ref)))[0]
             H, W = ref.work.shape[:2]
             # Operator labelling: each known feature claims the box it falls in.
             labelled, missing = [], []
@@ -193,7 +315,7 @@ def run(folder, method_ids, encoder):
                 if f == ref_file:
                     continue
                 p = photo(f)
-                bx = D.find_feature_boxes(fn(p.masked))[0]
+                bx = D.find_feature_boxes(fn(source(p)))[0]
                 labels = [classify(encoder.embed(p.crop(b)), protos) for b in bx]
                 c = counts([l for l, _ in labels])
                 verdict = "PASS" if ref_ok and c == ref_counts else "FAIL"
