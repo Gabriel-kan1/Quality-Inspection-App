@@ -1,0 +1,734 @@
+{
+ "summary": {
+  "before": {
+   "expected": {
+    "hole": 2
+   },
+   "inserts_found": 33,
+   "labelled_as_pem": 0,
+   "label_counts": {
+    "unknown": 21,
+    "hole": 12
+   },
+   "lighting_passed": 4,
+   "lighting_n": 9,
+   "defect_verdict": "FAIL",
+   "defect_counts": {
+    "hole": 1
+   }
+  },
+  "one": {
+   "expected": {
+    "type_a_pem": 3
+   },
+   "inserts_found": 33,
+   "labelled_as_pem": 29,
+   "label_counts": {
+    "type_a_pem": 29,
+    "unknown": 4
+   },
+   "lighting_passed": 5,
+   "lighting_n": 9,
+   "defect_verdict": "FAIL",
+   "defect_counts": {
+    "type_a_pem": 2
+   }
+  },
+  "three": {
+   "expected": {
+    "type_a_pem": 3
+   },
+   "inserts_found": 33,
+   "labelled_as_pem": 33,
+   "label_counts": {
+    "type_a_pem": 33
+   },
+   "lighting_passed": 9,
+   "lighting_n": 9,
+   "defect_verdict": "FAIL",
+   "defect_counts": {
+    "type_a_pem": 2
+   }
+  }
+ },
+ "detail": {
+  "before": {
+   "reference_labels": [
+    "hole",
+    "hole",
+    "unknown"
+   ],
+   "expected": {
+    "hole": 2
+   },
+   "photos": {
+    "defected": {
+     "kind": "defected",
+     "method": "v8",
+     "verdict": "FAIL",
+     "feature_labels": [
+      "hole",
+      "unknown",
+      "unknown"
+     ],
+     "feature_scores": [
+      0.787,
+      0.652,
+      0.609
+     ],
+     "counts": {
+      "hole": 1
+     }
+    },
+    "left": {
+     "kind": "angle",
+     "method": "v8",
+     "verdict": "FAIL",
+     "feature_labels": [
+      "unknown",
+      "unknown",
+      "unknown"
+     ],
+     "feature_scores": [
+      0.621,
+      0.707,
+      0.597
+     ],
+     "counts": {}
+    },
+    "right": {
+     "kind": "angle",
+     "method": "v8",
+     "verdict": "FAIL",
+     "feature_labels": [
+      "hole",
+      "unknown",
+      "unknown"
+     ],
+     "feature_scores": [
+      0.774,
+      0.672,
+      0.639
+     ],
+     "counts": {
+      "hole": 1
+     }
+    },
+    "warm left": {
+     "kind": "lighting",
+     "method": "v8",
+     "verdict": "FAIL",
+     "feature_labels": [
+      "unknown",
+      "hole",
+      "unknown"
+     ],
+     "feature_scores": [
+      0.733,
+      0.743,
+      0.584
+     ],
+     "counts": {
+      "hole": 1
+     }
+    },
+    "warm mid": {
+     "kind": "lighting",
+     "method": "v8",
+     "verdict": "PASS",
+     "feature_labels": [
+      "hole",
+      "hole",
+      "unknown"
+     ],
+     "feature_scores": [
+      0.777,
+      0.791,
+      0.576
+     ],
+     "counts": {
+      "hole": 2
+     }
+    },
+    "warm right": {
+     "kind": "lighting",
+     "method": "v17",
+     "verdict": "FAIL",
+     "feature_labels": [
+      "unknown",
+      "hole",
+      "unknown"
+     ],
+     "feature_scores": [
+      0.698,
+      0.761,
+      0.697
+     ],
+     "counts": {
+      "hole": 1
+     }
+    },
+    "white left": {
+     "kind": "lighting",
+     "method": "v6",
+     "verdict": "FAIL",
+     "feature_labels": [
+      "hole",
+      "unknown",
+      "unknown"
+     ],
+     "feature_scores": [
+      0.782,
+      0.725,
+      0.661
+     ],
+     "counts": {
+      "hole": 1
+     }
+    },
+    "white mid": {
+     "kind": "lighting",
+     "method": "v5",
+     "verdict": "PASS",
+     "feature_labels": [
+      "hole",
+      "hole",
+      "unknown"
+     ],
+     "feature_scores": [
+      0.821,
+      0.799,
+      0.6
+     ],
+     "counts": {
+      "hole": 2
+     }
+    },
+    "white right": {
+     "kind": "lighting",
+     "method": "v17",
+     "verdict": "FAIL",
+     "feature_labels": [
+      "unknown",
+      "unknown",
+      "unknown"
+     ],
+     "feature_scores": [
+      0.666,
+      0.737,
+      0.669
+     ],
+     "counts": {}
+    },
+    "yellow left": {
+     "kind": "lighting",
+     "method": "v6",
+     "verdict": "FAIL",
+     "feature_labels": [
+      "unknown",
+      "unknown",
+      "unknown"
+     ],
+     "feature_scores": [
+      0.727,
+      0.704,
+      0.657
+     ],
+     "counts": {}
+    },
+    "yellow mid": {
+     "kind": "lighting",
+     "method": "v15",
+     "verdict": "PASS",
+     "feature_labels": [
+      "hole",
+      "hole",
+      "unknown"
+     ],
+     "feature_scores": [
+      0.768,
+      0.786,
+      0.588
+     ],
+     "counts": {
+      "hole": 2
+     }
+    },
+    "yellow right": {
+     "kind": "lighting",
+     "method": "v8",
+     "verdict": "PASS",
+     "feature_labels": [
+      "hole",
+      "hole",
+      "unknown"
+     ],
+     "feature_scores": [
+      0.751,
+      0.771,
+      0.524
+     ],
+     "counts": {
+      "hole": 2
+     }
+    }
+   }
+  },
+  "one": {
+   "reference_labels": [
+    "type_a_pem",
+    "type_a_pem",
+    "type_a_pem"
+   ],
+   "expected": {
+    "type_a_pem": 3
+   },
+   "photos": {
+    "defected": {
+     "kind": "defected",
+     "method": "v8",
+     "verdict": "FAIL",
+     "feature_labels": [
+      "type_a_pem",
+      "unknown",
+      "type_a_pem"
+     ],
+     "feature_scores": [
+      0.882,
+      0.652,
+      0.746
+     ],
+     "counts": {
+      "type_a_pem": 2
+     }
+    },
+    "left": {
+     "kind": "angle",
+     "method": "v8",
+     "verdict": "PASS",
+     "feature_labels": [
+      "type_a_pem",
+      "type_a_pem",
+      "type_a_pem"
+     ],
+     "feature_scores": [
+      0.785,
+      0.832,
+      0.756
+     ],
+     "counts": {
+      "type_a_pem": 3
+     }
+    },
+    "right": {
+     "kind": "angle",
+     "method": "v8",
+     "verdict": "PASS",
+     "feature_labels": [
+      "type_a_pem",
+      "type_a_pem",
+      "type_a_pem"
+     ],
+     "feature_scores": [
+      0.901,
+      0.835,
+      0.75
+     ],
+     "counts": {
+      "type_a_pem": 3
+     }
+    },
+    "warm left": {
+     "kind": "lighting",
+     "method": "v8",
+     "verdict": "FAIL",
+     "feature_labels": [
+      "type_a_pem",
+      "type_a_pem",
+      "unknown"
+     ],
+     "feature_scores": [
+      0.856,
+      0.863,
+      0.711
+     ],
+     "counts": {
+      "type_a_pem": 2
+     }
+    },
+    "warm mid": {
+     "kind": "lighting",
+     "method": "v8",
+     "verdict": "FAIL",
+     "feature_labels": [
+      "type_a_pem",
+      "type_a_pem",
+      "unknown"
+     ],
+     "feature_scores": [
+      0.866,
+      0.859,
+      0.714
+     ],
+     "counts": {
+      "type_a_pem": 2
+     }
+    },
+    "warm right": {
+     "kind": "lighting",
+     "method": "v17",
+     "verdict": "PASS",
+     "feature_labels": [
+      "type_a_pem",
+      "type_a_pem",
+      "type_a_pem"
+     ],
+     "feature_scores": [
+      0.813,
+      0.827,
+      0.76
+     ],
+     "counts": {
+      "type_a_pem": 3
+     }
+    },
+    "white left": {
+     "kind": "lighting",
+     "method": "v6",
+     "verdict": "PASS",
+     "feature_labels": [
+      "type_a_pem",
+      "type_a_pem",
+      "type_a_pem"
+     ],
+     "feature_scores": [
+      0.875,
+      0.841,
+      0.77
+     ],
+     "counts": {
+      "type_a_pem": 3
+     }
+    },
+    "white mid": {
+     "kind": "lighting",
+     "method": "v5",
+     "verdict": "FAIL",
+     "feature_labels": [
+      "type_a_pem",
+      "type_a_pem",
+      "unknown"
+     ],
+     "feature_scores": [
+      0.883,
+      0.877,
+      0.72
+     ],
+     "counts": {
+      "type_a_pem": 2
+     }
+    },
+    "white right": {
+     "kind": "lighting",
+     "method": "v17",
+     "verdict": "PASS",
+     "feature_labels": [
+      "type_a_pem",
+      "type_a_pem",
+      "type_a_pem"
+     ],
+     "feature_scores": [
+      0.803,
+      0.809,
+      0.75
+     ],
+     "counts": {
+      "type_a_pem": 3
+     }
+    },
+    "yellow left": {
+     "kind": "lighting",
+     "method": "v6",
+     "verdict": "PASS",
+     "feature_labels": [
+      "type_a_pem",
+      "type_a_pem",
+      "type_a_pem"
+     ],
+     "feature_scores": [
+      0.859,
+      0.829,
+      0.776
+     ],
+     "counts": {
+      "type_a_pem": 3
+     }
+    },
+    "yellow mid": {
+     "kind": "lighting",
+     "method": "v15",
+     "verdict": "PASS",
+     "feature_labels": [
+      "type_a_pem",
+      "type_a_pem",
+      "type_a_pem"
+     ],
+     "feature_scores": [
+      0.852,
+      0.865,
+      0.742
+     ],
+     "counts": {
+      "type_a_pem": 3
+     }
+    },
+    "yellow right": {
+     "kind": "lighting",
+     "method": "v8",
+     "verdict": "FAIL",
+     "feature_labels": [
+      "type_a_pem",
+      "type_a_pem",
+      "unknown"
+     ],
+     "feature_scores": [
+      0.854,
+      0.852,
+      0.677
+     ],
+     "counts": {
+      "type_a_pem": 2
+     }
+    }
+   }
+  },
+  "three": {
+   "reference_labels": [
+    "type_a_pem",
+    "type_a_pem",
+    "type_a_pem"
+   ],
+   "expected": {
+    "type_a_pem": 3
+   },
+   "photos": {
+    "defected": {
+     "kind": "defected",
+     "method": "v8",
+     "verdict": "FAIL",
+     "feature_labels": [
+      "type_a_pem",
+      "unknown",
+      "type_a_pem"
+     ],
+     "feature_scores": [
+      0.926,
+      0.695,
+      0.875
+     ],
+     "counts": {
+      "type_a_pem": 2
+     }
+    },
+    "left": {
+     "kind": "angle",
+     "method": "v8",
+     "verdict": "PASS",
+     "feature_labels": [
+      "type_a_pem",
+      "type_a_pem",
+      "type_a_pem"
+     ],
+     "feature_scores": [
+      0.866,
+      0.896,
+      0.875
+     ],
+     "counts": {
+      "type_a_pem": 3
+     }
+    },
+    "right": {
+     "kind": "angle",
+     "method": "v8",
+     "verdict": "PASS",
+     "feature_labels": [
+      "type_a_pem",
+      "type_a_pem",
+      "type_a_pem"
+     ],
+     "feature_scores": [
+      0.907,
+      0.922,
+      0.883
+     ],
+     "counts": {
+      "type_a_pem": 3
+     }
+    },
+    "warm left": {
+     "kind": "lighting",
+     "method": "v8",
+     "verdict": "PASS",
+     "feature_labels": [
+      "type_a_pem",
+      "type_a_pem",
+      "type_a_pem"
+     ],
+     "feature_scores": [
+      0.897,
+      0.906,
+      0.821
+     ],
+     "counts": {
+      "type_a_pem": 3
+     }
+    },
+    "warm mid": {
+     "kind": "lighting",
+     "method": "v8",
+     "verdict": "PASS",
+     "feature_labels": [
+      "type_a_pem",
+      "type_a_pem",
+      "type_a_pem"
+     ],
+     "feature_scores": [
+      0.902,
+      0.891,
+      0.807
+     ],
+     "counts": {
+      "type_a_pem": 3
+     }
+    },
+    "warm right": {
+     "kind": "lighting",
+     "method": "v17",
+     "verdict": "PASS",
+     "feature_labels": [
+      "type_a_pem",
+      "type_a_pem",
+      "type_a_pem"
+     ],
+     "feature_scores": [
+      0.839,
+      0.888,
+      0.845
+     ],
+     "counts": {
+      "type_a_pem": 3
+     }
+    },
+    "white left": {
+     "kind": "lighting",
+     "method": "v6",
+     "verdict": "PASS",
+     "feature_labels": [
+      "type_a_pem",
+      "type_a_pem",
+      "type_a_pem"
+     ],
+     "feature_scores": [
+      0.903,
+      0.899,
+      0.872
+     ],
+     "counts": {
+      "type_a_pem": 3
+     }
+    },
+    "white mid": {
+     "kind": "lighting",
+     "method": "v5",
+     "verdict": "PASS",
+     "feature_labels": [
+      "type_a_pem",
+      "type_a_pem",
+      "type_a_pem"
+     ],
+     "feature_scores": [
+      0.905,
+      0.892,
+      0.798
+     ],
+     "counts": {
+      "type_a_pem": 3
+     }
+    },
+    "white right": {
+     "kind": "lighting",
+     "method": "v17",
+     "verdict": "PASS",
+     "feature_labels": [
+      "type_a_pem",
+      "type_a_pem",
+      "type_a_pem"
+     ],
+     "feature_scores": [
+      0.83,
+      0.872,
+      0.847
+     ],
+     "counts": {
+      "type_a_pem": 3
+     }
+    },
+    "yellow left": {
+     "kind": "lighting",
+     "method": "v6",
+     "verdict": "PASS",
+     "feature_labels": [
+      "type_a_pem",
+      "type_a_pem",
+      "type_a_pem"
+     ],
+     "feature_scores": [
+      0.901,
+      0.882,
+      0.88
+     ],
+     "counts": {
+      "type_a_pem": 3
+     }
+    },
+    "yellow mid": {
+     "kind": "lighting",
+     "method": "v15",
+     "verdict": "PASS",
+     "feature_labels": [
+      "type_a_pem",
+      "type_a_pem",
+      "type_a_pem"
+     ],
+     "feature_scores": [
+      0.888,
+      0.885,
+      0.799
+     ],
+     "counts": {
+      "type_a_pem": 3
+     }
+    },
+    "yellow right": {
+     "kind": "lighting",
+     "method": "v8",
+     "verdict": "PASS",
+     "feature_labels": [
+      "type_a_pem",
+      "type_a_pem",
+      "type_a_pem"
+     ],
+     "feature_scores": [
+      0.884,
+      0.919,
+      0.745
+     ],
+     "counts": {
+      "type_a_pem": 3
+     }
+    }
+   }
+  }
+ }
+}
